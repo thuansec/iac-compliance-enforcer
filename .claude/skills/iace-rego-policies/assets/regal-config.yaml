@@ -1,0 +1,8 @@
+# Regal configuration for iace policies. Copy to .regal/config.yaml at the repo root.
+# Defaults stay on. Each ignored rule states why, so the exception is reviewable.
+rules:
+  idiomatic:
+    no-defined-entrypoint:
+      # iace builds its query from the discovered rule packages at runtime
+      # (iace-opa-engine), so bundles declare no entrypoint annotations.
+      level: ignore

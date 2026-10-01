@@ -1,0 +1,105 @@
+# golangci-lint v2 configuration for iac-compliance-enforcer.
+# Copy to the repo root as .golangci.yml, then verify:
+#   go tool -modfile=tools/go.mod golangci-lint config verify
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - errname
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - gocritic
+    - gosec
+    - intrange
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - perfsprint
+    - revive
+    - sloglint
+    - unparam
+    - usestdlibvars
+  settings:
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          deny:
+            - pkg: "github.com/hashicorp/terraform/"
+              desc: "Terraform core is BUSL-1.1: never import or copy it; use hcl/v2, go-cty, terraform-json"
+            - pkg: "github.com/open-policy-agent/opa/rego$"
+              desc: "use github.com/open-policy-agent/opa/v1/rego"
+            - pkg: "github.com/open-policy-agent/opa/ast$"
+              desc: "use github.com/open-policy-agent/opa/v1/ast"
+            - pkg: "io/ioutil"
+              desc: "deprecated: use io and os"
+            - pkg: "math/rand$"
+              desc: "use math/rand/v2, or crypto/rand for anything security-relevant"
+            - pkg: "gopkg.in/yaml.v2"
+              desc: "use go.yaml.in/yaml/v3"
+            - pkg: "gopkg.in/yaml.v3"
+              desc: "archived and unmaintained since 2025: use go.yaml.in/yaml/v3"
+            - pkg: "github.com/pkg/errors"
+              desc: "use errors and fmt.Errorf with %w"
+    exhaustive:
+      default-signifies-exhaustive: true
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: "write to an injected io.Writer; stdout belongs to the report layer"
+        - pattern: ^os\.Exit$
+          msg: "only cmd/iace and internal/cli decide the exit code"
+        - pattern: ^time\.Now$
+          msg: "inject a clock (determinism and testable expiry logic)"
+        - pattern: ^os\.(Open|ReadFile|ReadDir)$
+          msg: "read scanned content through internal/fsutil (os.Root confinement and size limits)"
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: unused-parameter
+    sloglint:
+      no-mixed-args: true
+      kv-only: true
+      context: scope
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, forbidigo, perfsprint, unparam]
+      - path: ^(cmd/iace|internal/cli)/
+        linters: [forbidigo]
+      - path: ^internal/(clock|fsutil)/
+        linters: [forbidigo]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes:
+        - github.com/thuansec/iac-compliance-enforcer
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
