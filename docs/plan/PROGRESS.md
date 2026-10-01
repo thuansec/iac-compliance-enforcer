@@ -48,3 +48,10 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   or make this repository public"), so the merge gate is enforced client-side by the guard plus CI
   until the ruleset in docs/ci/main-ruleset.json can be applied.
 - Next: push this branch and open the first PR so CI runs once; then T-0002.
+
+### 2026-10-01 · decision · done
+- Owner decision: stay on GitHub Free (no Pro, no paid GitHub features). The GitHub ruleset in
+  docs/ci/main-ruleset.json is not used; the merge gate is the guard hook plus CI (`ci-ok`).
+- Resolves D-04: no GitHub Code Security on this private repository, so no code scanning here.
+  T-0504 documents the path without code scanning (job summary, annotations, required check).
+- Next: first PR for the harness branch so CI runs end to end; then T-0002.

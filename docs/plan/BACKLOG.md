@@ -13,7 +13,6 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - D-01 · Repository license (Apache-2.0 suggested to match OPA). Blocks: T-1106.
 - D-02 · CLI name `iace` and config file `.iace.yaml`. Assumed until changed.
 - D-03 · Custody of the policy-bundle signing key (GitHub Actions secret vs cloud KMS). Blocks: T-0802.
-- D-04 · GitHub Code Security on this private repo (needed for code scanning/SARIF upload). Affects: T-0504.
 - D-05 · Approved AI providers and data-handling policy (Anthropic API, Bedrock, Vertex; data residency). Blocks: T-1004.
 - D-06 · CIS benchmark versions to map, and access to the benchmark documents. Affects: M6, M7 mappings.
 
