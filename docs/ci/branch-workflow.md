@@ -14,7 +14,7 @@ main ──► git switch -c feat/T-0002-pin-tools ──► commits (full gates
 ## Who enforces what
 | layer | enforces | available |
 |---|---|---|
-| Guard hook (`.claude/hooks/guard-loop.py`) | Claude never commits or pushes to `main`; pushes only content the full gates passed; merges only open, non-draft, conflict-free, up-to-date PRs whose checks (including `ci-ok`) all passed; squash only; never `--admin` | now |
+| Guard hook (`.claude/hooks/guard-loop.py`) | Claude never commits or pushes to `main`; pushes only content the full gates passed; merges only open, non-draft, conflict-free, up-to-date PRs whose latest CI runs (including the `ci-ok` job) all passed; squash only; never `--admin` | now |
 | CI (`.github/workflows/ci.yml`) | gates on every PR and on `main`, tested on the PR merged with its base | now (Actions minutes apply to private repos) |
 | GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | **not used.** It needs GitHub Pro or a public repository, and the owner decided (2026-10-01) to stay on GitHub Free. Kept for reference in case the repository ever goes public. |
 
@@ -25,6 +25,21 @@ ruleset, GitHub would auto-merge without waiting for checks.
 
 The loop's permissions (push branches, open PRs, merge, auto-merge) are set in
 `.claude/loop-policy.json`. That is a harness file, so the loop cannot change them; edits ask a human.
+
+## Reading CI with a fine-grained token
+The `gh` login uses a fine-grained personal access token, which **cannot read checks or commit
+statuses**. `gh pr checks`, the `statusCheckRollup` field, `gh run watch` (on a running run) and plain
+`gh run view <id>` fail with *HTTP 403: Resource not accessible by personal access token*; the last two
+fail because they fetch check-run annotations. The token's **Actions: read** permission does cover
+workflow runs and jobs, so CI is read from there:
+
+- the merge gate (guard) and `.claude/skills/iace-loop/scripts/ci_state.py` apply the same rule:
+  the latest `pull_request` run of every workflow for the PR head passed, and so did the `ci-ok` job;
+- the loop waits with `ci_state.py --wait` and reads failures with `gh run view <id> --log-failed`
+  (that path skips annotations, so it works).
+
+A classic token, or adding **Checks: read** where GitHub offers it, would make `gh pr checks` work
+too. Nothing depends on it.
 
 ## One-time GitHub setup (run these yourself)
 Each command needs a token with **Administration: read & write** on this repository. The loop never

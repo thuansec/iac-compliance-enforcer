@@ -27,8 +27,11 @@
       "Bash(git merge --no-edit origin/main)",
       "Bash(git push -u origin HEAD)",
       "Bash(git stash push *)",
-      "Bash(gh pr checks *)",
+      "Bash(gh pr view *)",
+      "Bash(gh run list *)",
+      "Bash(gh run view *)",
       "Bash(python3 .claude/skills/iace-loop/scripts/loop_status.py *)",
+      "Bash(python3 .claude/skills/iace-loop/scripts/ci_state.py *)",
       "Bash(bash .claude/skills/iace-quality-gates/scripts/gates.sh *)",
       "Bash(.claude/hooks/tests/run.sh)"
     ],

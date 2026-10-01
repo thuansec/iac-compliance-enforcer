@@ -15,8 +15,10 @@ Bash, blocked:
               gates did not check; git switch/checkout that discards changes
   pr          gh pr create unless open_pull_requests; gh pr merge unless merge_pull_requests,
               with the policy merge method and --match-head-commit, for a PR that is open, not a
-              draft, conflict-free, up to date with the default branch and fully green (required
-              check passed, nothing failing or pending); --admin always; --auto unless auto_merge
+              draft, conflict-free, up to date with the default branch and fully green (the
+              latest run of every workflow and the required_check job passed, read from the
+              Actions API; nothing failing or pending; unreadable or unexpected data blocks);
+              --admin always; --auto unless auto_merge
   destroy     git reset --hard, clean -f, whole-tree checkout/restore, stash drop/clear,
               branch -D, history rewriting; rm -r of /, ~, $HOME, the project or its parents
   unverified  git commit unless the full gates passed on exactly this content
@@ -558,14 +560,23 @@ def check_pr_merge(rest: list[str]) -> None:
             skip = True
         elif not a.startswith("-"):
             positional.append(a)
-    fields = "number,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup"
-    rc, out = run(["gh", "pr", "view", *positional[:1], "--json", fields], cwd=PROJECT, timeout=45)
+    try:
+        problems = merge_problems(positional[:1], sha, default)
+    except Exception as exc:  # unlike the rest of the guard, the merge gate fails closed
+        problems = [f"could not verify the pull request ({type(exc).__name__}: {exc})"]
+    if problems:
+        raise Blocked("gh pr merge blocked: " + "; ".join(problems))
+
+
+def merge_problems(selector: list[str], sha: str, default: str) -> list[str]:
+    fields = "number,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus"
+    rc, out = run(["gh", "pr", "view", *selector, "--json", fields], cwd=PROJECT, timeout=45)
     try:
         pr = json.loads(out) if rc == 0 else None
     except ValueError:
         pr = None
     if not isinstance(pr, dict):
-        raise Blocked("could not read the pull request state (gh or network); not merging blind")
+        return ["could not read the pull request state (gh or network); not merging blind"]
     problems = []
     if pr.get("state") != "OPEN":
         problems.append(f"state is {pr.get('state')}")
@@ -579,26 +590,69 @@ def check_pr_merge(rest: list[str]) -> None:
         problems.append(f"mergeable is {pr.get('mergeable')} (conflicts, or not computed yet)")
     if pr.get("mergeStateStatus") not in ("CLEAN", "HAS_HOOKS"):
         problems.append(f"merge state is {pr.get('mergeStateStatus')}")
-    checks = pr.get("statusCheckRollup") or []
-    required = POLICY["required_check"]
-    if not any(c.get("name") == required and c.get("conclusion") == "SUCCESS" for c in checks):
-        problems.append(f"required check '{required}' has not passed")
-    for c in checks:
-        if c.get("__typename") == "StatusContext":
-            if c.get("state") != "SUCCESS":
-                problems.append(f"status {c.get('context')} is {c.get('state')}")
-        elif c.get("status") != "COMPLETED":
-            problems.append(f"check {c.get('name')} is {c.get('status')}")
-        elif c.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-            problems.append(f"check {c.get('name')} concluded {c.get('conclusion')}")
     slug = origin_slug()
-    rc, behind = run(["gh", "api", f"repos/{slug}/compare/{default}...{sha}", "--jq", ".behind_by"], cwd=PROJECT, timeout=45) if slug else (1, "")
-    if rc != 0 or not behind.isdigit():
-        problems.append(f"could not verify the branch is up to date with {default}")
-    elif int(behind) > 0:
-        problems.append(f"branch is {behind} commit(s) behind {default}: merge origin/{default} into it, run the gates, push")
-    if problems:
-        raise Blocked("gh pr merge blocked: " + "; ".join(problems))
+    if not slug:
+        problems.append("cannot tell the GitHub repository from the origin remote")
+    else:
+        problems += ci_problems(slug, sha)
+        rc, behind = run(["gh", "api", f"repos/{slug}/compare/{default}...{sha}", "--jq", ".behind_by"], cwd=PROJECT, timeout=45)
+        if rc != 0 or not behind.isdigit():
+            problems.append(f"could not verify the branch is up to date with {default}")
+        elif int(behind) > 0:
+            problems.append(f"branch is {behind} commit(s) behind {default}: merge origin/{default} into it, run the gates, push")
+    return problems
+
+
+def gh_api_list(path: str, key: str) -> list[dict] | None:
+    """GET a GitHub API path and return the objects listed under key; None when unreadable."""
+    rc, out = run(["gh", "api", path], cwd=PROJECT, timeout=45)
+    try:
+        data = json.loads(out) if rc == 0 else None
+    except ValueError:
+        return None
+    items = data.get(key) if isinstance(data, dict) else None
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else None
+
+
+def ci_problems(slug: str, sha: str) -> list[str]:
+    """CI verdict for the PR head from the GitHub Actions API.
+
+    Fine-grained tokens cannot read checks or commit statuses (the checks API and
+    statusCheckRollup answer 403), but Actions: read covers workflow runs and jobs. The latest
+    run of every workflow for the head commit must have succeeded, and so must the policy's
+    required_check job (ci-ok). Keep in sync with .claude/skills/iace-loop/scripts/ci_state.py.
+    """
+    required, ok = POLICY["required_check"], ("success", "skipped", "neutral")
+    runs = gh_api_list(f"repos/{slug}/actions/runs?head_sha={sha}&event=pull_request&per_page=100", "workflow_runs")
+    if runs is None:
+        return ["could not read the CI runs (gh or network; the token needs Actions: read)"]
+    latest: dict[str, dict] = {}
+    for r in runs:  # re-runs and reopened PRs leave older runs for the same commit behind
+        key = r.get("path") or r.get("name") or "?"
+        if key not in latest or (r["run_number"], r["run_attempt"]) > (latest[key]["run_number"], latest[key]["run_attempt"]):
+            latest[key] = r
+    if not latest:
+        return [f"no CI run for the head commit {sha[:8]} yet"]
+    problems, required_ok = [], False
+    for _, r in sorted(latest.items()):
+        name = r.get("name") or r.get("path")
+        if r.get("status") != "completed":
+            problems.append(f"workflow {name} is {r.get('status')}")
+            continue
+        if r.get("conclusion") not in ok:
+            problems.append(f"workflow {name} concluded {r.get('conclusion')}")
+        jobs = gh_api_list(f"repos/{slug}/actions/runs/{r['id']}/jobs?per_page=100", "jobs")
+        if jobs is None:
+            problems.append(f"could not read the jobs of workflow {name}")
+            continue
+        for j in jobs:
+            if j.get("conclusion") not in ok:
+                problems.append(f"job {j.get('name')} concluded {j.get('conclusion')}")
+            elif j.get("name") == required and j.get("conclusion") == "success":
+                required_ok = True
+    if not required_ok:
+        problems.append(f"required check '{required}' has not passed on the head commit")
+    return problems
 
 
 # --- other programs ---------------------------------------------------------------------------

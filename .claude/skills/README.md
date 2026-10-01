@@ -31,13 +31,15 @@ stops at each milestone for your approval (pause_at_milestone_end: yes)
 | Second opinion | `.claude/agents/iace-reviewer.md` | read-only independent review of each code-changing iteration |
 | State | `docs/plan/BACKLOG.md`, `PROGRESS.md`, git | everything an iteration needs, on disk |
 
-### Hooks (tested by `.claude/hooks/tests/run.sh`, 173 cases; also run by the gates and CI)
+### Hooks (tested by `.claude/hooks/tests/run.sh`, 199 cases; also run by the gates and CI)
 - `block-secrets.sh` (PreToolUse Bash) blocks credential formats in commands. Fails closed without `jq`.
 - `guard-loop.py` (PreToolUse Bash, Write, Edit) enforces `.claude/loop-policy.json`:
   - branch workflow: no commits or pushes to `main`; a feature branch is pushed only after the
     full gates passed on its exact content; force pushes are always blocked;
   - merge gate: `gh pr merge --squash --match-head-commit` only when the PR is open, not a draft,
-    conflict-free, up to date with `main`, and every check passed (`ci-ok` included);
+    conflict-free, up to date with `main`, and the latest run of every workflow passed (`ci-ok`
+    included). CI is read from the GitHub Actions API, because a fine-grained token can't read
+    checks or statuses. Unexpected data blocks the merge;
   - `reset --hard`, `clean -f`, whole-tree discards, stash drop and `branch -D`;
   - `sudo`, downloads piped into a shell, terraform apply/destroy, other GitHub writes, `gh auth token`;
   - commits whose content the full gates did not check;
@@ -51,7 +53,7 @@ You can always run something yourself with the `!` prefix (e.g. `! git push`). I
 ## Skills
 | skill | role | key bundled files |
 |---|---|---|
-| `iace-loop` | entry point: one task per iteration, bootstrap, backlog rules, stop conditions | `references/roadmap.md` (12 milestones, 92 tasks), `scripts/loop_status.py`, `scripts/run-loop.sh` |
+| `iace-loop` | entry point: one task per iteration, bootstrap, backlog rules, stop conditions | `references/roadmap.md` (12 milestones, 92 tasks), `scripts/loop_status.py`, `scripts/ci_state.py`, `scripts/run-loop.sh` |
 | `iace-architecture` | pipeline, package layout, contracts, exit codes, ADRs | `references/input-document.md` (Go→Rego contract), `findings-and-cli.md` |
 | `iace-go-standards` | Go toolchain, idioms, errors, logging, deps and licenses | `assets/golangci.yml` (v2, verified) |
 | `iace-terraform-parsing` | static HCL loading, evaluation, modules, plan JSON; never executes Terraform | `references/hcl-evaluation.md`, `plan-json.md` |
@@ -97,7 +99,8 @@ Audit instructions for stale or conflicting content with `/doctor prompt-audit .
   AWS's control reference.
 - GitHub: `upload-sarif@v4`, the SARIF severity mapping and limits, permissions for private
   repos, code-scanning merge protection.
-- Harness: 173 hook tests (branch, commit, push and merge gates with a fake `gh`, harness
-  protection), a live guard block inside Claude Code, the runner exercised against
+- Harness: 199 hook tests (branch, commit, push and merge gates and the CI state script with a
+  fake `gh`, harness protection), a live guard block inside Claude Code, `ci_state.py` against
+  the real Actions API (fine-grained token: runs and jobs are readable, checks are 403), the runner exercised against
   a fake `claude` (stop on paused, failures, budget and STOP file), and tree-fingerprint
   sensitivity in 6 scenarios.

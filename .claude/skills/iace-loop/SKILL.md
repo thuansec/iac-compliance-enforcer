@@ -2,7 +2,7 @@
 name: iace-loop
 description: Drive development of iac-compliance-enforcer (iace), the Go + OPA Terraform security-compliance scanner, one backlog task per iteration — orient, pick the next ready task, implement it test-first on a feature branch, pass the quality gates, open a pull request, wait for CI, and merge only when it is green, up to date and conflict-free. Use this whenever asked to continue, resume or advance work on iace, "work on the next task", run the build loop (for example `/loop /iace-loop`), bootstrap the repository, show loop status, follow up an open loop pull request, or add, split, re-order or unblock backlog tasks.
 argument-hint: "[bootstrap | status | plan | T-0000]"
-allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/loop_status.py *)
+allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/loop_status.py *), Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/ci_state.py *)
 ---
 
 # iace development loop
@@ -128,19 +128,26 @@ and the component skill. If a contract changes, update its reference doc and add
   say what the human should do.
 
 ### 9. CI, then merge
-- Wait for CI: `timeout 30m gh pr checks <n> --watch --fail-fast --interval 30`.
-- **Green**: read `headRefOid`, `mergeable` and `mergeStateStatus` with `gh pr view <n> --json`,
+- Wait for CI on the pushed head (give the Bash call a 600000 ms timeout):
+  `python3 ${CLAUDE_SKILL_DIR}/scripts/ci_state.py --wait`. It polls the GitHub Actions API for up
+  to 9 minutes and stops early on the first failed job. Don't use `gh pr checks`, `gh run watch` or
+  plain `gh run view <id>`: the token is fine-grained, which can't read checks, so they fail with HTTP 403.
+  Exit codes: 0 green · 1 red · 2 still running · 3 unknown (gh, network or token).
+- **Green (0)**: read `headRefOid`, `mergeable` and `mergeStateStatus` with `gh pr view <n> --json`,
   then `gh pr merge <n> --squash --delete-branch --match-head-commit <headRefOid>`. The guard
-  re-verifies: open, not a draft, conflict-free, up to date with `main`, every check passed,
-  `ci-ok` included. Then `git switch main && git pull --ff-only`.
+  re-verifies: open, not a draft, conflict-free, up to date with `main`, the latest run of every
+  workflow passed, `ci-ok` included. Then `git switch main && git pull --ff-only`.
   If `merge_pull_requests` is false, leave the PR for a human and end with `LOOP_STATUS: paused`.
-- **Red**: `gh run view <run-id> --log-failed`, fix on the branch, run the gates, commit, push, and
-  wait again. Each red round counts as an attempt.
+- **Red (1)**: the output names the failed jobs and the log command
+  (`gh run view <run-id> --log-failed`). Fix on the branch, run the gates, commit, push, and wait
+  again. Each red round counts as an attempt.
 - **Behind `main` or conflicting**: `git merge --no-edit origin/main` into the branch (never rebase
   a pushed branch: that needs a force push, which is blocked). Resolve conflicts, then run
   `gates.sh full`, commit and push.
-- **Still running at the timeout**: end the iteration with `LOOP_STATUS: waiting`. The next
-  iteration resumes at step 10.
+- **Still running (2)**: run the wait once more. If CI is still running after that, end the
+  iteration with `LOOP_STATUS: waiting`; the next iteration resumes at step 10.
+- **Unknown (3)**: run it once more. If it fails again, record the error as a `needs-human`
+  blocker in PROGRESS and end with `LOOP_STATUS: blocked`.
 
 ### 10. PR follow-up (verdict `pr-open`)
 `git fetch origin && git switch <headRefName>`, read that branch's task and PROGRESS entries,
@@ -179,6 +186,7 @@ When the last task of a milestone is `[x]` on `main`, use a `chore/M<n>-wrap-up`
 - [references/roadmap.md](references/roadmap.md): seed backlog (milestones M0–M11); bootstrap copies it to `docs/plan/BACKLOG.md`.
 - [references/bootstrap.md](references/bootstrap.md): first-run setup, the git remote, and the `CLAUDE.md` template.
 - `scripts/loop_status.py [--brief|--json] [--no-network]`: backlog, policy, git and open PRs; computes the next step.
+- `scripts/ci_state.py [--sha SHA] [--wait] [--json]`: CI verdict for a commit from the Actions API, using the merge gate's rule (step 9).
 - `scripts/run-loop.sh [--max-iterations N] [--budget-usd X] ...`: fresh-context runner (`--help`).
 - `.claude/agents/iace-reviewer.md`: the independent reviewer used in step 6.
 - `docs/ci/branch-workflow.md`, `.github/workflows/ci.yml`: the merge gate, CI and the optional GitHub ruleset.

@@ -4,8 +4,9 @@
 Usage: loop_status.py [--brief | --json] [--no-network]
 
 Reads docs/plan/BACKLOG.md, docs/plan/PROGRESS.md, .claude/loop-policy.json, git, and (unless
---no-network) the repository's open pull requests via `gh pr list` (read-only). An open loop PR
-(branch <type>/T-xxxx-*) turns the verdict into `pr-open`: finish it before starting new work.
+--no-network) the repository's open pull requests via `gh pr list` and, for loop PRs, their CI
+state via ci_state.py (all read-only). An open loop PR (branch <type>/T-xxxx-*) turns the
+verdict into `pr-open`: finish it before starting new work.
 
 The iace-loop skill injects this script's output at invocation time, and a failing command
 would abort that injection, so the script always exits 0 and reports problems inline.
@@ -19,6 +20,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ci_state import ci_state, origin_slug  # noqa: E402  (sibling script)
 
 ROOT = Path(__file__).resolve().parents[4]  # <root>/.claude/skills/iace-loop/scripts/
 BACKLOG = ROOT / "docs" / "plan" / "BACKLOG.md"
@@ -188,39 +192,43 @@ def load_policy() -> dict:
 
 
 def open_prs(policy: dict) -> tuple[list[dict], str]:
-    """Open pull requests from GitHub (read-only). Loop PRs come from <type>/T-xxxx-* branches."""
-    fields = "number,title,headRefName,isDraft,mergeStateStatus,statusCheckRollup"
+    """Open pull requests from GitHub (read-only). Loop PRs come from <type>/T-xxxx-* branches.
+
+    CI comes from the Actions API (ci_state.py) for loop PRs only: fine-grained tokens cannot
+    read checks or statuses, so statusCheckRollup is not requested.
+    """
+    fields = "number,title,headRefName,headRefOid,isDraft,mergeStateStatus"
     try:
         out = subprocess.run(
             ["gh", "pr", "list", "--state", "open", "--limit", "20", "--json", fields],
             cwd=ROOT, capture_output=True, text=True, timeout=20,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+        prs_json = json.loads(out.stdout or "[]") if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         return [], f"gh unavailable: {type(exc).__name__}"
-    if out.returncode != 0:
+    if not isinstance(prs_json, list):
         return [], (out.stderr.strip().splitlines() or ["gh pr list failed"])[0][:120]
-    required = policy.get("required_check", "ci-ok")
+    slug = origin_slug()
     prs = []
-    for pr in json.loads(out.stdout or "[]"):
-        checks = pr.get("statusCheckRollup") or []
-        req = next((c for c in checks if c.get("name") == required), None)
-        if req is None:
-            req_state = "missing"
-        elif req.get("status") != "COMPLETED":
-            req_state = "pending"
-        else:
-            req_state = (req.get("conclusion") or "?").lower()
-        failing = [c.get("name") or c.get("context") for c in checks
-                   if (c.get("conclusion") or c.get("state") or "") in ("FAILURE", "CANCELLED", "TIMED_OUT", "ERROR", "ACTION_REQUIRED")]
+    for pr in prs_json:
+        loop = bool(LOOP_BRANCH.match(pr.get("headRefName") or ""))
+        ci = {"verdict": "not checked", "required_state": "-", "problems": []}
+        if loop and slug and pr.get("headRefOid"):
+            try:
+                ci = ci_state(slug, pr["headRefOid"], policy.get("required_check", "ci-ok"))
+            except Exception as exc:  # this script must always exit 0
+                ci = {"verdict": "unknown", "required_state": "?", "problems": [f"{type(exc).__name__}: {exc}"]}
         prs.append({
             "number": pr.get("number"),
             "title": pr.get("title"),
             "branch": pr.get("headRefName"),
-            "loop": bool(LOOP_BRANCH.match(pr.get("headRefName") or "")),
+            "head": pr.get("headRefOid"),
+            "loop": loop,
             "draft": pr.get("isDraft"),
             "merge_state": pr.get("mergeStateStatus"),
-            "required_check": req_state,
-            "failing": failing,
+            "ci": ci["verdict"],
+            "required_check": ci["required_state"],
+            "failing": ci["problems"],
         })
     return prs, ""
 
@@ -310,8 +318,8 @@ def main() -> None:
         print("open PRs:")
         for p in report["open_prs"]:
             tag = "loop" if p["loop"] else "other"
-            fail = f" · failing: {', '.join(p['failing'])}" if p["failing"] else ""
-            print(f"  - #{p['number']} [{tag}] {p['branch']} · {pol.get('required_check', 'ci-ok')}: "
+            fail = f" · problems: {'; '.join(p['failing'])}" if p["failing"] else ""
+            print(f"  - #{p['number']} [{tag}] {p['branch']} · CI: {p['ci']} · {pol.get('required_check', 'ci-ok')}: "
                   f"{p['required_check']} · merge state: {p['merge_state']}{' · draft' if p['draft'] else ''}{fail}")
     else:
         print("open PRs: none")
