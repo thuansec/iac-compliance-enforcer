@@ -1,19 +1,24 @@
 {"hook": "guard", "expect": "allow", "name": "go test", "cwd": "/tmp", "tool_input": {"command": "go test ./..."}}
 {"hook": "guard", "expect": "allow", "name": "git status", "cwd": "/tmp", "tool_input": {"command": "git status --short"}}
+{"hook": "guard", "expect": "allow", "name": "help is always allowed", "tool_input": {"command": "gh pr merge --help && git commit -h && gh help pr merge"}}
 {"hook": "guard", "expect": "allow", "name": "push text inside commit message", "cwd": "/tmp", "tool_input": {"command": "git commit -m \"docs: explain why git push is blocked\""}}
 {"hook": "guard", "expect": "allow", "name": "heredoc commit message with danger words", "cwd": "/tmp", "tool_input": {"command": "git commit -F - <<'EOF'\nfix: document git push --force and git reset --hard\nEOF"}}
 {"hook": "guard", "expect": "allow", "name": "echo mentioning reset --hard", "cwd": "/tmp", "tool_input": {"command": "echo \"never run git reset --hard\""}}
+{"hook": "guard", "expect": "allow", "name": "commit in a repo reached via a variable", "cwd": "/tmp", "tool_input": {"command": "T=/tmp/scratch-repo; cd \"$T\" && git commit -qm x"}}
 {"hook": "guard", "expect": "allow", "name": "push dry run", "cwd": "/tmp", "tool_input": {"command": "git push --dry-run origin main"}}
 {"hook": "guard", "expect": "allow", "name": "gh pr list", "tool_input": {"command": "gh pr list --state all"}}
+{"hook": "guard", "expect": "allow", "name": "gh pr checks watch", "tool_input": {"command": "gh pr checks 7 --watch --fail-fast"}}
 {"hook": "guard", "expect": "allow", "name": "gh api GET", "tool_input": {"command": "gh api repos/thuansec/iac-compliance-enforcer --jq .full_name"}}
 {"hook": "guard", "expect": "allow", "name": "gh api explicit GET with fields", "tool_input": {"command": "gh api -X GET repos/o/r/pulls -f state=open"}}
 {"hook": "guard", "expect": "allow", "name": "gh api graphql query", "tool_input": {"command": "gh api graphql -f query='query{viewer{login}}'"}}
-{"hook": "guard", "expect": "allow", "name": "gh run list", "tool_input": {"command": "gh run list -R thuansec/iac-compliance-enforcer --limit 1"}}
+{"hook": "guard", "expect": "allow", "name": "gh run view logs", "tool_input": {"command": "gh run view 123 --log-failed"}}
 {"hook": "guard", "expect": "allow", "name": "gh auth status", "tool_input": {"command": "gh auth status"}}
 {"hook": "guard", "expect": "allow", "name": "gh release download", "tool_input": {"command": "gh release download v2.14.0 -R golangci/golangci-lint -p '*.txt'"}}
+{"hook": "guard", "expect": "allow", "name": "gh pr create (policy allows)", "tool_input": {"command": "gh pr create --base main --title \"feat: x (T-0002)\" --body-file /tmp/body.md"}}
 {"hook": "guard", "expect": "allow", "name": "stash push and pop", "cwd": "/tmp", "tool_input": {"command": "git stash push -u -m \"T-0101 attempt 1: gates red\" && git stash list && git stash pop"}}
 {"hook": "guard", "expect": "allow", "name": "restore staged only", "cwd": "/tmp", "tool_input": {"command": "git restore --staged ."}}
-{"hook": "guard", "expect": "allow", "name": "checkout a branch", "cwd": "/tmp", "tool_input": {"command": "git checkout -b feature && git checkout main"}}
+{"hook": "guard", "expect": "allow", "name": "switch and create branches", "cwd": "/tmp", "tool_input": {"command": "git switch main && git pull --ff-only && git switch -c feat/T-0002-pin-tools"}}
+{"hook": "guard", "expect": "allow", "name": "merge main into branch", "cwd": "/tmp", "tool_input": {"command": "git fetch origin && git merge --no-edit origin/main"}}
 {"hook": "guard", "expect": "allow", "name": "git clean dry run", "cwd": "/tmp", "tool_input": {"command": "git clean -n"}}
 {"hook": "guard", "expect": "allow", "name": "safe branch delete", "cwd": "/tmp", "tool_input": {"command": "git branch -d merged-branch"}}
 {"hook": "guard", "expect": "allow", "name": "rm build dirs inside project", "tool_input": {"command": "rm -rf bin dist"}}
@@ -21,20 +26,36 @@
 {"hook": "guard", "expect": "allow", "name": "terraform fmt and init", "tool_input": {"command": "terraform fmt -check -recursive testdata && terraform init -backend=false"}}
 {"hook": "guard", "expect": "allow", "name": "local git config", "cwd": "/tmp", "tool_input": {"command": "git config user.email dev@example.com"}}
 {"hook": "guard", "expect": "allow", "name": "curl to file", "tool_input": {"command": "curl -fsSL https://example.com/x.tar.gz -o x.tgz"}}
-{"hook": "guard", "expect": "allow", "name": "redirections", "tool_input": {"command": "ls -la 2>&1 | head -5 > /dev/null"}}
+{"hook": "guard", "expect": "allow", "name": "redirections outside the harness", "tool_input": {"command": "ls -la 2>&1 | head -5 > /dev/null && echo ok > .cache/out.txt"}}
+{"hook": "guard", "expect": "allow", "name": "reading harness files", "tool_input": {"command": "cat .claude/settings.json && grep -rn guard .claude/hooks && bash .claude/skills/iace-quality-gates/scripts/gates.sh quick"}}
+{"hook": "guard", "expect": "allow", "name": "copy from the harness to elsewhere", "tool_input": {"command": "cp .claude/hooks/guard-loop.py /tmp/guard-copy.py"}}
 {"hook": "guard", "expect": "allow", "name": "git -C other repo status", "tool_input": {"command": "git -C /tmp/other status"}}
-{"hook": "guard", "expect": "block", "name": "git push", "tool_input": {"command": "git push"}}
-{"hook": "guard", "expect": "block", "name": "git push origin main", "tool_input": {"command": "git push origin main"}}
+{"hook": "guard", "expect": "ask", "name": "redirect into harness", "tool_input": {"command": "echo '{}' > .claude/loop-policy.json"}}
+{"hook": "guard", "expect": "ask", "name": "redirect into harness via variable", "tool_input": {"command": "D=.claude; echo x >> $D/settings.json"}}
+{"hook": "guard", "expect": "ask", "name": "sed -i on a hook", "tool_input": {"command": "sed -i 's/exit 2/exit 0/' .claude/hooks/block-secrets.sh"}}
+{"hook": "guard", "expect": "ask", "name": "chmod a hook", "tool_input": {"command": "chmod -x .claude/hooks/guard-loop.py"}}
+{"hook": "guard", "expect": "ask", "name": "copy into the harness", "tool_input": {"command": "cp /tmp/evil.py .claude/hooks/guard-loop.py"}}
+{"hook": "guard", "expect": "ask", "name": "move a harness file away", "tool_input": {"command": "mv .claude/agents/iace-reviewer.md /tmp/"}}
+{"hook": "guard", "expect": "ask", "name": "rm inside the harness", "tool_input": {"command": "rm -rf .claude/hooks/__pycache__"}}
+{"hook": "guard", "expect": "ask", "name": "tee into CLAUDE.md", "tool_input": {"command": "echo rule | tee -a CLAUDE.md"}}
+{"hook": "guard", "expect": "ask", "name": "restore a harness file", "tool_input": {"command": "git checkout -- .claude/settings.json"}}
+{"hook": "guard", "expect": "ask", "name": "Write tool on settings", "tool_name": "Write", "tool_input": {"file_path": ".claude/settings.json", "content": "{}"}}
+{"hook": "guard", "expect": "ask", "name": "Edit tool on CLAUDE.md", "tool_name": "Edit", "tool_input": {"file_path": "CLAUDE.md", "old_string": "a", "new_string": "b"}}
+{"hook": "guard", "expect": "allow", "name": "Write tool on code", "tool_name": "Write", "tool_input": {"file_path": "internal/engine/engine.go", "content": "package engine"}}
+{"hook": "guard", "expect": "allow", "name": "Edit tool on the backlog", "tool_name": "Edit", "tool_input": {"file_path": "docs/plan/BACKLOG.md", "old_string": "[ ]", "new_string": "[x]"}}
+{"hook": "guard", "expect": "block", "name": "push to main", "tool_input": {"command": "git push origin main"}}
+{"hook": "guard", "expect": "block", "name": "push HEAD to main", "tool_input": {"command": "git push origin HEAD:main"}}
+{"hook": "guard", "expect": "block", "name": "push another branch", "tool_input": {"command": "git push origin feat/T-0009-other"}}
+{"hook": "guard", "expect": "block", "name": "push from a non-repo dir", "cwd": "/tmp", "tool_input": {"command": "git push"}}
 {"hook": "guard", "expect": "block", "name": "cd then push", "tool_input": {"command": "cd /tmp && git push"}}
 {"hook": "guard", "expect": "block", "name": "push inside bash -c", "tool_input": {"command": "bash -c \"git push origin main\""}}
-{"hook": "guard", "expect": "block", "name": "push in command substitution", "tool_input": {"command": "echo $(git push)"}}
-{"hook": "guard", "expect": "block", "name": "push in subshell", "tool_input": {"command": "(cd sub && git push)"}}
-{"hook": "guard", "expect": "block", "name": "push behind env assignment", "tool_input": {"command": "GIT_TRACE=1 git push"}}
-{"hook": "guard", "expect": "block", "name": "push behind env wrapper", "tool_input": {"command": "env GIT_TRACE=1 git push"}}
-{"hook": "guard", "expect": "block", "name": "push behind timeout", "tool_input": {"command": "timeout 60 git push"}}
-{"hook": "guard", "expect": "block", "name": "push via git -C", "tool_input": {"command": "git -C /tmp/other push"}}
+{"hook": "guard", "expect": "block", "name": "push in command substitution", "tool_input": {"command": "echo $(git push origin main)"}}
+{"hook": "guard", "expect": "block", "name": "push behind env wrapper", "tool_input": {"command": "env GIT_TRACE=1 git push origin main"}}
+{"hook": "guard", "expect": "block", "name": "push behind timeout", "tool_input": {"command": "timeout 60 git push origin main"}}
+{"hook": "guard", "expect": "block", "name": "push tags", "tool_input": {"command": "git push origin --tags"}}
+{"hook": "guard", "expect": "block", "name": "push all branches", "tool_input": {"command": "git push --all origin"}}
 {"hook": "guard", "expect": "block", "name": "force push", "tool_input": {"command": "git push --force origin main"}}
-{"hook": "guard", "expect": "block", "name": "force-with-lease", "tool_input": {"command": "git push --force-with-lease origin main"}}
+{"hook": "guard", "expect": "block", "name": "force-with-lease", "tool_input": {"command": "git push --force-with-lease origin feat/x"}}
 {"hook": "guard", "expect": "block", "name": "plus refspec force", "tool_input": {"command": "git push origin +main"}}
 {"hook": "guard", "expect": "block", "name": "remote branch delete", "tool_input": {"command": "git push origin :old-branch"}}
 {"hook": "guard", "expect": "block", "name": "commit --no-verify", "cwd": "/tmp", "tool_input": {"command": "git commit --no-verify -m x"}}
@@ -42,6 +63,7 @@
 {"hook": "guard", "expect": "block", "name": "clean -fdx", "tool_input": {"command": "git clean -fdx"}}
 {"hook": "guard", "expect": "block", "name": "checkout -- .", "tool_input": {"command": "git checkout -- ."}}
 {"hook": "guard", "expect": "block", "name": "checkout -f", "tool_input": {"command": "git checkout -f main"}}
+{"hook": "guard", "expect": "block", "name": "switch --discard-changes", "tool_input": {"command": "git switch --discard-changes main"}}
 {"hook": "guard", "expect": "block", "name": "restore whole tree", "tool_input": {"command": "git restore ."}}
 {"hook": "guard", "expect": "block", "name": "stash drop", "tool_input": {"command": "git stash drop stash@{0}"}}
 {"hook": "guard", "expect": "block", "name": "stash clear", "tool_input": {"command": "git stash clear"}}
@@ -63,8 +85,10 @@
 {"hook": "guard", "expect": "block", "name": "rm -rf ..", "tool_input": {"command": "rm -rf .."}}
 {"hook": "guard", "expect": "block", "name": "rm -r .git", "tool_input": {"command": "rm -r .git"}}
 {"hook": "guard", "expect": "block", "name": "rm project parent", "tool_input": {"command": "rm -rf ../"}}
-{"hook": "guard", "expect": "block", "name": "gh pr create without push permission", "tool_input": {"command": "gh pr create --fill"}}
-{"hook": "guard", "expect": "block", "name": "gh pr merge", "tool_input": {"command": "gh pr merge 12 --squash"}}
+{"hook": "guard", "expect": "block", "name": "gh pr merge without verification pin", "tool_input": {"command": "gh pr merge 12 --squash"}}
+{"hook": "guard", "expect": "block", "name": "gh pr merge --admin", "tool_input": {"command": "gh pr merge 12 --squash --admin --match-head-commit abc"}}
+{"hook": "guard", "expect": "block", "name": "gh pr merge with a merge commit", "tool_input": {"command": "gh pr merge 12 --merge --match-head-commit abc"}}
+{"hook": "guard", "expect": "block", "name": "gh pr merge --auto without auto_merge", "tool_input": {"command": "gh pr merge 12 --auto --squash"}}
 {"hook": "guard", "expect": "block", "name": "gh release create", "tool_input": {"command": "gh release create v0.1.0"}}
 {"hook": "guard", "expect": "block", "name": "gh repo delete", "tool_input": {"command": "gh repo delete thuansec/x --yes"}}
 {"hook": "guard", "expect": "block", "name": "gh secret set", "tool_input": {"command": "gh secret set POLICY_KEY < key.pem"}}
@@ -73,6 +97,7 @@
 {"hook": "guard", "expect": "block", "name": "gh api graphql mutation", "tool_input": {"command": "gh api graphql -f query='mutation{addStar(input:{starrableId:\"x\"}){clientMutationId}}'"}}
 {"hook": "guard", "expect": "block", "name": "gh auth token", "tool_input": {"command": "gh auth token"}}
 {"hook": "guard", "expect": "block", "name": "gh workflow run", "tool_input": {"command": "gh workflow run ci.yml"}}
+{"hook": "guard", "expect": "block", "name": "gh pr close", "tool_input": {"command": "gh pr close 12"}}
 {"hook": "secrets", "expect": "allow", "name": "plain go test", "tool_input": {"command": "go test ./..."}}
 {"hook": "secrets", "expect": "allow", "name": "commit with task-", "tool_input": {"command": "git commit -m \"feat(loop): add task-selection order (T-0103)\""}}
 {"hook": "secrets", "expect": "allow", "name": "test name with disk-", "tool_input": {"command": "go test ./internal/engine -run TestDisk-encryption"}}

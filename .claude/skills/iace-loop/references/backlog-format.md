@@ -9,8 +9,7 @@ so keep them readable.
 # iace backlog
 
 ## Loop settings
-- push_to_remote: no
-- live_api_calls: no
+Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-policy.json`.
 - pause_at_milestone_end: yes
 - max_attempts_per_task: 3
 
@@ -32,12 +31,23 @@ Goal: one sentence on what is true when the milestone is done.
 ### Settings
 | key | meaning | default |
 |---|---|---|
-| `push_to_remote` | `yes` lets the loop `git push` the current branch after a green commit | `no` |
-| `live_api_calls` | `yes` allows tests or tasks that call paid external APIs (Anthropic) | `no` |
 | `pause_at_milestone_end` | stop and wait for human approval between milestones | `yes` |
 | `max_attempts_per_task` | failed attempts before a task is marked blocked | `3` |
 
 Only a human changes settings. The loop reads them and never edits them.
+
+Anything that reaches outside the working tree is a *permission* and lives in the harness file
+`.claude/loop-policy.json`. The guard hook enforces it, and the loop can't edit it.
+
+| policy key | meaning | default |
+|---|---|---|
+| `git_workflow` | `pull-request`: feature branch, PR, CI, merge; never commit to `default_branch` | `pull-request` |
+| `push_feature_branches` | push the checked-out feature branch after the full gates passed | `true` |
+| `open_pull_requests` | `gh pr create` | `true` |
+| `merge_pull_requests` | `gh pr merge --squash --match-head-commit` once the PR is green, up to date and conflict-free | `true` |
+| `auto_merge` | `gh pr merge --auto`; only with the server-side ruleset (docs/ci/branch-workflow.md) | `false` |
+| `required_check` | the CI check that must pass before merging | `ci-ok` |
+| `live_api_calls` | tests or tasks may call paid external APIs (Anthropic) | `false` |
 
 ### Milestone header
 `## M<n> · <title> — status: <status>` where status is one of

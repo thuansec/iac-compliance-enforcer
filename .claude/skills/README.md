@@ -5,15 +5,19 @@ for Terraform security compliance on AWS and Azure, through an autonomous develo
 Claude Code loads everything here automatically. This README is for humans.
 
 ## How the loop runs
+Every task goes feature branch → PR → CI (`ci-ok`) → merge only when green, up to date and
+conflict-free (`docs/ci/branch-workflow.md`). Only one loop PR is open at a time.
 ```
 run-loop.sh  (fresh `claude -p "/iace-loop"` per iteration)   or   /loop /iace-loop  (one session)
    │
    ▼
-iace-loop: orient → select task (docs/plan/BACKLOG.md) → plan → test first → implement
-           → self-review → gates.sh full (stamps the tree) → iace-reviewer subagent → record → commit
-   │          │                                                                          │
-   │          └─ skills listed on the task, plus path-scoped .claude/rules/              └─ guard hook: commit only if
-   ▼                                                                                        the stamp matches the tree
+iace-loop: orient (open loop PR? finish it first) → select task (docs/plan/BACKLOG.md)
+           → git switch -c feat/T-xxxx-slug → plan → test first → implement → self-review
+           → gates.sh full (stamps the content) → iace-reviewer subagent → record → commit → push
+           → gh pr create → CI (gates + ci-ok) → merge gate → squash into main
+   │          │                                       │
+   │          └─ skills on the task + .claude/rules/  └─ guard hook: commit and push only stamped content,
+   ▼                                                     merge only green, up-to-date, conflict-free PRs
 stops at each milestone for your approval (pause_at_milestone_end: yes)
 ```
 
@@ -27,14 +31,17 @@ stops at each milestone for your approval (pause_at_milestone_end: yes)
 | Second opinion | `.claude/agents/iace-reviewer.md` | read-only independent review of each code-changing iteration |
 | State | `docs/plan/BACKLOG.md`, `PROGRESS.md`, git | everything an iteration needs, on disk |
 
-### Hooks (tested by `.claude/hooks/tests/run.sh`, 121 cases; also run by the gates)
+### Hooks (tested by `.claude/hooks/tests/run.sh`, 173 cases; also run by the gates and CI)
 - `block-secrets.sh` (PreToolUse Bash) blocks credential formats in commands. Fails closed without `jq`.
-- `guard-loop.py` (PreToolUse Bash) blocks:
-  - pushes unless BACKLOG has `push_to_remote: yes`, and force pushes always;
+- `guard-loop.py` (PreToolUse Bash, Write, Edit) enforces `.claude/loop-policy.json`:
+  - branch workflow: no commits or pushes to `main`; a feature branch is pushed only after the
+    full gates passed on its exact content; force pushes are always blocked;
+  - merge gate: `gh pr merge --squash --match-head-commit` only when the PR is open, not a draft,
+    conflict-free, up to date with `main`, and every check passed (`ci-ok` included);
   - `reset --hard`, `clean -f`, whole-tree discards, stash drop and `branch -D`;
-  - `sudo`, downloads piped into a shell, terraform apply/destroy;
-  - GitHub state changes, and `gh auth token`;
-  - commits whose tree the full gates did not check.
+  - `sudo`, downloads piped into a shell, terraform apply/destroy, other GitHub writes, `gh auth token`;
+  - commits whose content the full gates did not check;
+  - **asks you** before any edit to the harness (`.claude/**`, `CLAUDE.md`). Unattended runs can't approve, so they can't change their own rules.
 - `format-file.sh` (PostToolUse Write|Edit) runs gofumpt/goimports (or gofmt), `opa fmt` and `terraform fmt`.
 - `permissions.deny` repeats the most destructive commands. `permissions.allow` pre-approves
   routine build, test and lint commands, so unattended runs don't stall.
@@ -90,6 +97,7 @@ Audit instructions for stale or conflicting content with `/doctor prompt-audit .
   AWS's control reference.
 - GitHub: `upload-sarif@v4`, the SARIF severity mapping and limits, permissions for private
   repos, code-scanning merge protection.
-- Harness: 121 hook tests, a live guard block inside Claude Code, the runner exercised against
+- Harness: 173 hook tests (branch, commit, push and merge gates with a fake `gh`, harness
+  protection), a live guard block inside Claude Code, the runner exercised against
   a fake `claude` (stop on paused, failures, budget and STOP file), and tree-fingerprint
   sensitivity in 6 scenarios.

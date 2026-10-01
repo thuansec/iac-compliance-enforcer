@@ -6,10 +6,21 @@ description: CI/CD for iac-compliance-enforcer (iace) — this repository's own 
 # CI/CD and PR enforcement
 
 ## Loop safety
-The loop **writes** workflows, action metadata and docs, and validates them locally. It never
-pushes, creates tags or releases, edits repository settings or rulesets, or adds secrets. Those
-steps are for a human (the loop settings in BACKLOG enforce this). Commands that change GitHub
-state are written into docs for the human to run.
+Within `.claude/loop-policy.json`, the loop pushes **feature branches**, opens PRs, and merges
+them once they are green, up to date and conflict-free (`docs/ci/branch-workflow.md`). The guard
+hook enforces this. The loop never pushes `main` or tags, creates releases, edits repository
+settings or rulesets, adds secrets, or runs `gh api` writes. Commands that change GitHub state
+are written into docs for a human to run.
+
+## This repository's merge gate
+- Every change reaches `main` through a PR whose `ci-ok` check passed. `ci-ok` aggregates every
+  CI job (`needs: [...]`, `if: always()`, success only when all needs succeeded), so it stays the
+  single required check as jobs are added. **Never rename `ci-ok`** or drop a job from its `needs`:
+  the guard's merge gate and the optional ruleset both key on it.
+- CI runs on the PR merged with its base (the default `pull_request` checkout), with
+  `IACE_GATES_BASE=origin/<base>` so the gates scan the whole PR diff.
+- Server-side enforcement for everyone (PR required, `ci-ok` required, branch up to date, no force
+  push) is the ruleset in `docs/ci/main-ruleset.json`. It needs GitHub Pro or a public repo.
 
 ## Workflow hardening rules (all workflows, ours and examples)
 - **Pin every action to a full 40-char commit SHA** with a version comment:
@@ -32,11 +43,12 @@ state are written into docs for the human to run.
 - `actionlint` must pass. It runs in the gates once `.github/workflows` exists.
 
 ## This repository's pipelines
-- **ci.yml** (PR + push to main): jobs `lint` (golangci-lint, regal, actionlint), `test`
-  (`go test -race -shuffle=on`, coverage gate), `policy` (`make policy-check policy-test`),
-  `vuln` (`govulncheck ./...`), `build` (cross-compile matrix linux/darwin/windows ×
-  amd64/arm64 with `CGO_ENABLED=0 -trimpath`), and `e2e` (testscript). Each runs a `make`
-  target, so CI and the gates use the same commands. Use setup-go with go-version-file and caching.
+- **ci.yml** (PR + push to main) exists now with `gates` (hook tests plus `gates.sh full`) and
+  `ci-ok`. T-0006 adds `lint` (golangci-lint, regal, actionlint), `test` (`go test -race
+  -shuffle=on`, coverage gate), `policy` (`make policy-check policy-test`), `vuln`
+  (`govulncheck ./...`), `build` (cross-compile matrix linux/darwin/windows × amd64/arm64 with
+  `CGO_ENABLED=0 -trimpath`) and `e2e` (testscript), each a `make` target and each in `ci-ok`'s
+  `needs`. Switch setup-go to `go-version-file: go.mod` with caching once go.mod exists.
 - **selftest.yml** (M5): runs the composite action from this repo (`uses: ./`) against
   `testdata/e2e/*` and asserts the exit codes and SARIF content.
 - **fixtures.yml** (nightly + manual, M6): `terraform validate` on every policy fixture for each

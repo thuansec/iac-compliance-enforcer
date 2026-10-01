@@ -19,13 +19,20 @@ bash ${CLAUDE_SKILL_DIR}/scripts/gates.sh full    # before every commit: everyth
   `gofmt`/`go vet`/`go test`/`go build`.
 - Both modes run the hook test suite (`.claude/hooks/tests/run.sh`), so the guards are tested too.
 
-## The commit gate
-A passing `full` run writes the tree fingerprint (`scripts/tree-fingerprint.sh`) to
-`.cache/gates/full.pass`. The guard hook (`.claude/hooks/guard-loop.py`) allows `git commit` only
-when the current tree matches it, so **a commit is always exactly the tree the full gates
-checked**. `docs/plan/BACKLOG.md` and `PROGRESS.md` are excluded from the fingerprint, because the
-result is recorded there after the gates. A commit that changes only those two files needs no
-stamp. If the gate blocks a commit, run `gates.sh full` again. Never try to get around it.
+## The commit and push gates
+A passing `full` run writes a **content** fingerprint (`scripts/tree-fingerprint.sh`: the git tree
+hash of the working tree as it is on disk) to `.cache/gates/full.pass`. The guard hook
+(`.claude/hooks/guard-loop.py`) compares it:
+- **`git commit`** (feature branches only, never `main`) is allowed only when the content matches
+  the stamp, so a commit is always exactly what the full gates checked.
+- **`git push`** (the checked-out feature branch only) additionally needs a clean tree. Because
+  the fingerprint depends on content, not on HEAD, committing keeps it valid. Merging `origin/main`
+  into the branch changes the content, so the gates must run again before that push.
+
+`docs/plan/BACKLOG.md` and `PROGRESS.md` are excluded, because the result is recorded there after
+the gates. A commit that changes only those files needs no stamp. CI then runs the same gates on
+GitHub (`ci-ok`), and the merge gate requires that check. If a gate blocks you, run `gates.sh full`
+again. Never try to get around it.
 
 ## Makefile contract
 The Makefile is the single source of commands. CI calls the same targets (`iace-ci-cd`), and the

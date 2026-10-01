@@ -1,0 +1,61 @@
+# CI for iac-compliance-enforcer. Every pull request must pass before it merges to main: the
+# loop's merge gate (.claude/hooks/guard-loop.py) and, once enabled, the GitHub ruleset in
+# docs/ci/main-ruleset.json both require the `ci-ok` check.
+#
+# T-0006 extends this workflow with the full Go/OPA jobs. Keep `ci-ok` as the single required
+# check and add every new job to its `needs` list, so the ruleset never has to change.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Quality gates (full)
+        env:
+          # On pull requests, scan everything the PR adds relative to its base branch.
+          IACE_GATES_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: bash .claude/skills/iace-quality-gates/scripts/gates.sh full
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [gates]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every required job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "job results: $RESULTS"
+          jq -e 'length > 0 and all(.[]; . == "success")' <<<"$RESULTS"

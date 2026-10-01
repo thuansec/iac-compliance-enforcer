@@ -105,11 +105,16 @@ fi
 # --- Loop discipline on the working-tree diff (full mode) ------------------------------------
 if [[ "$mode" == full ]] && git rev-parse --verify -q HEAD >/dev/null 2>&1; then
 	added="$LOGDIR/added.txt"
-	# Added lines from tracked changes, plus every line of new untracked text files (<1 MiB).
-	git diff HEAD --unified=0 --no-color | grep -E '^\+[^+]' | cut -c2- >"$added"
-	while IFS= read -r -d '' f; do
-		[[ -f "$f" && $(wc -c <"$f") -lt 1048576 ]] && grep -Iq . "$f" && cat "$f" >>"$added"
-	done < <(git ls-files --others --exclude-standard -z)
+	if [[ -n "${IACE_GATES_BASE:-}" ]]; then
+		# CI: every line the pull request adds relative to its base (e.g. origin/main).
+		git diff "$IACE_GATES_BASE"...HEAD --unified=0 --no-color | grep -E '^\+[^+]' | cut -c2- >"$added"
+	else
+		# Local: added lines from tracked changes, plus new untracked text files (<1 MiB).
+		git diff HEAD --unified=0 --no-color | grep -E '^\+[^+]' | cut -c2- >"$added"
+		while IFS= read -r -d '' f; do
+			[[ -f "$f" && $(wc -c <"$f") -lt 1048576 ]] && grep -Iq . "$f" && cat "$f" >>"$added"
+		done < <(git ls-files --others --exclude-standard -z)
+	fi
 
 	# Same credential formats as .claude/hooks/block-secrets.sh, applied to file content.
 	secret_re='((AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}'

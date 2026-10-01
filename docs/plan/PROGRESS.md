@@ -30,3 +30,21 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Decisions: a commit requires a gates stamp for the exact tree (plan files excluded); git push
   stays blocked while push_to_remote is no.
 - Next: T-0002.
+
+### 2026-10-01 · harness · done
+- What: branch, PR and merge gate. Every change now goes feature branch → PR → CI (`ci-ok`) →
+  merge only when the PR is green, up to date and conflict-free (squash). Added CI
+  (`.github/workflows/ci.yml`: `gates` + `ci-ok` aggregator), the PR template,
+  `.claude/loop-policy.json` (push/PR/merge permissions moved out of the editable BACKLOG), a
+  content-based gates stamp (also gates pushes), a guard merge gate that verifies the PR with gh,
+  harness protection (edits to `.claude/**` and CLAUDE.md ask a human), and a docs/ci ruleset for
+  server-side enforcement.
+- Files: .claude/hooks/guard-loop.py, tests/*, .claude/loop-policy.json, .claude/settings.json,
+  iace-loop (SKILL.md, loop_status.py, run-loop.sh, backlog-format.md, roadmap.md),
+  iace-quality-gates (gates.sh, tree-fingerprint.sh), .github/*, docs/ci/*, CLAUDE.md, docs/plan/BACKLOG.md.
+- Evidence: hook tests 173/173; actionlint ok; gates full PASS with stamp; status script and
+  runner checked with fake gh/claude.
+- Decisions: GitHub Free on a private repo cannot enforce rulesets (API: "Upgrade to GitHub Pro
+  or make this repository public"), so the merge gate is enforced client-side by the guard plus CI
+  until the ruleset in docs/ci/main-ruleset.json can be applied.
+- Next: push this branch and open the first PR so CI runs once; then T-0002.

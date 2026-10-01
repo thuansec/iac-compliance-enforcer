@@ -21,7 +21,13 @@
       "Bash(terraform fmt *)",
       "Bash(git add *)",
       "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git fetch *)",
+      "Bash(git pull --ff-only *)",
+      "Bash(git merge --no-edit origin/main)",
+      "Bash(git push -u origin HEAD)",
       "Bash(git stash push *)",
+      "Bash(gh pr checks *)",
       "Bash(python3 .claude/skills/iace-loop/scripts/loop_status.py *)",
       "Bash(bash .claude/skills/iace-quality-gates/scripts/gates.sh *)",
       "Bash(.claude/hooks/tests/run.sh)"
@@ -30,10 +36,12 @@
       "Bash(sudo *)",
       "Bash(git push --force *)",
       "Bash(git push -f *)",
+      "Bash(git push origin main *)",
       "Bash(git reset --hard *)",
       "Bash(git clean -f *)",
       "Bash(git clean -fd *)",
       "Bash(git clean -fdx *)",
+      "Bash(gh pr merge --admin *)",
       "Bash(terraform apply *)",
       "Bash(terraform destroy *)",
       "Bash(tofu apply *)",
@@ -47,7 +55,13 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-secrets.sh", "args": [], "timeout": 10 },
-          { "type": "command", "command": "python3", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-loop.py"], "timeout": 60 }
+          { "type": "command", "command": "python3", "args": ["-B", "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-loop.py"], "timeout": 90 }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["-B", "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-loop.py"], "timeout": 30 }
         ]
       }
     ],

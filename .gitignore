@@ -36,3 +36,6 @@ go.work.sum
 /dist/
 /.cache/
 .claude/settings.local.json
+
+# python bytecode
+__pycache__/

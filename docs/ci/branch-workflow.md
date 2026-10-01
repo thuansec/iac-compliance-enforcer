@@ -1,0 +1,55 @@
+# Branch and merge workflow
+
+Every change reaches `main` through a pull request that passed CI, has no conflicts, and was
+tested against the latest `main`.
+
+```
+main ──► git switch -c feat/T-0002-pin-tools ──► commits (full gates pass locally; commit gate)
+     ──► git push -u origin HEAD (push gate) ──► gh pr create
+     ──► CI: gates + ci-ok ──► behind or conflicting? merge origin/main into the branch, gates, push
+     ──► green, up to date, mergeable ──► gh pr merge --squash --match-head-commit <sha> (merge gate)
+     ──► main (one squash commit per task)
+```
+
+## Who enforces what
+| layer | enforces | available |
+|---|---|---|
+| Guard hook (`.claude/hooks/guard-loop.py`) | Claude never commits or pushes to `main`; pushes only content the full gates passed; merges only open, non-draft, conflict-free, up-to-date PRs whose checks (including `ci-ok`) all passed; squash only; never `--admin` | now |
+| CI (`.github/workflows/ci.yml`) | gates on every PR and on `main`, tested on the PR merged with its base | now (Actions minutes apply to private repos) |
+| GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | needs GitHub Pro, or a public repository |
+
+The loop's permissions (push branches, open PRs, merge, auto-merge) are set in
+`.claude/loop-policy.json`. That is a harness file, so the loop cannot change them; edits ask a human.
+
+## One-time GitHub setup (run these yourself)
+Each command needs a token with **Administration: read & write** on this repository. The loop never
+runs them, because the guard blocks GitHub writes.
+
+1. Merge settings: squash only, delete merged branches, PR title as the commit title.
+   Works on every plan:
+   ```bash
+   ! gh api -X PATCH repos/thuansec/iac-compliance-enforcer \
+       -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
+       -F delete_branch_on_merge=true -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
+   ```
+2. Server-side gate. Needs GitHub Pro or a public repository; on Free + private the API answers
+   *"Upgrade to GitHub Pro or make this repository public"*:
+   ```bash
+   ! gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/main-ruleset.json
+   ! gh api -X PATCH repos/thuansec/iac-compliance-enforcer -F allow_auto_merge=true
+   ```
+   Check the field names against the current REST "Create a repository ruleset" docs first.
+   `integration_id` 15368 is GitHub Actions, so only Actions can satisfy `ci-ok`.
+   Required reviews stay at 0: the loop opens PRs under your account, and GitHub doesn't let you
+   approve your own PR. To approve every PR yourself, give the loop its own GitHub identity (a bot
+   account or GitHub App) and raise `required_approving_review_count` to 1.
+3. With the ruleset active you may set `"auto_merge": true` in `.claude/loop-policy.json`. The loop
+   can then hand merging to GitHub (`gh pr merge --auto --squash`), and GitHub enforces the checks.
+
+## Rules of thumb
+- One task, one branch, one PR, and only one loop PR open at a time, so `main` never needs rebasing.
+- Branch names: `<type>/T-xxxx-<slug>`, where type is the Conventional Commit type
+  (`feat`, `fix`, `docs`, `test`, `chore`, `ci`, `refactor`).
+- Update a stale branch by **merging** `origin/main` into it. Never rebase a pushed branch: that
+  needs a force push, which is blocked. The squash merge keeps `main` linear anyway.
+- Humans can still push directly with `! git ...` (hooks don't apply to you). Only the ruleset stops that.
