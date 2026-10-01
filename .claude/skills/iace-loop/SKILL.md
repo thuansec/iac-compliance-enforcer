@@ -54,6 +54,10 @@ project or reach outside it.
    never put real secrets in fixtures or commands. See the `iace-security` skill.
 7. **Never discard uncommitted work you did not create in this iteration.** A dirty tree means an
    earlier iteration was interrupted (see Orient).
+8. **Hooks are hard limits.** `.claude/hooks/` blocks secrets in commands, pushes (unless allowed),
+   destructive git commands, privilege escalation and commits the gates did not check. When a
+   hook blocks you, don't retry with other syntax or a wrapper script. Fix the cause, or record a
+   blocker if a human must act.
 
 ## The iteration
 
@@ -90,8 +94,14 @@ ADR in the same commit (`iace-architecture`).
 
 ### 6. Verify
 - While iterating: `bash ${CLAUDE_PROJECT_DIR}/.claude/skills/iace-quality-gates/scripts/gates.sh quick`
-- Before committing: `bash ${CLAUDE_PROJECT_DIR}/.claude/skills/iace-quality-gates/scripts/gates.sh full` (it must pass),
-  then walk the self-review checklist in `iace-quality-gates` against `git diff`.
+- When the change is complete: walk the self-review checklist in `iace-quality-gates` against
+  `git diff`, then run `bash ${CLAUDE_PROJECT_DIR}/.claude/skills/iace-quality-gates/scripts/gates.sh full`.
+  It must pass, and on success it stamps the exact tree (`.cache/gates/full.pass`).
+- **Independent review** for any iteration that changes code, tests, policies, workflows or
+  hooks: delegate to the `iace-reviewer` subagent with the task ID, its acceptance criteria and a
+  one-paragraph summary of the change. On `CHANGES_REQUIRED`, fix the blocker and major findings
+  and run `gates.sh full` again. Re-review only if the fixes changed behaviour. Record minor
+  findings as follow-up tasks. Skip the review for docs- or plan-only iterations.
 - If you cannot get green within this iteration, go to *Failure handling*.
 
 ### 7. Record and commit
@@ -101,6 +111,9 @@ ADR in the same commit (`iace-architecture`).
 - Make one commit containing the code, tests, docs, BACKLOG and PROGRESS changes, using a
   Conventional Commit that references the task, for example
   `feat(engine): evaluate rule packages with one prepared query (T-0203)`.
+- The guard hook allows `git commit` only if the gates stamp matches the tree. After `gates.sh
+  full`, change nothing except `docs/plan/BACKLOG.md` and `docs/plan/PROGRESS.md`. Any other edit
+  means running the full gates again.
 
 ### 8. Milestone wrap-up
 When the last task of a milestone is `[x]`:
@@ -115,14 +128,17 @@ When the last task of a milestone is `[x]`:
   work is ready, so there is nothing to wait for). End the loop instead when there are no ready
   tasks, a milestone pause is reached, every remaining task is blocked, or three consecutive
   iterations failed.
-- **Headless** (`claude -p "/iace-loop"` in a shell loop): print a final line
-  `LOOP_STATUS: continue|paused|done|blocked` so the wrapper script can decide.
+- **Headless**, via `scripts/run-loop.sh`: one fresh `claude -p "/iace-loop"` process per iteration.
+  This is the recommended way to run long unattended stretches, because a single session
+  degrades as its context fills. End every headless iteration with a final line
+  `LOOP_STATUS: continue|paused|done|blocked`; the runner stops on anything but `continue`.
 - Finish each iteration with a short report: task, outcome, commit hash, and what comes next.
 
 ## Failure handling
 - Gates fail and you cannot fix them this iteration: never commit a red tree. Save the attempt with
   `git stash push -u -m "T-xxxx attempt N: <reason>"`, leave the task `[~]`, and record the
-  attempt (with the stash name and what you learned) in PROGRESS.
+  attempt (with the stash name and what you learned) in PROGRESS. Stashes are kept for a human
+  (`stash drop`/`clear` is blocked).
 - When `attempts` reaches `max_attempts_per_task`, mark the task `[!]` with `blocked: <reason>`
   (and `needs-human` if applicable), then move on.
 - Environment problems (missing toolchain, auth, network) block the task as `needs-human` with
@@ -133,3 +149,5 @@ When the last task of a milestone is `[x]`:
 - [references/roadmap.md](references/roadmap.md): seed backlog (milestones M0–M11); bootstrap copies it to `docs/plan/BACKLOG.md`.
 - [references/bootstrap.md](references/bootstrap.md): first-run setup, the git remote, and the `CLAUDE.md` template.
 - `scripts/loop_status.py [--brief|--json]`: parses BACKLOG and git state and computes the next ready task.
+- `scripts/run-loop.sh [--max-iterations N] [--budget-usd X] ...`: fresh-context runner (`--help`).
+- `.claude/agents/iace-reviewer.md`: the independent reviewer used in step 6.

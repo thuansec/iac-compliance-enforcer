@@ -52,6 +52,18 @@ cosmetic defect. Full threat model: [references/threat-model.md](references/thre
 - **Errors and logs**: never include attribute values, tokens, prompts or response bodies.
   At debug level, log sizes and hashes instead.
 
+## Harness guardrails (deterministic, tested)
+The development loop itself runs behind hooks in `.claude/settings.json`, tested by
+`.claude/hooks/tests/run.sh` (also run by the gates):
+- `block-secrets.sh` (PreToolUse Bash) blocks commands containing credential formats, and fails
+  closed without `jq`.
+- `guard-loop.py` (PreToolUse Bash) blocks pushes (unless BACKLOG allows them), force pushes,
+  destructive git commands, `sudo`, downloads piped into a shell, terraform apply/destroy, GitHub
+  state changes, and commits the full gates did not check.
+- `format-file.sh` (PostToolUse Write|Edit) formats Go, Rego and Terraform. It is best effort.
+- `permissions.deny` repeats the most destructive cases as a second layer.
+Treat a block as a signal, never an obstacle to route around.
+
 ## Secrets in this repository and the loop
 - Never commit real credentials. Fixtures use obviously fake values. The project's
   `block-secrets.sh` hook rejects shell commands containing key-like strings, so create fixture

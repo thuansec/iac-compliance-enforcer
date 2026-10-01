@@ -1,9 +1,62 @@
 {
+  "env": {
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go mod *)",
+      "Bash(go tool *)",
+      "Bash(go list *)",
+      "Bash(go doc *)",
+      "Bash(make *)",
+      "Bash(gofmt *)",
+      "Bash(golangci-lint *)",
+      "Bash(govulncheck *)",
+      "Bash(opa *)",
+      "Bash(regal *)",
+      "Bash(actionlint *)",
+      "Bash(terraform fmt *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git stash push *)",
+      "Bash(python3 .claude/skills/iace-loop/scripts/loop_status.py *)",
+      "Bash(bash .claude/skills/iace-quality-gates/scripts/gates.sh *)",
+      "Bash(.claude/hooks/tests/run.sh)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -f *)",
+      "Bash(git clean -fd *)",
+      "Bash(git clean -fdx *)",
+      "Bash(terraform apply *)",
+      "Bash(terraform destroy *)",
+      "Bash(tofu apply *)",
+      "Bash(tofu destroy *)",
+      "Bash(gh auth token *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-secrets.sh" }]
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-secrets.sh", "args": [], "timeout": 10 },
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-loop.py"], "timeout": 60 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/format-file.sh", "args": [], "timeout": 60 }
+        ]
       }
     ]
   }

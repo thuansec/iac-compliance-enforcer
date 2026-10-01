@@ -9,6 +9,8 @@
 # the loop run the same checks. Before the Makefile exists (bootstrap), Go checks fall back
 # to plain go commands. Missing tools FAIL (fail closed); only checks whose inputs don't exist
 # yet are SKIPped. Output stays compact: failing checks show the last lines of their log.
+# A passing full run records the tree fingerprint in .cache/gates/full.pass; the guard hook only
+# allows `git commit` when that stamp matches the tree being committed.
 set -uo pipefail
 
 mode="${1:-}"
@@ -49,6 +51,16 @@ run() { # name command...
 has_target() { [[ -f Makefile ]] && grep -qE "^$1:" Makefile; }
 
 echo "iace gates · mode=$mode · root=$ROOT"
+FINGERPRINT="$(dirname "${BASH_SOURCE[0]}")/tree-fingerprint.sh"
+fp_start=""
+if [[ "$mode" == full ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+	fp_start=$(bash "$FINGERPRINT" "$ROOT" 2>/dev/null || true)
+fi
+
+# --- Harness: hook test suite (fast; guards the guards) ---------------------------------------
+if [[ -x .claude/hooks/tests/run.sh ]]; then
+	run hook-tests .claude/hooks/tests/run.sh
+fi
 
 # --- Go and policies -------------------------------------------------------------------------
 if [[ ! -f go.mod ]]; then
@@ -136,5 +148,15 @@ echo "summary: $pass pass, $fail fail, $skip skip, $warn warn"
 if ((fail > 0)); then
 	echo "GATES FAILED: ${failed[*]}"
 	exit 1
+fi
+if [[ "$mode" == full && -n "$fp_start" ]]; then
+	fp_end=$(bash "$FINGERPRINT" "$ROOT" 2>/dev/null || true)
+	if [[ "$fp_end" == "$fp_start" ]]; then
+		mkdir -p .cache/gates && printf '%s\n' "$fp_end" >.cache/gates/full.pass.tmp &&
+			mv .cache/gates/full.pass.tmp .cache/gates/full.pass
+		echo "stamp: .cache/gates/full.pass records this tree; git commit is allowed for it"
+	else
+		echo "no stamp: files changed while the gates ran; run gates.sh full again before committing"
+	fi
 fi
 echo "GATES PASSED"

@@ -15,6 +15,14 @@ that it then verifies.
 - `make fmt`, `make lint`, `make test`, `make policy-test`, `make vuln`, `make ci`
 - Gates: `bash .claude/skills/iace-quality-gates/scripts/gates.sh quick|full`
 
+## Harness
+- Hooks in `.claude/settings.json` are hard limits. They block secrets in commands, pushes
+  (unless BACKLOG allows them), destructive git commands, and commits the full gates did not check.
+  When blocked, fix the cause or record a blocker. Never route around a hook.
+- Unattended runs: `.claude/skills/iace-loop/scripts/run-loop.sh` (fresh context per iteration).
+  Stop gracefully with `touch .cache/loop/STOP`.
+- After changing anything in `.claude/hooks/` or `.claude/settings.json`, run `.claude/hooks/tests/run.sh`.
+
 ## Non-negotiables
 - Never execute Terraform, providers, or module code from scanned repositories.
 - Errors fail closed: policy/parse/config errors exit 2, never a silent pass.

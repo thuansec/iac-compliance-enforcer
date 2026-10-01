@@ -17,6 +17,15 @@ bash ${CLAUDE_SKILL_DIR}/scripts/gates.sh full    # before every commit: everyth
   inputs don't exist yet (no go.mod during bootstrap) are SKIPped.
 - Before the Makefile exists (between T-0003 and T-0004), Go checks fall back to plain
   `gofmt`/`go vet`/`go test`/`go build`.
+- Both modes run the hook test suite (`.claude/hooks/tests/run.sh`), so the guards are tested too.
+
+## The commit gate
+A passing `full` run writes the tree fingerprint (`scripts/tree-fingerprint.sh`) to
+`.cache/gates/full.pass`. The guard hook (`.claude/hooks/guard-loop.py`) allows `git commit` only
+when the current tree matches it, so **a commit is always exactly the tree the full gates
+checked**. `docs/plan/BACKLOG.md` and `PROGRESS.md` are excluded from the fingerprint, because the
+result is recorded there after the gates. A commit that changes only those two files needs no
+stamp. If the gate blocks a commit, run `gates.sh full` again. Never try to get around it.
 
 ## Makefile contract
 The Makefile is the single source of commands. CI calls the same targets (`iace-ci-cd`), and the

@@ -83,10 +83,15 @@ Append-only, newest entry last. One entry per iteration, including failed attemp
 ```markdown
 ### 2026-10-02 · T-0103 · done
 - What: parse .tf and .tf.json into raw blocks with source ranges.
+- Files: internal/terraform/parse.go, parse_test.go, testdata/terraform/parse/*.
 - Evidence: `gates.sh full` PASS; FuzzParse 60s clean; commit 1a2b3c4.
+- Review: iace-reviewer APPROVE (1 minor finding, tracked as T-0110).
 - Decisions: kept override files as warnings (ADR 0005).
 - Next: T-0104.
 ```
+
+`Files` and `Review` make each entry a handoff for the next fresh-context iteration: it can
+orient from the log without re-reading the code. `Review` is `skipped (docs-only)` when no review ran.
 
 Outcome is one of `done | attempt-failed | blocked | split | groomed`. For failed attempts,
 record the stash name and what you learned, so the next attempt starts smarter.

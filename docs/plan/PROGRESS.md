@@ -16,3 +16,17 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (`--untracked-files=all`), so new directories no longer hide an updated PROGRESS.md.
 - Decisions: none taken; D-01…D-06 remain open in BACKLOG.
 - Next: T-0002 (pin dev tools in tools/go.mod).
+
+### 2026-10-01 · harness · done
+- What: harness upgrade from the agent-architecture review. Added the guard hook (pushes,
+  destructive git, privilege escalation, GitHub writes, a commit gate tied to the full-gates
+  stamp), a PostToolUse formatter, the hook test suite (121 cases), the iace-reviewer subagent,
+  path-scoped .claude/rules, the fresh-context runner (run-loop.sh), permissions allow/deny, and a
+  subagent spawn depth of 1.
+- Files: .claude/hooks/*, .claude/agents/iace-reviewer.md, .claude/rules/*, .claude/settings.json,
+  iace-loop (SKILL.md, backlog-format.md, run-loop.sh), iace-quality-gates (gates.sh,
+  tree-fingerprint.sh), iace-security SKILL.md, CLAUDE.md.
+- Evidence: hook tests 121/121; gates full PASS with stamp; guard verified live in Claude Code.
+- Decisions: a commit requires a gates stamp for the exact tree (plan files excluded); git push
+  stays blocked while push_to_remote is no.
+- Next: T-0002.
