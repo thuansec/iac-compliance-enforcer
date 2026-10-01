@@ -1,0 +1,11 @@
+{
+  "git_workflow": "pull-request",
+  "default_branch": "main",
+  "push_feature_branches": true,
+  "open_pull_requests": true,
+  "merge_pull_requests": true,
+  "merge_method": "squash",
+  "auto_merge": false,
+  "required_check": "ci-ok",
+  "live_api_calls": false
+}

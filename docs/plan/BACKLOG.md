@@ -5,8 +5,7 @@ Format: `.claude/skills/iace-loop/references/backlog-format.md`. The plan is a w
 the scanner works end to end early (M2) and then grows in depth.
 
 ## Loop settings
-- push_to_remote: no
-- live_api_calls: no
+Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-policy.json`.
 - pause_at_milestone_end: yes
 - max_attempts_per_task: 3
 
@@ -14,7 +13,6 @@ the scanner works end to end early (M2) and then grows in depth.
 - D-01 · Repository license (Apache-2.0 suggested to match OPA). Blocks: T-1106.
 - D-02 · CLI name `iace` and config file `.iace.yaml`. Assumed until changed.
 - D-03 · Custody of the policy-bundle signing key (GitHub Actions secret vs cloud KMS). Blocks: T-0802.
-- D-04 · GitHub Code Security on this private repo (needed for code scanning/SARIF upload). Affects: T-0504.
 - D-05 · Approved AI providers and data-handling policy (Anthropic API, Bedrock, Vertex; data residency). Blocks: T-1004.
 - D-06 · CIS benchmark versions to map, and access to the benchmark documents. Affects: M6, M7 mappings.
 
@@ -60,11 +58,11 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - docs/adr/0001 (record decisions), 0002 (Go with embedded OPA v1 rego package), 0003 (static analysis by default; never execute Terraform from scanned repos)
     - README.md covers purpose, status, a quickstart placeholder and links; CONTRIBUTING.md covers the dev loop and gates
   - attempts: 0
-- [ ] T-0006 · Add the CI workflow for this repository
+- [ ] T-0006 · Extend the CI workflow with the full Go/OPA jobs
   - skills: iace-ci-cd, iace-security
   - depends: T-0004
   - accept:
-    - .github/workflows/ci.yml runs the lint, test (race), policy-test, vuln and cross-build jobs via make
+    - .github/workflows/ci.yml (it already has `gates` + `ci-ok`) gains lint, test (race), policy-test, vuln and cross-build jobs via make, each listed in `ci-ok`'s `needs` so `ci-ok` stays the single required check
     - every action is pinned to a full commit SHA resolved with `gh api`, with a version comment; top-level `permissions: contents: read`; checkout uses `persist-credentials: false`
     - actionlint passes; .github/dependabot.yml covers gomod and github-actions
   - attempts: 0
@@ -584,7 +582,7 @@ Goal: opt-in AI suggestions for violations, verified by re-scanning before anyon
   - depends: T-1003
   - accept:
     - uses anthropic-sdk-go with default model claude-opus-5-5 and configurable effort; timeouts, retries, refusal handling and prompt caching
-    - all tests use httptest; there are no live calls unless live_api_calls is yes
+    - all tests use httptest; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
   - attempts: 0
 - [ ] T-1005 · Fix validator
   - skills: iace-ai-remediation, iace-security, iace-opa-engine

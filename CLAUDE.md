@@ -16,9 +16,12 @@ that it then verifies.
 - Gates: `bash .claude/skills/iace-quality-gates/scripts/gates.sh quick|full`
 
 ## Harness
-- Hooks in `.claude/settings.json` are hard limits. They block secrets in commands, pushes
-  (unless BACKLOG allows them), destructive git commands, and commits the full gates did not check.
-  When blocked, fix the cause or record a blocker. Never route around a hook.
+- Every change reaches `main` through a feature branch and a PR that passed CI (`ci-ok`), is up
+  to date and has no conflicts. See docs/ci/branch-workflow.md; permissions are in `.claude/loop-policy.json`.
+- Hooks in `.claude/settings.json` are hard limits. They block secrets in commands, commits or
+  pushes to `main`, unverified commits, pushes and merges, and destructive git commands, and they
+  ask a human before any harness edit. When blocked, fix the cause or record a blocker. Never
+  route around a hook.
 - Unattended runs: `.claude/skills/iace-loop/scripts/run-loop.sh` (fresh context per iteration).
   Stop gracefully with `touch .cache/loop/STOP`.
 - After changing anything in `.claude/hooks/` or `.claude/settings.json`, run `.claude/hooks/tests/run.sh`.

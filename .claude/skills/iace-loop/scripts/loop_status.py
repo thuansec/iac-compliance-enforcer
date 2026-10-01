@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Summarize the iace development loop state: backlog, next ready task, git, recent progress.
 
-Usage: loop_status.py [--brief | --json]
+Usage: loop_status.py [--brief | --json] [--no-network]
+
+Reads docs/plan/BACKLOG.md, docs/plan/PROGRESS.md, .claude/loop-policy.json, git, and (unless
+--no-network) the repository's open pull requests via `gh pr list` and, for loop PRs, their CI
+state via ci_state.py (all read-only). An open loop PR (branch <type>/T-xxxx-*) turns the
+verdict into `pr-open`: finish it before starting new work.
 
 The iace-loop skill injects this script's output at invocation time, and a failing command
 would abort that injection, so the script always exits 0 and reports problems inline.
@@ -16,9 +21,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ci_state import ci_state, origin_slug  # noqa: E402  (sibling script)
+
 ROOT = Path(__file__).resolve().parents[4]  # <root>/.claude/skills/iace-loop/scripts/
 BACKLOG = ROOT / "docs" / "plan" / "BACKLOG.md"
 PROGRESS = ROOT / "docs" / "plan" / "PROGRESS.md"
+POLICY = ROOT / ".claude" / "loop-policy.json"
+LOOP_BRANCH = re.compile(r"^(feat|fix|docs|test|chore|ci|refactor|perf|build)/T-\d{4}")
 
 MILESTONE_RE = re.compile(r"^## (M\d+) · (.+?) — status: ([\w-]+)\s*$")
 TASK_RE = re.compile(r"^- \[([ ~x!])\] (T-\d{4}[a-z]?) · (.+?)\s*$")
@@ -171,6 +181,58 @@ def git_state() -> dict:
     }
 
 
+def load_policy() -> dict:
+    try:
+        data = json.loads(POLICY.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {"error": "not a JSON object"}
+    except FileNotFoundError:
+        return {"error": "missing (guard defaults: no push, PR or merge)"}
+    except (OSError, ValueError) as exc:
+        return {"error": f"unreadable: {exc}"}
+
+
+def open_prs(policy: dict) -> tuple[list[dict], str]:
+    """Open pull requests from GitHub (read-only). Loop PRs come from <type>/T-xxxx-* branches.
+
+    CI comes from the Actions API (ci_state.py) for loop PRs only: fine-grained tokens cannot
+    read checks or statuses, so statusCheckRollup is not requested.
+    """
+    fields = "number,title,headRefName,headRefOid,isDraft,mergeStateStatus"
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "list", "--state", "open", "--limit", "20", "--json", fields],
+            cwd=ROOT, capture_output=True, text=True, timeout=20,
+        )
+        prs_json = json.loads(out.stdout or "[]") if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return [], f"gh unavailable: {type(exc).__name__}"
+    if not isinstance(prs_json, list):
+        return [], (out.stderr.strip().splitlines() or ["gh pr list failed"])[0][:120]
+    slug = origin_slug()
+    prs = []
+    for pr in prs_json:
+        loop = bool(LOOP_BRANCH.match(pr.get("headRefName") or ""))
+        ci = {"verdict": "not checked", "required_state": "-", "problems": []}
+        if loop and slug and pr.get("headRefOid"):
+            try:
+                ci = ci_state(slug, pr["headRefOid"], policy.get("required_check", "ci-ok"))
+            except Exception as exc:  # this script must always exit 0
+                ci = {"verdict": "unknown", "required_state": "?", "problems": [f"{type(exc).__name__}: {exc}"]}
+        prs.append({
+            "number": pr.get("number"),
+            "title": pr.get("title"),
+            "branch": pr.get("headRefName"),
+            "head": pr.get("headRefOid"),
+            "loop": loop,
+            "draft": pr.get("isDraft"),
+            "merge_state": pr.get("mergeStateStatus"),
+            "ci": ci["verdict"],
+            "required_check": ci["required_state"],
+            "failing": ci["problems"],
+        })
+    return prs, ""
+
+
 def recent_progress(limit: int = 3) -> list[str]:
     if not PROGRESS.exists():
         return []
@@ -204,7 +266,15 @@ def main() -> None:
 
     backlog = parse_backlog(BACKLOG.read_text(encoding="utf-8"))
     analysis = analyze(backlog)
+    policy = load_policy()
+    prs, pr_error = ([], "skipped (--no-network)") if "--no-network" in sys.argv[1:] else open_prs(policy)
+    loop_prs = [p for p in prs if p["loop"]]
+    if loop_prs and analysis["verdict"] in ("continue", "milestone-wrap-up"):
+        analysis["verdict"] = "pr-open"  # finish the open loop PR before starting anything new
     report.update(
+        policy=policy,
+        open_prs=prs,
+        open_prs_error=pr_error,
         settings=backlog["settings"],
         decisions=backlog["decisions"],
         milestones=[
@@ -236,6 +306,25 @@ def main() -> None:
         print("git: not a git repository")
     s = report["settings"]
     print("settings: " + ", ".join(f"{k}={v}" for k, v in s.items()) if s else "settings: (missing; defaults apply)")
+    pol = report["policy"]
+    if "error" in pol:
+        print(f"policy (.claude/loop-policy.json): {pol['error']}")
+    else:
+        flags = ("git_workflow", "push_feature_branches", "open_pull_requests", "merge_pull_requests", "auto_merge", "live_api_calls")
+        print("policy: " + ", ".join(f"{k}={pol.get(k)}" for k in flags if k in pol))
+    if report["open_prs_error"]:
+        print(f"open PRs: unknown ({report['open_prs_error']})")
+    elif report["open_prs"]:
+        print("open PRs:")
+        for p in report["open_prs"]:
+            tag = "loop" if p["loop"] else "other"
+            fail = f" · problems: {'; '.join(p['failing'])}" if p["failing"] else ""
+            print(f"  - #{p['number']} [{tag}] {p['branch']} · CI: {p['ci']} · {pol.get('required_check', 'ci-ok')}: "
+                  f"{p['required_check']} · merge state: {p['merge_state']}{' · draft' if p['draft'] else ''}{fail}")
+    else:
+        print("open PRs: none")
+    if report["verdict"] == "pr-open":
+        print("→ finish the open loop PR first (iace-loop step 10: PR follow-up)")
     print("milestones: " + " | ".join(f"{m['id']} {m['status']} {m['done']}/{m['total']}" for m in report["milestones"]))
     print(f"current (in progress): {task_line(report['current'])}")
     print(f"next ready: {task_line(report['next_ready'])}")

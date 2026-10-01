@@ -30,3 +30,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Decisions: a commit requires a gates stamp for the exact tree (plan files excluded); git push
   stays blocked while push_to_remote is no.
 - Next: T-0002.
+
+### 2026-10-01 · harness · done
+- What: branch, PR and merge gate. Every change now goes feature branch → PR → CI (`ci-ok`) →
+  merge only when the PR is green, up to date and conflict-free (squash). Added CI
+  (`.github/workflows/ci.yml`: `gates` + `ci-ok` aggregator), the PR template,
+  `.claude/loop-policy.json` (push/PR/merge permissions moved out of the editable BACKLOG), a
+  content-based gates stamp (also gates pushes), a guard merge gate that verifies the PR with gh,
+  harness protection (edits to `.claude/**` and CLAUDE.md ask a human), and a docs/ci ruleset for
+  server-side enforcement.
+- Files: .claude/hooks/guard-loop.py, tests/*, .claude/loop-policy.json, .claude/settings.json,
+  iace-loop (SKILL.md, loop_status.py, run-loop.sh, backlog-format.md, roadmap.md),
+  iace-quality-gates (gates.sh, tree-fingerprint.sh), .github/*, docs/ci/*, CLAUDE.md, docs/plan/BACKLOG.md.
+- Evidence: hook tests 173/173; actionlint ok; gates full PASS with stamp; status script and
+  runner checked with fake gh/claude.
+- Decisions: GitHub Free on a private repo cannot enforce rulesets (API: "Upgrade to GitHub Pro
+  or make this repository public"), so the merge gate is enforced client-side by the guard plus CI
+  until the ruleset in docs/ci/main-ruleset.json can be applied.
+- Next: push this branch and open the first PR so CI runs once; then T-0002.
+
+### 2026-10-01 · decision · done
+- Owner decision: stay on GitHub Free (no Pro, no paid GitHub features). The GitHub ruleset in
+  docs/ci/main-ruleset.json is not used; the merge gate is the guard hook plus CI (`ci-ok`).
+- Resolves D-04: no GitHub Code Security on this private repository, so no code scanning here.
+  T-0504 documents the path without code scanning (job summary, annotations, required check).
+- Next: first PR for the harness branch so CI runs end to end; then T-0002.
+
+### 2026-10-01 · harness · done
+- What: CI is read from the GitHub Actions API. The fine-grained token gets HTTP 403 from the
+  checks and status APIs (`gh pr checks`, `statusCheckRollup`, `gh run watch` and plain `gh run view`,
+  through annotations), so the first PR's merge would have been blocked by the gate. The merge gate now requires
+  the latest pull_request run of every workflow for the head, and the `ci-ok` job, to have
+  passed; unexpected API data blocks the merge (fails closed). New `ci_state.py` applies the same
+  rule for the loop (`--wait`, exit 0 green / 1 red / 2 running / 3 unknown); `loop_status.py`
+  shows it for loop PRs; iace-loop step 9 waits with it.
+- Files: .claude/hooks/guard-loop.py, .claude/hooks/tests/run.sh, .claude/settings.json,
+  iace-loop (SKILL.md, scripts/ci_state.py, scripts/loop_status.py), .claude/skills/README.md,
+  docs/ci/branch-workflow.md.
+- Evidence: hook tests 199/199 (29 merge-gate cases, each checking its block reason; 11 ci_state
+  cases); ci_state.py on PR #1's head against the live API: passed (run 36896148899, gates and ci-ok).
+- Next: merge PR #1 through the gate once CI is green on the new head; then T-0002.
