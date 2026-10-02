@@ -352,3 +352,16 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: docs only, no reviewer.
 - Next: M0's last open task is T-0009, which needs the owner (two harness edits); then the M0
   wrap-up.
+
+### 2026-10-02 · T-0009 · done
+- What: the owner approved two harness edits found in review. The iace-go-standards golangci asset
+  uses gofumpt `extra: {group-params: true}` instead of the deprecated `extra-rules: true`, so
+  .golangci.yml's body is identical to the asset again (its explanatory comment is gone). The
+  iace-ci-cd skill lists the CI jobs as ci.yml has them (`policy-test`, e2e inside `test`,
+  per-job cache keys) and says the `main` and release-tag rulesets are active.
+- Files: .claude/skills/iace-go-standards/assets/golangci.yml, .claude/skills/iace-ci-cd/SKILL.md,
+  .golangci.yml.
+- Evidence: the asset and the repo config both pass `golangci-lint config verify`, and their
+  bodies diff clean; `make lint`: 0 issues, no deprecation warning.
+- Review: harness and docs only, approved by the owner; no reviewer.
+- Next: M0 wrap-up (every M0 task is done).

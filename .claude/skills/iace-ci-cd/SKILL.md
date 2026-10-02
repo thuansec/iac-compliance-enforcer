@@ -20,7 +20,8 @@ are written into docs for a human to run.
 - CI runs on the PR merged with its base (the default `pull_request` checkout), with
   `IACE_GATES_BASE=origin/<base>` so the gates scan the whole PR diff.
 - Server-side enforcement for everyone (PR required, `ci-ok` required, branch up to date, no force
-  push) is the ruleset in `docs/ci/main-ruleset.json`. It needs GitHub Pro or a public repo.
+  push) is the ruleset in `docs/ci/main-ruleset.json`, active since the repository went public
+  (2026-10-02). `docs/ci/tags-ruleset.json` makes `v*` and `policies-v*` tags immutable.
 
 ## Workflow hardening rules (all workflows, ours and examples)
 - **Pin every action to a full 40-char commit SHA** with a version comment:
@@ -43,12 +44,13 @@ are written into docs for a human to run.
 - `actionlint` must pass. It runs in the gates once `.github/workflows` exists.
 
 ## This repository's pipelines
-- **ci.yml** (PR + push to main) exists now with `gates` (hook tests plus `gates.sh full`) and
-  `ci-ok`. T-0006 adds `lint` (golangci-lint, regal, actionlint), `test` (`go test -race
-  -shuffle=on`, coverage gate), `policy` (`make policy-check policy-test`), `vuln`
-  (`govulncheck ./...`), `build` (cross-compile matrix linux/darwin/windows × amd64/arm64 with
-  `CGO_ENABLED=0 -trimpath`) and `e2e` (testscript), each a `make` target and each in `ci-ok`'s
-  `needs`. Switch setup-go to `go-version-file: go.mod` with caching once go.mod exists.
+- **ci.yml** (PR + push to main) runs `gates` (hook tests plus `gates.sh full`, for loop parity),
+  `lint` (`make fmt-check lint`: golangci-lint, regal, actionlint), `test` (`make test
+  cover-check`: race, shuffle, the coverage gate and the cmd/iace testscript e2e suite, so there
+  is no separate e2e job), `policy-test` (`make policy-check policy-test`), `vuln` (`make vuln`)
+  and `build` (cross-compile matrix linux/darwin/windows × amd64/arm64, `make build` with
+  `CGO_ENABLED=0 -trimpath`), each in `ci-ok`'s `needs`. setup-go reads `go-version-file:
+  go.mod`, and each job keys its cache on the go.sum files of what it builds.
 - **selftest.yml** (M5): runs the composite action from this repo (`uses: ./`) against
   `testdata/e2e/*` and asserts the exit codes and SARIF content.
 - **fixtures.yml** (nightly + manual, M6): `terraform validate` on every policy fixture for each
