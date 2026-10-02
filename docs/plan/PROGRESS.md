@@ -206,3 +206,14 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Files: docs/ci/main-ruleset.json, docs/ci/branch-workflow.md, docs/security/going-public.md,
   docs/plan/BACKLOG.md.
 - Next: this is the first pull request merged under the ruleset; then T-0003.
+
+### 2026-10-02 · T-1107 · done
+- What: the owner applied the remaining settings. Read back through the API: private
+  vulnerability reporting is on, and both rulesets are active. Secret scanning with push
+  protection, Dependabot alerts and approval for outside contributors' workflows are on per the
+  owner; the loop's fine-grained token cannot read them (HTTP 403).
+- Files: docs/security/going-public.md (status column), docs/plan/BACKLOG.md (T-1107 done).
+- Evidence: `gh api` reads of `private-vulnerability-reporting` ({"enabled":true}) and `rulesets`
+  (both active).
+- Review: docs and plan only, no reviewer.
+- Next: T-0003.
