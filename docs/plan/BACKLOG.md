@@ -83,14 +83,14 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - iace-architecture references/findings-and-cli.md lists the `iace version --json` fields (schema_version "1", name, version, commit, date), says changes to them follow the schema_version rules, and says a bare `iace` prints help and exits 0
   - attempts: 1
   - result: findings-and-cli.md documents the `iace version` text line, the `--json` document (key order, "dev" defaults, -X injection) and its schema_version rules, and that a bare `iace` prints help and exits 0; owner approved the harness edit
-- [!] T-0009 · Sync two harness references with the Makefile and CI
+- [x] T-0009 · Sync two harness references with the Makefile and CI
   - skills: iace-go-standards, iace-ci-cd
   - depends: T-0004, T-0006
   - accept:
     - iace-go-standards assets/golangci.yml uses gofumpt `extra: {group-params: true}` instead of the deprecated `extra-rules: true`, matching .golangci.yml
     - iace-ci-cd SKILL.md lists the CI jobs as ci.yml has them: `policy-test` (not `policy`), with the testscript e2e suite running inside `test` rather than a separate `e2e` job
-  - attempts: 0
-  - blocked: needs-human — both are harness files (.claude/**), so the owner makes or approves the edits (T-0004 and T-0006 review findings)
+  - attempts: 1
+  - result: owner-approved harness edits: the golangci asset uses gofumpt `extra.group-params` (the repo config's body is again identical to it); the iace-ci-cd skill lists the CI jobs as ci.yml has them and says both rulesets are active
 
 ## M1 · Terraform loading (static HCL) — status: planned
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source

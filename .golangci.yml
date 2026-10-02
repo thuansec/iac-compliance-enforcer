@@ -96,7 +96,7 @@ formatters:
     - goimports
   settings:
     gofumpt:
-      extra: # golangci-lint v2.14 replaced the asset's deprecated `extra-rules: true` with this
+      extra:
         group-params: true
     goimports:
       local-prefixes:
