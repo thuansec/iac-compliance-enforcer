@@ -25,8 +25,8 @@ GitHub writes. Run each command with `!` in Claude Code or in a terminal, with a
 
 | setting | why | command | status on 2026-10-02 |
 |---|---|---|---|
-| `main` ruleset | server-side merge gate for everyone: pull request, `ci-ok` green, branch up to date, squash only, no force push or deletion | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/main-ruleset.json` | not applied |
-| release-tag ruleset | `v*` and `policies-v*` tags cannot be moved or deleted once pushed | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/tags-ruleset.json` | not applied |
+| `main` ruleset | server-side merge gate for everyone: pull request, `ci-ok` green, branch up to date, squash only, no force push or deletion | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/main-ruleset.json` | active since 2026-10-02 (ruleset 24364215) |
+| release-tag ruleset | `v*` and `policies-v*` tags cannot be moved or deleted once pushed | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/tags-ruleset.json` | active since 2026-10-02 (ruleset 24364226) |
 | secret scanning with push protection | alerts on, and blocks pushes of, known credential formats | `gh api -X PATCH repos/thuansec/iac-compliance-enforcer -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` | unknown (the loop's token cannot read it) |
 | private vulnerability reporting | researchers can report privately (SECURITY.md, T-0007) | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/private-vulnerability-reporting` | off |
 | Dependabot alerts | alerts on vulnerable Go modules and actions | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/vulnerability-alerts` | unknown (the loop's token cannot read it) |
@@ -34,6 +34,12 @@ GitHub writes. Run each command with `!` in Claude Code or in a terminal, with a
 
 Once the `main` ruleset is active, `"auto_merge": true` in `.claude/loop-policy.json` becomes
 possible (see `docs/ci/branch-workflow.md`). That is optional and the owner's decision.
+
+GitHub adds `require_extra_approval_for_unattributed_changes: true` to every pull-request rule:
+a pull request with a commit GitHub cannot attribute to a linked account needs one more approving
+review, and nobody can approve their own pull request. The loop's commits are attributed to the
+owner's account (checked on pull requests #5 to #7), so keep the loop's commit email one that is
+linked to that account; the GitHub noreply address is.
 
 ## Verification
 The loop can read the rulesets (`gh api repos/thuansec/iac-compliance-enforcer/rulesets`) and

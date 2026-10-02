@@ -192,3 +192,17 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   references/policy-supply-chain.md, iace-ci-cd references/release.md, iace-security
   references/threat-model.md (private-repository premises removed).
 - Next: the owner applies the settings; the loop continues with T-0003.
+
+### 2026-10-02 · T-1107 · blocked
+- What: the owner imported both rulesets. Read back through the API: "main: pull requests with
+  green CI" (24364215) and "release tags are immutable" (24364226), both active with no bypass
+  and matching docs/ci; the effective rules on `main` are deletion, non_fast_forward,
+  pull_request and required_status_checks (`ci-ok` from GitHub Actions, strict).
+- GitHub added `require_extra_approval_for_unattributed_changes: true` to the pull-request rule. The
+  loop's commits on pull requests #5 to #7 are attributed to the owner's account, so it does not
+  block loop merges; docs/ci/main-ruleset.json now states it, and the docs explain it.
+- Still to apply: secret scanning with push protection, private vulnerability reporting (still
+  off), Dependabot alerts, approval for outside contributors' workflows.
+- Files: docs/ci/main-ruleset.json, docs/ci/branch-workflow.md, docs/security/going-public.md,
+  docs/plan/BACKLOG.md.
+- Next: this is the first pull request merged under the ruleset; then T-0003.
