@@ -290,3 +290,23 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (needs-human) to update the harness asset's deprecated gofumpt key.
 - Next: T-0005 (ADRs and docs skeleton). T-0006 should drop CI's separate `go install
   actionlint` step: `make lint` runs the pinned actionlint, and gates.sh then skips its own.
+
+### 2026-10-02 · T-0005 · done
+- What: the first three ADRs and the project's front door. ADR 0001 adopts ADRs (template,
+  sequential numbers, immutable, contract changes land with their ADR). ADR 0002 embeds OPA via
+  the v1 `rego` package (not `sdk`, not a subprocess), with the `opa` CLI pinned to the library
+  version. ADR 0003 analyzes Terraform statically and never executes it (plan JSON only as an
+  opt-in input from trusted pipelines). The README covers purpose, status, a quickstart
+  placeholder, links, private vulnerability reporting and the license. CONTRIBUTING covers
+  prerequisites, the make targets, how a change lands, the ground rules and the loop. LICENSE is
+  the Apache-2.0 text (D-01).
+- Files: docs/adr/0001-record-architecture-decisions.md,
+  docs/adr/0002-embed-opa-via-the-v1-rego-package.md,
+  docs/adr/0003-analyze-terraform-statically-never-execute-it.md, README.md, CONTRIBUTING.md,
+  LICENSE.
+- Evidence: LICENSE fetched from apache.org and cross-checked against the Apache-2.0 LICENSE of
+  github.com/inconshreveable/mousetrap in the module cache (identical apart from its filled-in
+  appendix example); every relative link in README and CONTRIBUTING resolves; the quickstart
+  commands run.
+- Review: docs only, no reviewer.
+- Next: T-0006 (extend CI with the full Go and OPA jobs; drop the separate actionlint install).
