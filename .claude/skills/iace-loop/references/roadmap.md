@@ -655,9 +655,16 @@ Goal: signed, reproducible releases with SBOM and provenance, plus a hardening p
   - accept:
     - the threat model is updated to match the code; every mitigation maps to a test; the checklist results are recorded
   - attempts: 0
+- [ ] T-1107 · Make the repository public
+  - skills: iace-security, iace-ci-cd
+  - depends: T-1105
+  - accept:
+    - the loop prepares docs/security/going-public.md: a secret scan of the full history (every commit and every `refs/pull/*/head`), which author emails become public (counted, never written out), and the settings to turn on afterwards: the `main` ruleset from docs/ci/main-ruleset.json, a tag ruleset for `v*` and `policies-v*`, secret scanning with push protection, private vulnerability reporting, Dependabot alerts, and approval for workflow runs from outside contributors
+    - needs-human: the owner reviews it, switches the visibility (D-08) and applies the settings; the loop then confirms what it can read with `gh api`
+  - attempts: 0
 - [ ] T-1106 · v0.1.0 release checklist
   - skills: iace-ci-cd
-  - depends: T-1105
+  - depends: T-1107
   - accept:
     - blocked needs-human: the human tags and publishes; the loop prepares the changelog and release notes
   - attempts: 0

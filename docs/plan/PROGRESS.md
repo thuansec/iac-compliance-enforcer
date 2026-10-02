@@ -160,3 +160,19 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   `ecdsa.VerifyASN1` accept the signature and both reject a tampered bundle. GitHub docs:
   attestations on Free, Pro and Team only for public repositories.
 - Next: T-0003.
+
+### 2026-10-02 · decision · done
+- Owner decision D-08: the repository becomes public before the first release, so the M11 release
+  plan stays as written (keyless cosign signatures and GitHub build-provenance attestations, which
+  on GitHub Free both need a public repository).
+- Not done: the visibility switch itself. It is outward-facing and cannot be undone (clones and
+  forks keep the history), so it is the needs-human step of the new T-1107, after the security
+  sign-off (T-1105) and before the v0.1.0 release (T-1106 now depends on T-1107).
+- Found while checking: the owner's personal email is the author of the two early commits on
+  `main` and of the commits behind every loop pull request so far (GitHub keeps
+  `refs/pull/N/head` after branches are deleted); squash merges use the GitHub noreply address.
+  All of it becomes public with the repository. T-1107 reports this before the switch.
+- Files: docs/plan/BACKLOG.md (D-08 resolved, no decisions open; T-1107; T-1106 depends on
+  T-1107), iace-ci-cd references/release.md (policy attestation step guarded on a public
+  repository), iace-loop references/roadmap.md (T-1106, T-1107 seeds).
+- Next: T-0003.

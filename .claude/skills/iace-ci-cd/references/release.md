@@ -35,8 +35,9 @@ and/or `cosign verify-blob`. The composite action does this in release-binary mo
   and sha256), then `aws-actions/configure-aws-credentials` (pinned) with the signing role, then
   `aws kms sign` on the bundle digest, then verify the signature with the embedded public key
   (fail closed), then upload the bundle, `.sig` and `.sha256` as release assets. Add a
-  build-provenance attestation only if the repository is public (D-08): GitHub Free offers
-  artifact attestations only for public repositories.
+  build-provenance attestation step guarded by `if: ${{ !github.event.repository.private }}`:
+  GitHub Free offers artifact attestations only for public repositories, and this repository
+  goes public before the first release (D-08, T-1107).
 - The release notes include the pin snippet:
   ```yaml
   sources:

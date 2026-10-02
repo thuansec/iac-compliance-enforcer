@@ -10,12 +10,7 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - max_attempts_per_task: 3
 
 ## Decisions needed
-- D-08 · Repository visibility when releases start (M11). The release plan signs binaries with
-  keyless cosign and attaches GitHub build-provenance attestations. On GitHub Free, attestations
-  work only in public repositories, and keyless cosign writes the repository and workflow names to
-  Sigstore's public transparency log. Options: make the repository public before M11 (the plan
-  works as written, at no cost), or keep it private and sign `checksums.txt` with a second AWS KMS
-  key the way policy bundles are signed (no attestations). Blocks: T-1101.
+None open.
 
 ## M0 · Foundations — status: active
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -663,9 +658,16 @@ Goal: signed, reproducible releases with SBOM and provenance, plus a hardening p
   - accept:
     - the threat model is updated to match the code; every mitigation maps to a test; the checklist results are recorded
   - attempts: 0
+- [ ] T-1107 · Make the repository public
+  - skills: iace-security, iace-ci-cd
+  - depends: T-1105
+  - accept:
+    - the loop prepares docs/security/going-public.md: a secret scan of the full history (every commit and every `refs/pull/*/head`), which author emails become public (counted, never written out), and the settings to turn on afterwards: the `main` ruleset from docs/ci/main-ruleset.json, a tag ruleset for `v*` and `policies-v*`, secret scanning with push protection, private vulnerability reporting, Dependabot alerts, and approval for workflow runs from outside contributors
+    - needs-human: the owner reviews it, switches the visibility (D-08) and applies the settings; the loop then confirms what it can read with `gh api`
+  - attempts: 0
 - [ ] T-1106 · v0.1.0 release checklist
   - skills: iace-ci-cd
-  - depends: T-1105
+  - depends: T-1107
   - accept:
     - blocked needs-human: the human tags and publishes; the loop prepares the changelog and release notes
   - attempts: 0
