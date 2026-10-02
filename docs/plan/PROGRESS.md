@@ -310,3 +310,28 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   commands run.
 - Review: docs only, no reviewer.
 - Next: T-0006 (extend CI with the full Go and OPA jobs; drop the separate actionlint install).
+
+### 2026-10-02 · T-0006 · done
+- What: CI now runs the full set of checks as separate jobs, all through make and all in
+  `ci-ok`'s needs: lint (`make fmt-check lint`), test (`make test cover-check`, which also runs
+  the testscript e2e suite), policy-test (`make policy-check policy-test`, a no-op until M2), vuln
+  (`make vuln`), and build (linux/darwin/windows × amd64/arm64, `make build` with GOOS/GOARCH).
+  `gates` stays for loop parity, without its separate `go install actionlint` step (`make lint`
+  runs the pinned actionlint). setup-go reads `go.mod` (the toolchain line wins, so go1.27.1),
+  and each job keys its cache on the go.sum files of what it builds. .github/dependabot.yml
+  updates gomod (`/` and `/tools/*`) and github-actions weekly, with minor and patch grouped.
+- Files: .github/workflows/ci.yml, .github/dependabot.yml, docs/plan/BACKLOG.md (T-0202 gains a
+  bullet: the OPA library and tools/opa move together, with a test and Dependabot grouping).
+- Evidence: checkout v7.0.1 and setup-go v7.0.0 are the latest releases, and `gh api` resolved
+  both tags to the pinned commit SHAs (lightweight tags). setup-go's README and advanced-usage doc
+  at that commit confirm the toolchain directive and multi-line cache paths. actionlint passes;
+  all 12 `uses:` are pinned with version comments; 6/6 checkouts use persist-credentials: false;
+  every job has a timeout; ci-ok needs every other job (parsed with PyYAML); all six cross-builds
+  pass locally. GitHub's docs confirm `directories` accepts globs.
+- Review: iace-reviewer APPROVE with three minor findings. Fixed: a single shared cache key meant
+  only the first job to finish (usually one that builds nothing) saved the cache, so each job now
+  has its own key and the build matrix doesn't cache; Dependabot listed tool directories by hand,
+  now `/tools/*`. Recorded: T-0009 (needs-human) now also updates the iace-ci-cd skill's job list
+  (`policy-test`, e2e inside `test`). Local actionlint ran without shellcheck (not installed);
+  the first CI run shellchecks the `run:` scripts.
+- Next: T-0007 (security baseline documents).

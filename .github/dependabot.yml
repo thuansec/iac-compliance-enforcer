@@ -1,0 +1,24 @@
+# Weekly dependency updates, grouped so minor and patch bumps arrive as one pull request per
+# ecosystem. Every update still goes through CI and the `main` ruleset like any other change.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    # The product module plus every pinned dev tool module (decision D-07); the glob also picks up
+    # tools added later. Once the engine imports the OPA library, tools/opa must move with it
+    # (ADR 0002; T-0202 adds the check).
+    directories:
+      - /
+      - /tools/*
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
