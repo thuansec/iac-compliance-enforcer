@@ -69,12 +69,13 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - actionlint passes; .github/dependabot.yml covers gomod and github-actions
   - attempts: 1
   - result: ci.yml runs gates plus lint, test (race, coverage, testscript e2e), policy-test, vuln and a linux/darwin/windows × amd64/arm64 build matrix, all via make and all in ci-ok's needs; checkout v7.0.1 and setup-go v7.0.0 pinned by SHA (resolved with gh api), go-version-file: go.mod, a cache key per job; dependabot.yml covers gomod (/, /tools/*) and github-actions
-- [ ] T-0007 · Write the security baseline documents
+- [x] T-0007 · Write the security baseline documents
   - skills: iace-security
   - depends: T-0005
   - accept:
     - SECURITY.md (private vulnerability reporting), CODEOWNERS (@thuansec), docs/security/threat-model.md adapted from the iace-security reference
-  - attempts: 0
+  - attempts: 1
+  - result: SECURITY.md (private vulnerability reporting, what to include, scope, no release yet); .github/CODEOWNERS (`* @thuansec`); docs/security/threat-model.md adapted from the iace-security seed with a status per mitigation and a new T13 for the AI development loop
 - [x] T-0008 · Document `iace version --json` in the CLI contract
   - skills: iace-architecture
   - depends: T-0003

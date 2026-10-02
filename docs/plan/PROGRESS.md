@@ -335,3 +335,20 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (`policy-test`, e2e inside `test`). Local actionlint ran without shellcheck (not installed);
   the first CI run shellchecks the `run:` scripts.
 - Next: T-0007 (security baseline documents).
+
+### 2026-10-02 · T-0007 · done
+- What: the security baseline. SECURITY.md sends reports to GitHub's private vulnerability
+  reporting, lists what to include (fake values only) and the scope, and states that there is no
+  release yet; it makes no response-time promise, which would be the owner's to give.
+  .github/CODEOWNERS makes @thuansec the owner of everything (the ruleset doesn't require
+  code-owner review, so loop pull requests still merge). docs/security/threat-model.md adapts
+  the iace-security seed: assets now include the development harness (A7) and the AI loop as an
+  actor; every mitigation says whether it is in place or planned in a milestone; new T13 covers
+  the AI development loop (hooks, harness approval, reviewer agent, `main` ruleset, owner-only
+  tags). The README links SECURITY.md.
+- Files: SECURITY.md, .github/CODEOWNERS, docs/security/threat-model.md, README.md.
+- Evidence: every relative link in SECURITY.md, the threat model and the README resolves; the
+  statuses match the backlog (the T10 and T11 controls and the rulesets are live).
+- Review: docs only, no reviewer.
+- Next: M0's last open task is T-0009, which needs the owner (two harness edits); then the M0
+  wrap-up.
