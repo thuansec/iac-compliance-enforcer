@@ -1,0 +1,13 @@
+# iace version --json prints the build information as a versioned JSON document.
+exec iace version --json
+cmp stdout want.json
+! stderr .
+
+-- want.json --
+{
+  "schema_version": "1",
+  "name": "iace",
+  "version": "dev",
+  "commit": "dev",
+  "date": "dev"
+}

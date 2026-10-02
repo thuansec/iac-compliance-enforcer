@@ -1,0 +1,4 @@
+# A usage error fails with one line on stderr and nothing on stdout.
+! exec iace version --bogus
+! stdout .
+stderr '^iace: unknown flag: --bogus; see ''iace --help''$'
