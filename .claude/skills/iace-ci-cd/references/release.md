@@ -26,10 +26,11 @@ and/or `cosign verify-blob`. The composite action does this in release-binary mo
 
 ## policy-release.yml (tag push `policies-v*`)
 - Signs with the AWS KMS key from decision D-03 (signature format and IAM conditions:
-  iace-repo-policy `references/policy-supply-chain.md`). GitHub Free has no environments for
-  private repositories, so the IAM role is the gate: it trusts only OIDC tokens for
-  `refs/tags/policies-v*` and may only sign with that key. The workflow holds no secret; the role
-  and key ARNs are repository variables.
+  iace-repo-policy `references/policy-supply-chain.md`). The IAM role is the gate: it trusts
+  only OIDC tokens for `refs/tags/policies-v*` and may only sign with that key. The workflow holds
+  no secret; the role and key ARNs are repository variables. If the job ever uses a GitHub
+  environment, the OIDC `sub` becomes `repo:…:environment:<name>`, so the role's trust policy
+  must change with it.
 - permissions: `contents: write` (release assets), `id-token: write` (OIDC to AWS).
 - Steps: `make policy-check policy-test`, then `make policy-bundle VERSION=…` (unsigned bundle
   and sha256), then `aws-actions/configure-aws-credentials` (pinned) with the signing role, then
