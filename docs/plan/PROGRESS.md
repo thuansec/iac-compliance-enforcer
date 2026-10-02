@@ -70,3 +70,23 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Evidence: hook tests 199/199 (29 merge-gate cases, each checking its block reason; 11 ci_state
   cases); ci_state.py on PR #1's head against the live API: passed (run 36896148899, gates and ci-ok).
 - Next: merge PR #1 through the gate once CI is green on the new head; then T-0002.
+
+### 2026-10-02 · T-0002 · blocked
+- What: tried to pin golangci-lint v2.14.0, govulncheck v1.8.0, actionlint v1.7.12, regal v0.43.0
+  and opa v1.21.1 (latest; opa stays at v1.21.1 under MVS) in one tools/go.mod. Go is go1.27.1 (ok).
+  Two problems block it:
+  1. One module graph cannot build all five tools. OPA/regal require github.com/gobwas/glob v1.0.0,
+     and depguard (in golangci-lint) fails to compile with it (`undefined: glob.Glob`). actionlint
+     v1.7.12 is built against go.yaml.in/yaml/v4 rc.3, and gosec (in golangci-lint) forces rc.6
+     (`te.Errors[0].Error undefined`). Tried in the scratchpad: {golangci-lint, govulncheck} build
+     together, actionlint fails alongside golangci-lint, {opa, regal} build together.
+  2. `go tool -modfile=tools/go.mod` fails without a root go.mod ("cannot find main module, but
+     -modfile was set"), and gates.sh runs actionlint that way as soon as tools/go.mod exists. A root
+     go.mod with no packages fails the bootstrap gates (`go vet ./...`: no packages), so this needs
+     T-0003's module first.
+- Files: docs/plan/BACKLOG.md (T-0002 `[!]` needs-human, new D-07; T-0003 now depends on T-0001,
+  T-0004 on T-0002 + T-0003), docs/plan/PROGRESS.md. No tools/go.mod committed.
+- Evidence: commands and errors above; scratch modules were deleted.
+- Review: plan-only change, no reviewer.
+- Next: T-0003 (scaffold the module). The owner decides D-07 and updates gates.sh and the
+  iace-go-standards skill (harness), then T-0002 resumes.
