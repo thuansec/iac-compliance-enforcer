@@ -25,7 +25,7 @@ and similar are pure functions that SG/NSG rules need. Deny only network-perform
 ## Generation (Makefile target `capabilities`)
 Generate, don't hand-edit. A small Go program (`internal/engine/capgen`, run via `go run`) or a
 script:
-1. Runs `opa capabilities --current` using the pinned OPA (`go tool -modfile=tools/go.mod opa`).
+1. Runs `opa capabilities --current` using the pinned OPA (`go tool -modfile=tools/opa/go.mod opa`).
 2. Removes the denylisted builtins by exact name.
 3. Sets `allow_net` to `[]`.
 4. Writes `policies/capabilities.json` with sorted keys, so the diff is reviewable.

@@ -36,7 +36,8 @@ again. Never try to get around it.
 
 ## Makefile contract
 The Makefile is the single source of commands. CI calls the same targets (`iace-ci-cd`), and the
-gates fail if any target is missing. Tools run via `go tool -modfile=tools/go.mod …`, so versions are pinned.
+gates fail if any target is missing. Tools run via `go tool -modfile=tools/<tool>/go.mod <tool> …`
+(one module per tool, see `iace-go-standards`), so versions are pinned.
 
 | target | must do |
 |---|---|
@@ -48,7 +49,7 @@ gates fail if any target is missing. Tools run via `go tool -modfile=tools/go.mo
 | `policy-test` | `opa test --capabilities policies/capabilities.json --coverage --threshold 90 policies` (no-op before M2) |
 | `vuln` | `govulncheck ./...` |
 | `build` | `CGO_ENABLED=0 go build -trimpath ./...` |
-| `tidy-check` | `go mod tidy -diff` for the root module and for `tools/go.mod` |
+| `tidy-check` | `go mod tidy -diff` for the root module and for every `tools/<tool>/go.mod` (`go -C tools/<tool> mod tidy -diff`) |
 | `ci` | all of the above, in that order |
 | also | `fmt` (apply formatting), `tools` (install pinned tools), `capabilities` (regenerate), `policy-bundle` (M8), `snapshot` (GoReleaser snapshot, M11) |
 

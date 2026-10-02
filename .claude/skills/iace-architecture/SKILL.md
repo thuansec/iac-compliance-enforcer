@@ -53,7 +53,7 @@ policies/                 built-in Rego library and embed.go (iace-rego-policies
 schemas/                  JSON Schemas: input.v1, findings.v1, config.v1, ai-fix.v1
 testdata/                 Terraform fixtures, golden files, fuzz corpora (iace-testing)
 docs/adr/  docs/plan/     decisions; backlog and progress
-tools/go.mod              pinned dev tools
+tools/<tool>/go.mod       pinned dev tools, one module per tool
 ```
 **Dependency rules** (enforce with depguard or tests if they drift):
 - `model` imports nothing internal. Everything may import `model`.

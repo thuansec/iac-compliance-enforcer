@@ -55,7 +55,7 @@ project or reach outside it.
    `BACKLOG.md`, mark the task `[!]` with `blocked: needs-human — <question>`, and pick another ready task.
 4. **Stay inside the repository and the policy.** No `sudo`, no global installs, no edits outside
    the repo, nothing the loop policy doesn't allow, and no live paid API calls unless
-   `live_api_calls` is true. Pinned dev tools come from `tools/go.mod`.
+   `live_api_calls` is true. Pinned dev tools come from `tools/<tool>/go.mod`.
 5. **Never touch the harness** (`.claude/**`, `CLAUDE.md`). Changes there need a human: the
    guard asks, and unattended runs deny.
 6. **Never weaken a gate to get green.** That means no deleting or skipping tests, no lowering

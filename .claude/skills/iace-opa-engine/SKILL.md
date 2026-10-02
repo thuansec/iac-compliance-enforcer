@@ -11,7 +11,7 @@ description: How iace embeds Open Policy Agent in Go — the v1 rego/ast/bundle 
 - Use the low-level `rego` package, not `sdk`. OPA's own docs recommend `rego` when "only policy
   evaluation — and no other capabilities of OPA, like the management features — are desired",
   which is our case: no discovery, no decision logs, no remote bundle polling.
-- Keep the library version equal to the `opa` CLI pinned in `tools/go.mod`, and bump both in one
+- Keep the library version equal to the `opa` CLI pinned in `tools/opa/go.mod`, and bump both in one
   commit. Re-run `make capabilities` and the full policy suite on every bump.
 
 ## Lifecycle (once per run)

@@ -27,17 +27,18 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - `git remote get-url origin` is https://github.com/thuansec/iac-compliance-enforcer.git and main tracks origin/main
     - docs/plan/BACKLOG.md, docs/plan/PROGRESS.md and CLAUDE.md exist; .claude/ is committed; nothing pushed
   - attempts: 0
-- [ ] T-0002 · Verify toolchain and pin dev tools in tools/go.mod
+- [ ] T-0002 · Verify toolchain and pin each dev tool in its own module
   - skills: iace-go-standards, iace-quality-gates
-  - depends: T-0001
+  - depends: T-0001, T-0003
   - accept:
     - `go version` reports a current stable release, at least 1.24 (needed for tool directives); if Go is missing, the task is blocked needs-human with install commands
-    - tools/go.mod pins golangci-lint v2, govulncheck, regal, actionlint and opa, with opa at the same version later used as the library
-    - `make tools` (or `go tool -modfile=tools/go.mod <tool> --version`) works for each tool
+    - tools/<tool>/go.mod (with go.sum) pins each of golangci-lint v2, govulncheck, regal, actionlint and opa in its own module, with opa at exactly the version later used as the library
+    - from the repository root, `go tool -modfile=tools/<tool>/go.mod <tool>` prints its version for each tool, and `go -C tools/<tool> mod tidy -diff` is clean for each module
+    - `gates.sh full` passes and runs actionlint from tools/actionlint/go.mod
   - attempts: 0
 - [ ] T-0003 · Scaffold the Go module and `iace version`
   - skills: iace-go-standards, iace-architecture, iace-testing
-  - depends: T-0002
+  - depends: T-0001
   - accept:
     - go.mod module path is github.com/thuansec/iac-compliance-enforcer; `go build ./...` passes
     - cmd/iace/main.go is a thin main; internal/cli holds a cobra root plus `version` (`--json`), with version/commit/date injected via ldflags (default "dev")
@@ -45,7 +46,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - attempts: 0
 - [ ] T-0004 · Add the Makefile, golangci-lint config and editor config
   - skills: iace-quality-gates, iace-go-standards
-  - depends: T-0003
+  - depends: T-0002, T-0003
   - accept:
     - the Makefile implements every target in the iace-quality-gates contract; `make ci` passes
     - .golangci.yml is adapted from the iace-go-standards asset; `golangci-lint config verify` passes

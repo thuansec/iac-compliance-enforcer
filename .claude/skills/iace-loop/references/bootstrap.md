@@ -71,7 +71,7 @@ that it then verifies.
 - Standards live in the `.claude/skills/iace-*` skills. Load the ones for the area you touch.
 
 ## Commands
-- `make tools` installs the pinned dev tools (tools/go.mod).
+- `make tools` installs the pinned dev tools (one module per tool, tools/<tool>/go.mod).
 - `make fmt`, `make lint`, `make test`, `make policy-test`, `make vuln`, `make ci`
 - Gates: `bash .claude/skills/iace-quality-gates/scripts/gates.sh quick|full`
 
