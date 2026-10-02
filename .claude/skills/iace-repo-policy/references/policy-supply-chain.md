@@ -49,8 +49,9 @@ Check the exact `opa build` and `aws kms sign` flags against the pinned versions
   GitHub OIDC tokens with `aud` `sts.amazonaws.com` and `sub`
   `repo:thuansec/iac-compliance-enforcer:ref:refs/tags/policies-v*`, and may only call `kms:Sign`
   and `kms:GetPublicKey` on that key. Branch workflows, including the loop's, cannot assume it.
-  GitHub Free has no tag protection for private repositories, so keep write access to the
-  owner; the loop never pushes tags.
+  Anyone with write access can create a `policies-v*` tag and so trigger signing, so keep write
+  access to the owner; the loop never pushes tags. The release-tag ruleset
+  (`docs/ci/tags-ruleset.json`) stops a signed tag from being moved or deleted.
 - The workflow verifies the new signature with the embedded public key before uploading, and
   fails closed if it does not verify.
 - The public key (`aws kms get-public-key`, converted to PEM), with its `key_id` (e.g.

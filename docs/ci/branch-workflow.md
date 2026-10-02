@@ -15,13 +15,14 @@ main ──► git switch -c feat/T-0002-pin-tools ──► commits (full gates
 | layer | enforces | available |
 |---|---|---|
 | Guard hook (`.claude/hooks/guard-loop.py`) | Claude never commits or pushes to `main`; pushes only content the full gates passed; merges only open, non-draft, conflict-free, up-to-date PRs whose latest CI runs (including the `ci-ok` job) all passed; squash only; never `--admin` | now |
-| CI (`.github/workflows/ci.yml`) | gates on every PR and on `main`, tested on the PR merged with its base | now (Actions minutes apply to private repos) |
-| GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | **not used.** It needs GitHub Pro or a public repository, and the owner decided (2026-10-01) to stay on GitHub Free. Kept for reference in case the repository ever goes public. |
+| CI (`.github/workflows/ci.yml`) | gates on every PR and on `main`, tested on the PR merged with its base | now (free on standard runners for public repositories) |
+| GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | available since the repository went public (2026-10-02, D-08); the owner applies it (step 2 below; status in docs/security/going-public.md) |
 
-**Decision (2026-10-01): GitHub Free, private repository.** The merge gate is enforced by the
-guard hook (for Claude) and CI (for every PR). Humans are trusted to follow the same workflow;
-nothing on GitHub stops a human pushing to `main`, so don't. Keep `auto_merge` false: without a
-ruleset, GitHub would auto-merge without waiting for checks.
+**Decision (2026-10-01, updated 2026-10-02): GitHub Free; the repository is public since
+2026-10-02 (D-08).** Until the owner applies the ruleset, the merge gate is enforced by the guard
+hook (for Claude) and CI (for every PR), and nothing on GitHub stops a human pushing to `main`, so
+don't. Keep `auto_merge` false until the ruleset is active: without it, GitHub would auto-merge
+without waiting for checks.
 
 The loop's permissions (push branches, open PRs, merge, auto-merge) are set in
 `.claude/loop-policy.json`. That is a harness file, so the loop cannot change them; edits ask a human.
@@ -52,10 +53,13 @@ runs them, because the guard blocks GitHub writes.
        -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
        -F delete_branch_on_merge=true -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
    ```
-2. *(Not used; see the decision above.)* Server-side gate. Needs GitHub Pro or a public
-   repository; on Free + private the API answers *"Upgrade to GitHub Pro or make this repository public"*:
+2. Server-side gate, available since the repository went public (on a private Free repository the
+   API answers *"Upgrade to GitHub Pro or make this repository public"*). The second ruleset makes
+   `v*` and `policies-v*` tags immutable: once pushed, nobody can move or delete them (edit the
+   ruleset to fix a mistaken tag). The last command is needed only for step 3:
    ```bash
    ! gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/main-ruleset.json
+   ! gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/tags-ruleset.json
    ! gh api -X PATCH repos/thuansec/iac-compliance-enforcer -F allow_auto_merge=true
    ```
    Check the field names against the current REST "Create a repository ruleset" docs first.

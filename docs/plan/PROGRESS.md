@@ -176,3 +176,19 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   T-1107), iace-ci-cd references/release.md (policy attestation step guarded on a public
   repository), iace-loop references/roadmap.md (T-1106, T-1107 seeds).
 - Next: T-0003.
+
+### 2026-10-02 · T-1107 · blocked
+- What: the owner made the repository public (D-08), earlier than T-1107 planned. Checked
+  everything that became visible: all 17 commits on `main` and on the 6 pull-request refs. The
+  gates' credential patterns match only 12 test fixtures marked `iace:fake-secret` (all obviously
+  fake), gitleaks v8.30.1 finds no leaks, and commit messages are clean. 10 commits carry the
+  owner's personal email address; the rest use the GitHub noreply address.
+- Settings: none applied yet (no rulesets; private vulnerability reporting off; the loop's token
+  cannot read the Dependabot, fork-approval or workflow settings). docs/security/going-public.md
+  lists each with its command. The new docs/ci/tags-ruleset.json makes `v*` and `policies-v*` tags
+  immutable, and docs/ci/branch-workflow.md now says the `main` ruleset can be applied.
+- Files: docs/security/going-public.md, docs/ci/tags-ruleset.json, docs/ci/branch-workflow.md,
+  docs/plan/BACKLOG.md (T-1107 `[!]` needs-human), iace-repo-policy
+  references/policy-supply-chain.md, iace-ci-cd references/release.md, iace-security
+  references/threat-model.md (private-repository premises removed).
+- Next: the owner applies the settings; the loop continues with T-0003.
