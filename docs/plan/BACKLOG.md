@@ -23,7 +23,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - docs/plan/BACKLOG.md, docs/plan/PROGRESS.md and CLAUDE.md exist; .claude/ is committed; nothing pushed
   - attempts: 1
   - result: origin wired (main tracks origin/main at 6b37a48); BACKLOG, PROGRESS and CLAUDE.md created; .claude committed; nothing pushed
-- [ ] T-0002 · Verify toolchain and pin each dev tool in its own module
+- [x] T-0002 · Verify toolchain and pin each dev tool in its own module
   - skills: iace-go-standards, iace-quality-gates
   - depends: T-0001, T-0003
   - accept:
@@ -31,7 +31,8 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - tools/<tool>/go.mod (with go.sum) pins each of golangci-lint v2, govulncheck, regal, actionlint and opa in its own module (D-07), with opa at exactly the version later used as the library
     - from the repository root, `go tool -modfile=tools/<tool>/go.mod <tool>` prints its version for each tool, and `go -C tools/<tool> mod tidy -diff` is clean for each module
     - `gates.sh full` passes and runs actionlint from tools/actionlint/go.mod
-  - attempts: 1
+  - attempts: 2
+  - result: go1.27.1; tools/<tool>/go.mod pins golangci-lint v2.14.0, govulncheck v1.8.0, actionlint v1.7.12, regal v0.43.0 and opa v1.21.1 (the version the OPA library must use in M2); each runs via `go tool -modfile`, every module is tidy and verified; gates run actionlint from its module
 - [x] T-0003 · Scaffold the Go module and `iace version`
   - skills: iace-go-standards, iace-architecture, iace-testing
   - depends: T-0001
