@@ -42,14 +42,15 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - a testscript e2e test covers `iace version` and `iace version --json`
   - attempts: 1
   - result: module on go 1.27.0 (toolchain go1.27.1) with cobra v1.10.2 and go-internal v1.16.0 (tests); thin cmd/iace; internal/cli (Run → exit code, usage errors exit 2 on one stderr line) with `version [--json]`; internal/version set by -ldflags -X (default "dev"); testscript e2e plus a real -X build test; coverage 95.6%
-- [ ] T-0004 · Add the Makefile, golangci-lint config and editor config
+- [x] T-0004 · Add the Makefile, golangci-lint config and editor config
   - skills: iace-quality-gates, iace-go-standards
   - depends: T-0002, T-0003
   - accept:
     - the Makefile implements every target in the iace-quality-gates contract; `make ci` passes
     - .golangci.yml is adapted from the iace-go-standards asset; `golangci-lint config verify` passes
     - `gates.sh full` passes
-  - attempts: 0
+  - attempts: 1
+  - result: Makefile with the nine contract targets plus ci, fmt, tools and help (tools via `go tool -modfile`); .golangci.yml from the asset with gofumpt's renamed `extra.group-params`; .editorconfig; `make ci` and gates full pass (lint 0 issues, coverage 95.6%, govulncheck clean)
 - [ ] T-0005 · Write the ADRs and docs skeleton
   - skills: iace-architecture
   - depends: T-0003
@@ -79,6 +80,13 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - iace-architecture references/findings-and-cli.md lists the `iace version --json` fields (schema_version "1", name, version, commit, date), says changes to them follow the schema_version rules, and says a bare `iace` prints help and exits 0
   - attempts: 1
   - result: findings-and-cli.md documents the `iace version` text line, the `--json` document (key order, "dev" defaults, -X injection) and its schema_version rules, and that a bare `iace` prints help and exits 0; owner approved the harness edit
+- [!] T-0009 · Update the golangci-lint asset for golangci-lint v2.14
+  - skills: iace-go-standards
+  - depends: T-0004
+  - accept:
+    - iace-go-standards assets/golangci.yml uses gofumpt `extra: {group-params: true}` instead of the deprecated `extra-rules: true`, matching .golangci.yml
+  - attempts: 0
+  - blocked: needs-human — the asset is a harness file (.claude/**), so the owner makes or approves the edit (T-0004 review finding)
 
 ## M1 · Terraform loading (static HCL) — status: planned
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source

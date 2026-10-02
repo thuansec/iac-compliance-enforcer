@@ -41,14 +41,14 @@ func TestLdflagsInjection(t *testing.T) {
 	}
 	const pkg = "github.com/thuansec/iac-compliance-enforcer/internal/version"
 	ldflags := "-X " + pkg + ".Version=v9.8.7 -X " + pkg + ".Commit=0123abc -X " + pkg + ".Date=2026-10-02T00:00:00Z"
-	build := exec.Command(goBin, "build", "-trimpath", "-ldflags", ldflags, "-o", bin, ".")
+	build := exec.CommandContext(t.Context(), goBin, "build", "-trimpath", "-ldflags", ldflags, "-o", bin, ".")
 	// go build needs the caller's environment (module and build caches).
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	out, err := exec.Command(bin, "version", "--json").Output()
+	out, err := exec.CommandContext(t.Context(), bin, "version", "--json").Output()
 	if err != nil {
 		t.Fatalf("iace version --json: %v", err)
 	}
