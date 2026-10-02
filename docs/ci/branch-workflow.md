@@ -16,13 +16,14 @@ main ──► git switch -c feat/T-0002-pin-tools ──► commits (full gates
 |---|---|---|
 | Guard hook (`.claude/hooks/guard-loop.py`) | Claude never commits or pushes to `main`; pushes only content the full gates passed; merges only open, non-draft, conflict-free, up-to-date PRs whose latest CI runs (including the `ci-ok` job) all passed; squash only; never `--admin` | now |
 | CI (`.github/workflows/ci.yml`) | gates on every PR and on `main`, tested on the PR merged with its base | now (free on standard runners for public repositories) |
-| GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | available since the repository went public (2026-10-02, D-08); the owner applies it (step 2 below; status in docs/security/going-public.md) |
+| GitHub ruleset (`docs/ci/main-ruleset.json`) | the same rules for **everyone**: PR required, `ci-ok` required, branch up to date (strict), no force push or deletion, squash only | active since 2026-10-02 (ruleset 24364215), with the release-tag ruleset (24364226); no bypass, so it applies to the owner too |
 
 **Decision (2026-10-01, updated 2026-10-02): GitHub Free; the repository is public since
-2026-10-02 (D-08).** Until the owner applies the ruleset, the merge gate is enforced by the guard
-hook (for Claude) and CI (for every PR), and nothing on GitHub stops a human pushing to `main`, so
-don't. Keep `auto_merge` false until the ruleset is active: without it, GitHub would auto-merge
-without waiting for checks.
+2026-10-02 (D-08).** The ruleset enforces the merge gate on GitHub for everyone, and the guard hook
+checks the same things before Claude merges. GitHub also adds
+`require_extra_approval_for_unattributed_changes`: a pull request with a commit that is not
+attributed to a linked GitHub account needs an approval nobody can give themselves, so commit with
+an email linked to the account. `auto_merge` may now be enabled (step 3); it stays the owner's choice.
 
 The loop's permissions (push branches, open PRs, merge, auto-merge) are set in
 `.claude/loop-policy.json`. That is a harness file, so the loop cannot change them; edits ask a human.
