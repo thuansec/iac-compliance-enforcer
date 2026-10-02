@@ -51,14 +51,15 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - `gates.sh full` passes
   - attempts: 1
   - result: Makefile with the nine contract targets plus ci, fmt, tools and help (tools via `go tool -modfile`); .golangci.yml from the asset with gofumpt's renamed `extra.group-params`; .editorconfig; `make ci` and gates full pass (lint 0 issues, coverage 95.6%, govulncheck clean)
-- [ ] T-0005 · Write the ADRs and docs skeleton
+- [x] T-0005 · Write the ADRs and docs skeleton
   - skills: iace-architecture
   - depends: T-0003
   - accept:
     - docs/adr/0001 (record decisions), 0002 (Go with embedded OPA v1 rego package), 0003 (static analysis by default; never execute Terraform from scanned repos)
     - README.md covers purpose, status, a quickstart placeholder and links; CONTRIBUTING.md covers the dev loop and gates
     - LICENSE holds the full Apache-2.0 text (D-01)
-  - attempts: 0
+  - attempts: 1
+  - result: ADRs 0001 (record decisions), 0002 (embed OPA via v1 rego) and 0003 (static analysis, never execute Terraform); README with purpose, status, quickstart placeholder and links; CONTRIBUTING with prerequisites, commands, how a change lands and the loop; LICENSE is the canonical Apache-2.0 text from apache.org
 - [ ] T-0006 · Extend the CI workflow with the full Go/OPA jobs
   - skills: iace-ci-cd, iace-security
   - depends: T-0004
