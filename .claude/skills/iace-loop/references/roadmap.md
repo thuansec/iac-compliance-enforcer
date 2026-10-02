@@ -58,6 +58,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - accept:
     - docs/adr/0001 (record decisions), 0002 (Go with embedded OPA v1 rego package), 0003 (static analysis by default; never execute Terraform from scanned repos)
     - README.md covers purpose, status, a quickstart placeholder and links; CONTRIBUTING.md covers the dev loop and gates
+    - LICENSE holds the full Apache-2.0 text (D-01)
   - attempts: 0
 - [ ] T-0006 · Extend the CI workflow with the full Go/OPA jobs
   - skills: iace-ci-cd, iace-security
@@ -578,12 +579,13 @@ Goal: opt-in AI suggestions for violations, verified by re-scanning before anyon
   - accept:
     - the prompt follows references/prompt-contract.md; golden prompt tests; the structured-output JSON schema lives in schemas/ai-fix.v1.json
   - attempts: 0
-- [ ] T-1004 · Anthropic provider
+- [ ] T-1004 · Bedrock provider
   - skills: iace-ai-remediation, claude-api
   - depends: T-1003
   - accept:
-    - uses anthropic-sdk-go with default model claude-opus-5-5 and configurable effort; timeouts, retries, refusal handling and prompt caching
-    - all tests use httptest; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
+    - uses anthropic-sdk-go's Bedrock Mantle client with default model `anthropic.claude-opus-5-5` and configurable effort; timeouts, retries, refusal handling and prompt caching
+    - region and credentials come only from the AWS environment (never `.iace.yaml`) and are read only when AI is enabled; the disclosure names provider, region and model
+    - all tests use httptest with obviously fake credentials; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
   - attempts: 0
 - [ ] T-1005 · Fix validator
   - skills: iace-ai-remediation, iace-security, iace-opa-engine
@@ -602,12 +604,6 @@ Goal: opt-in AI suggestions for violations, verified by re-scanning before anyon
   - depends: T-1006
   - accept:
     - a 0600 cache keyed by prompt version, model and redacted context; max_findings, concurrency and a token budget; token usage in the summary
-  - attempts: 0
-- [ ] T-1008 · Bedrock and Vertex providers (optional)
-  - skills: iace-ai-remediation, claude-api
-  - depends: T-1007
-  - accept:
-    - provider selection via config; same validation pipeline; httptest-based tests
   - attempts: 0
 - [ ] T-1009 · Opt-in eval harness
   - skills: iace-ai-remediation, iace-testing

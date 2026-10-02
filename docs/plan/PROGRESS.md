@@ -106,3 +106,32 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   through `go tool -modfile=tools/<tool>/go.mod` (golangci-lint 2.14.0, govulncheck 1.8.0,
   actionlint 1.7.12, regal 0.43.0 with OPA 1.21.0, opa 1.21.1), and `go mod tidy -diff` is clean for each.
 - Next: T-0003 (scaffold the module), then T-0002.
+
+### 2026-10-02 · decision · done
+- Owner decisions:
+  - D-01: the repository license is Apache-2.0. T-0005 now adds the LICENSE file.
+  - D-02: confirmed: the CLI is `iace` and the config file `.iace.yaml`.
+  - D-05: Amazon Bedrock is the only approved AI provider; the first-party Claude API, Vertex AI
+    and Foundry are not approved. iace uses anthropic-sdk-go's Bedrock Mantle client with
+    `anthropic.claude-opus-5-5`; region and credentials come only from the AWS environment, never
+    from `.iace.yaml`, so a pull request cannot redirect where code excerpts go. Bedrock has no
+    `inference_geo` and no server-side refusal fallbacks. T-1004 is now the Bedrock provider;
+    T-1008 (Bedrock and Vertex as optional providers) is superseded.
+  - D-06: map to the CIS AWS Foundations Benchmark v5.0.0 and the CIS Microsoft Azure Foundations
+    Benchmark v2.0.0, the newest versions with an official public mapping (AWS Security Hub; the
+    Azure Policy initiative). The loop can verify every mapping without the CIS PDFs, and the IDs
+    match what teams see in Security Hub and Defender for Cloud. Newer releases (AWS v7.0.0,
+    Azure v6.0.0) need the PDFs and a new decision. Rules store CIS IDs only, never CIS text
+    (licensed for non-commercial use only).
+  - D-03 stays open. Its entry now explains the options; the planned environment secret is not
+    available on GitHub Free for a private repository. Recommended: AWS KMS.
+- Files: docs/plan/BACKLOG.md, iace-ai-remediation SKILL.md, iace-repo-policy
+  references/config-schema.md, iace-cloud-controls references/frameworks.md, iace-architecture
+  references/findings-and-cli.md (AI credentials row), iace-loop references/roadmap.md (T-0005,
+  T-1004, T-1008 seeds).
+- Evidence: AWS Security Hub CIS page (supports 5.0.0, 3.0.0, 1.4.0, 1.2.0; recommends 5.0.0);
+  Microsoft Learn CIS Azure 2.0.0 initiative page (no 2.1.0 page); Defender for Cloud release
+  notes (CIS Azure 2.1.0 GA, 3.0 preview); CIS Azure page (latest 6.0.0) and April 2026 update
+  (AWS 7.0.0); GitHub docs (Free: environments only on public repositories); claude-api skill
+  (Bedrock Mantle client, `anthropic.` model IDs, Bedrock feature availability).
+- Next: T-0003.

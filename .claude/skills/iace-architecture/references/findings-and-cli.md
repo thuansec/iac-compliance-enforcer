@@ -81,4 +81,4 @@ plus a hint. With `--log-level debug` they include detail and the chain of wrapp
 | `IACE_CACHE_DIR` | bundle and AI cache (default `$XDG_CACHE_HOME/iace`) |
 | `IACE_OFFLINE` | same as `--offline` |
 | `IACE_TRUSTED_KEYS` | extra bundle verification keys, supplied by CI (M8) |
-| `ANTHROPIC_API_KEY` or `ant` profile / workload identity | AI provider credentials (M10); never read unless AI is enabled |
+| standard AWS configuration (`AWS_REGION`, `AWS_PROFILE`, credential env vars, SSO, instance role, web identity) | Amazon Bedrock region and credentials for AI suggestions (M10, D-05); never read unless AI is enabled |
