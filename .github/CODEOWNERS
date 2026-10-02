@@ -1,0 +1,4 @@
+# The owner owns everything. The `main` ruleset doesn't require code-owner review (the loop opens
+# pull requests under the owner's account, and nobody can approve their own), so this file records
+# ownership and requests the owner's review on pull requests from other contributors.
+* @thuansec

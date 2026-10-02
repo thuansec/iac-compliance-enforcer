@@ -33,7 +33,8 @@ go run ./cmd/iace version --json
 
 ## Security
 Please report vulnerabilities privately through GitHub's private vulnerability reporting (the
-repository's **Security** tab, then **Report a vulnerability**), not in public issues.
+repository's **Security** tab, then **Report a vulnerability**), not in public issues. See
+[SECURITY.md](SECURITY.md) for what to include and what is in scope.
 
 ## License
 [Apache License 2.0](LICENSE)
