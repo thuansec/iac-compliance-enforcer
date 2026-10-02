@@ -252,3 +252,18 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Evidence: the documented output matches internal/cli and the testscript `want.json` from T-0003.
 - Review: docs only, no reviewer.
 - Next: T-0002.
+
+### 2026-10-02 · T-0002 · done
+- What: each dev tool is pinned in its own module (D-07): tools/golangci-lint (v2.14.0),
+  tools/govulncheck (x/vuln v1.8.0), tools/actionlint (v1.7.12), tools/regal (v0.43.0) and
+  tools/opa (v1.21.1). Go is go1.27.1. The opa CLI version is the one the OPA library must use
+  when the engine lands (M2); regal resolves its own embedded OPA (v1.21.0), which need not match.
+- Files: tools/{golangci-lint,govulncheck,actionlint,regal,opa}/{go.mod,go.sum}.
+- Evidence: before pinning, `go tool -modfile=tools/<tool>/go.mod <tool>` failed for all five
+  (no such file); afterwards each prints its version from the repository root. `go -C
+  tools/<tool> mod tidy -diff` is clean and `mod verify` passes for every module. `go list ./...`
+  still lists only the three product packages. `gates.sh full` passes with no actionlint on PATH
+  (PATH limited to system dirs plus GOROOT/bin), so it ran actionlint from tools/actionlint/go.mod.
+- Review: no code, tests, policies, workflows or hooks; no reviewer.
+- Next: T-0004 (Makefile, golangci-lint config, editor config). CI still installs actionlint with
+  `go install`; T-0006 can drop that step now that the gates use the module.
