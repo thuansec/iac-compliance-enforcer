@@ -25,11 +25,18 @@ Consumers verify with `gh attestation verify <file> --repo thuansec/iac-complian
 and/or `cosign verify-blob`. The composite action does this in release-binary mode.
 
 ## policy-release.yml (tag push `policies-v*`)
-- Runs in the protected environment `policy-release` (required reviewers). The signing key is
-  an environment secret (D-03).
-- Steps: `make policy-check policy-test`, then `make policy-bundle VERSION=…` (signed ES256,
-  see iace-repo-policy), then sha256, then upload the bundle and checksum as release assets, then
-  build-provenance attestation for the bundle.
+- Signs with the AWS KMS key from decision D-03 (signature format and IAM conditions:
+  iace-repo-policy `references/policy-supply-chain.md`). GitHub Free has no environments for
+  private repositories, so the IAM role is the gate: it trusts only OIDC tokens for
+  `refs/tags/policies-v*` and may only sign with that key. The workflow holds no secret; the role
+  and key ARNs are repository variables.
+- permissions: `contents: write` (release assets), `id-token: write` (OIDC to AWS).
+- Steps: `make policy-check policy-test`, then `make policy-bundle VERSION=…` (unsigned bundle
+  and sha256), then `aws-actions/configure-aws-credentials` (pinned) with the signing role, then
+  `aws kms sign` on the bundle digest, then verify the signature with the embedded public key
+  (fail closed), then upload the bundle, `.sig` and `.sha256` as release assets. Add a
+  build-provenance attestation only if the repository is public (D-08): GitHub Free offers
+  artifact attestations only for public repositories.
 - The release notes include the pin snippet:
   ```yaml
   sources:

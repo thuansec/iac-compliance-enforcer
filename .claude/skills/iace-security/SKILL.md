@@ -46,8 +46,9 @@ cosmetic defect. Full threat model: [references/threat-model.md](references/thre
 - **HTTP**: a custom `http.Client` with timeouts, TLS ≥ 1.2, never `InsecureSkipVerify`,
   `CheckRedirect` limiting hops and stripping `Authorization` on host change, and response bodies
   capped and closed.
-- **Crypto**: sha256 for digests, compared as fixed-length hex. Signatures go through OPA's bundle
-  verification (ES256). `crypto/rand` for anything secret, and never `math/rand` for security.
+- **Crypto**: sha256 for digests, compared as fixed-length hex. Policy-bundle signatures are
+  detached ECDSA P-256 signatures over the whole tarball, checked with `ecdsa.VerifyASN1` before
+  the bundle is parsed. `crypto/rand` for anything secret, and never `math/rand` for security.
 - **Output files**: atomic writes. Reports 0644; caches and anything with AI data 0600 inside 0700 dirs.
 - **Errors and logs**: never include attribute values, tokens, prompts or response bodies.
   At debug level, log sizes and hashes instead.
@@ -83,7 +84,8 @@ Treat a block as a signal, never an obstacle to route around.
 - Actions pinned by full SHA; least-privilege `permissions`; no `pull_request_target` with PR
   code (`iace-ci-cd`).
 - Releases: reproducible builds, checksums, SBOM, cosign keyless signatures, build provenance
-  attestations. Policy bundles are signed ES256 with keys in a protected environment (`iace-repo-policy`).
+  attestations. Policy bundles are signed with a non-exportable AWS KMS key that only the tag-triggered policy
+  release workflow can use (D-03, `iace-repo-policy`).
 
 ## Security review checklist (run on every diff before commit)
 - [ ] New input paths are validated, confined to the root, and size-limited.
