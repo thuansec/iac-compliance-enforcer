@@ -12,7 +12,7 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 ## Decisions needed
 None open.
 
-## M0 · Foundations — status: active
+## M0 · Foundations — status: done
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
 
 - [x] T-0001 · Bootstrap: wire the GitHub remote, create plan files and CLAUDE.md
@@ -92,7 +92,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - attempts: 1
   - result: owner-approved harness edits: the golangci asset uses gofumpt `extra.group-params` (the repo config's body is again identical to it); the iace-ci-cd skill lists the CI jobs as ci.yml has them and says both rulesets are active
 
-## M1 · Terraform loading (static HCL) — status: planned
+## M1 · Terraform loading (static HCL) — status: awaiting-approval
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
 locations and without executing anything.
 
@@ -656,6 +656,7 @@ Goal: signed, reproducible releases with SBOM and provenance, plus a hardening p
   - depends: T-1009
   - accept:
     - `goreleaser release --snapshot --clean` works locally; the release workflow (tag-triggered) signs with cosign keyless and attests build provenance; checksums and SBOM are published
+    - `make snapshot` runs the GoReleaser snapshot build (iace-quality-gates contract)
   - attempts: 0
 - [ ] T-1102 · Fuzzing campaign and resource-limit tests
   - skills: iace-testing, iace-security

@@ -365,3 +365,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   bodies diff clean; `make lint`: 0 issues, no deprecation warning.
 - Review: harness and docs only, approved by the owner; no reviewer.
 - Next: M0 wrap-up (every M0 task is done).
+
+## Milestone M0 complete · 2026-10-02
+- Works now:
+  - Go module (go 1.27.0, toolchain go1.27.1) with `iace version [--json]`; internal/cli maps
+    outcomes to the contract's exit codes (0, or 2 with one line on stderr).
+  - Dev tools pinned one module per tool under tools/ (golangci-lint v2.14.0, govulncheck v1.8.0,
+    actionlint v1.7.12, regal v0.43.0, opa v1.21.1), run with `go tool -modfile`.
+  - The Makefile contract (fmt-check, lint, test, cover-check, policy-check, policy-test, vuln,
+    build, tidy-check, plus ci, fmt, tools); gates.sh runs it before every commit.
+  - CI: gates, lint, test, policy-test, vuln and a six-platform build, aggregated by `ci-ok`;
+    actions pinned by SHA; Dependabot for gomod and actions.
+  - The public repository is protected: the `main` ruleset (pull request, green `ci-ok`, up to
+    date, squash only, no bypass), immutable release tags, secret scanning with push protection,
+    private vulnerability reporting, Dependabot alerts, approval for outside contributors' runs.
+  - Docs: ADRs 0001-0003, README, CONTRIBUTING, Apache-2.0 LICENSE, SECURITY.md, CODEOWNERS, the
+    threat model, and owner decisions D-01 to D-08.
+- Try it: `make tools && make ci`; `go run ./cmd/iace version --json`;
+  `bash .claude/skills/iace-quality-gates/scripts/gates.sh full`.
+- Known gaps:
+  - No scanning yet: the static Terraform loader is M1 (T-0101 to T-0109), the engine M2.
+  - Usage errors echo flag values; fixed before `--var` exists (T-0206 bullet).
+  - The OPA library and tools/opa must move together; check and Dependabot grouping in T-0202.
+  - Makefile targets `capabilities` (T-0201), `policy-bundle` (T-0802) and `snapshot` (T-1101)
+    arrive with their tasks; policy signing needs the owner's AWS setup (T-0808).
+  - The owner's personal email is on early commits and pull-request refs: the owner's call, so
+    no follow-up task (docs/security/going-public.md).
+- Next: M1 is awaiting the owner's approval; set its status to `active` in BACKLOG to continue.
