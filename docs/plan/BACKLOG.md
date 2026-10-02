@@ -15,6 +15,14 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - D-03 · Custody of the policy-bundle signing key (GitHub Actions secret vs cloud KMS). Blocks: T-0802.
 - D-05 · Approved AI providers and data-handling policy (Anthropic API, Bedrock, Vertex; data residency). Blocks: T-1004.
 - D-06 · CIS benchmark versions to map, and access to the benchmark documents. Affects: M6, M7 mappings.
+- D-07 · Dev-tool module layout. The five tools cannot share one tools/go.mod: OPA v1.21.1/regal need
+  github.com/gobwas/glob v1.0.0 but golangci-lint's depguard only builds with v0.2.3, and actionlint
+  v1.7.12 builds against go.yaml.in/yaml/v4 rc.3 while golangci-lint's gosec forces rc.6. Recommended:
+  one module per tool, tools/<tool>/go.mod, run as `go tool -modfile=tools/<tool>/go.mod <tool>`
+  (isolates every future conflict; opa's module still pins exactly the library version). This needs
+  harness edits: gates.sh (actionlint is run via tools/go.mod), the iace-go-standards Toolchain
+  section, and T-0002's acceptance. Alternative without a gates.sh change: tools/go.mod keeps
+  actionlint (+ govulncheck), plus tools/golangci-lint/go.mod and tools/opa/go.mod. Blocks: T-0002.
 
 ## M0 · Foundations — status: active
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -27,17 +35,18 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - docs/plan/BACKLOG.md, docs/plan/PROGRESS.md and CLAUDE.md exist; .claude/ is committed; nothing pushed
   - attempts: 1
   - result: origin wired (main tracks origin/main at 6b37a48); BACKLOG, PROGRESS and CLAUDE.md created; .claude committed; nothing pushed
-- [ ] T-0002 · Verify toolchain and pin dev tools in tools/go.mod
+- [!] T-0002 · Verify toolchain and pin dev tools in tools/go.mod
   - skills: iace-go-standards, iace-quality-gates
-  - depends: T-0001
+  - depends: T-0001, T-0003
   - accept:
     - `go version` reports a current stable release, at least 1.24 (needed for tool directives); if Go is missing, the task is blocked needs-human with install commands
     - tools/go.mod pins golangci-lint v2, govulncheck, regal, actionlint and opa, with opa at the same version later used as the library
     - `make tools` (or `go tool -modfile=tools/go.mod <tool> --version`) works for each tool
-  - attempts: 0
+  - attempts: 1
+  - blocked: needs-human — choose the tool-module layout (D-07); one tools/go.mod cannot build all five tools, and the fix edits harness files (gates.sh, iace-go-standards). Also needs the root go.mod from T-0003, since `go tool -modfile` requires a main module.
 - [ ] T-0003 · Scaffold the Go module and `iace version`
   - skills: iace-go-standards, iace-architecture, iace-testing
-  - depends: T-0002
+  - depends: T-0001
   - accept:
     - go.mod module path is github.com/thuansec/iac-compliance-enforcer; `go build ./...` passes
     - cmd/iace/main.go is a thin main; internal/cli holds a cobra root plus `version` (`--json`), with version/commit/date injected via ldflags (default "dev")
@@ -45,7 +54,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - attempts: 0
 - [ ] T-0004 · Add the Makefile, golangci-lint config and editor config
   - skills: iace-quality-gates, iace-go-standards
-  - depends: T-0003
+  - depends: T-0002, T-0003
   - accept:
     - the Makefile implements every target in the iace-quality-gates contract; `make ci` passes
     - .golangci.yml is adapted from the iace-go-standards asset; `golangci-lint config verify` passes
