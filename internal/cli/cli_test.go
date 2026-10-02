@@ -127,7 +127,7 @@ func TestNilArgsIgnoresProcessArguments(t *testing.T) {
 	}
 	t.Parallel()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestNilArgsIgnoresProcessArguments$", "not-an-iace-command")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestNilArgsIgnoresProcessArguments$", "not-an-iace-command")
 	cmd.Env = append(os.Environ(), "IACE_TEST_NIL_ARGS_HELPER=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("Run(nil) read the process arguments: %v\n%s", err, out)

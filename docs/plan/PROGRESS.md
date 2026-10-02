@@ -267,3 +267,26 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: no code, tests, policies, workflows or hooks; no reviewer.
 - Next: T-0004 (Makefile, golangci-lint config, editor config). CI still installs actionlint with
   `go install`; T-0006 can drop that step now that the gates use the module.
+
+### 2026-10-02 · T-0004 · done
+- What: the Makefile is now the single source of commands. It has the nine contract targets
+  (fmt-check, lint, test, cover-check, policy-check, policy-test, vuln, build, tidy-check), `ci`
+  running them in order, plus `fmt`, `tools` and a `help` default; tools run through their
+  pinned modules. Policy and Terraform steps skip with a message until policies/ and testdata/
+  exist. .golangci.yml is the iace-go-standards asset, except gofumpt's `extra-rules: true`,
+  which golangci-lint v2.14 deprecates, now `extra: {group-params: true}`. .editorconfig covers
+  Go, Makefile, Rego, shell, Python, YAML, JSON, Markdown and Terraform.
+- Lint fixes: three tests started subprocesses without a context (noctx); they now use
+  exec.CommandContext(t.Context(), …).
+- Files: Makefile, .golangci.yml, .editorconfig, cmd/iace/main_test.go, internal/cli/cli_test.go.
+- Evidence: before, `make ci` had no rule and `golangci-lint config verify` exited 6. Probe:
+  `golangci-lint fmt --diff` exits 1 on a misformatted file and 0 on clean code (fmt-check also
+  fails on any output). Now: config verify OK; `make ci` passes (0 lint issues, coverage 95.6%,
+  govulncheck clean); `make tools` builds all five tools; gates full runs every contract target
+  through make and passes.
+- Review: iace-reviewer APPROVE with three minor findings. Fixed: `make tools` failed open (a
+  failing tool before the last one still exited 0; reproduced, now exits non-zero) and
+  .editorconfig lacked shell (tabs) and Python (4 spaces) sections. Recorded: T-0009
+  (needs-human) to update the harness asset's deprecated gofumpt key.
+- Next: T-0005 (ADRs and docs skeleton). T-0006 should drop CI's separate `go install
+  actionlint` step: `make lint` runs the pinned actionlint, and gates.sh then skips its own.
