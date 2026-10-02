@@ -90,3 +90,19 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: plan-only change, no reviewer.
 - Next: T-0003 (scaffold the module). The owner decides D-07 and updates gates.sh and the
   iace-go-standards skill (harness), then T-0002 resumes.
+
+### 2026-10-02 · decision · done
+- Owner decision D-07: each dev tool is pinned in its own module, tools/<tool>/go.mod
+  (golangci-lint, govulncheck, regal, actionlint, opa), run from the repository root with
+  `go tool -modfile=tools/<tool>/go.mod <tool>`. This keeps one tool's dependency conflicts from
+  breaking another's build. opa's module pins exactly the OPA library version; regal's embedded OPA
+  follows regal's own requirements.
+- Files: iace-quality-gates (gates.sh runs actionlint from tools/actionlint/go.mod; SKILL.md tool
+  and tidy-check rows), iace-go-standards (Toolchain section; golangci.yml asset), iace-opa-engine
+  (SKILL.md, references/capabilities.md), iace-architecture (layout), iace-loop (SKILL.md rule 4,
+  references/bootstrap.md, references/roadmap.md T-0002 seed and order), CLAUDE.md,
+  docs/plan/BACKLOG.md (D-07 resolved; T-0002 unblocked with new acceptance, still after T-0003).
+- Evidence: scratch modules, one per tool, with a root go.mod: all five tools print their version
+  through `go tool -modfile=tools/<tool>/go.mod` (golangci-lint 2.14.0, govulncheck 1.8.0,
+  actionlint 1.7.12, regal 0.43.0 with OPA 1.21.0, opa 1.21.1), and `go mod tidy -diff` is clean for each.
+- Next: T-0003 (scaffold the module), then T-0002.

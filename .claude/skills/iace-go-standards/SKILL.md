@@ -12,12 +12,17 @@ rule is wrong, change it via an ADR rather than ignoring it.
 ## Toolchain
 - Use the latest stable Go release, with at least 1.24 for `tool` directives and `os.Root`.
   The `go` directive in go.mod is the minimum we test with, and a `toolchain` line pins the exact version.
-- Dev tools are pinned in a **separate module**, `tools/go.mod`, so linters never mix
-  dependencies into the product's module graph:
-  `go get -modfile=tools/go.mod -tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint@vX.Y.Z`,
-  run with `go tool -modfile=tools/go.mod golangci-lint run`. Pin the same way:
-  golangci-lint v2, govulncheck, regal, actionlint and `opa`. Keep `opa` at **exactly** the version of
-  the OPA library in go.mod, so `opa test` judges policies with the same engine iace embeds.
+- Each dev tool is pinned in **its own module**, `tools/<tool>/go.mod`, so tools never mix
+  dependencies into the product's module graph or into each other's. One shared tools module
+  does not build: OPA/regal and golangci-lint need incompatible `gobwas/glob` versions, and
+  actionlint and golangci-lint incompatible `go.yaml.in/yaml/v4` versions (decision D-07).
+  The tools are golangci-lint v2, govulncheck, regal, actionlint and `opa`, each in the directory
+  named after its command. Pin or bump with
+  `go -C tools/golangci-lint get -tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint@vX.Y.Z`,
+  then run from the repository root with `go tool -modfile=tools/golangci-lint/go.mod golangci-lint run`
+  (`-modfile` needs the root go.mod). Keep `opa` at **exactly** the version of the OPA library
+  in go.mod, so `opa test` judges policies with the same engine iace embeds. regal's embedded OPA
+  follows regal's own requirements and need not match.
 - Lint and format: copy [assets/golangci.yml](assets/golangci.yml) to `.golangci.yml`.
   Formatting is gofumpt plus goimports via `golangci-lint fmt`.
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X …/internal/version.Version=…"`.

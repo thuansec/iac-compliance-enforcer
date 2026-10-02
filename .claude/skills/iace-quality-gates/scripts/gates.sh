@@ -93,12 +93,12 @@ fi
 
 # --- Workflows (when the Makefile lint target does not already cover actionlint) --------------
 if compgen -G ".github/workflows/*.y*ml" >/dev/null && ! grep -q actionlint Makefile 2>/dev/null; then
-	if [[ -f tools/go.mod ]]; then
-		run actionlint go tool -modfile=tools/go.mod actionlint
+	if [[ -f tools/actionlint/go.mod ]]; then
+		run actionlint go tool -modfile=tools/actionlint/go.mod actionlint
 	elif command -v actionlint >/dev/null; then
 		run actionlint actionlint
 	else
-		result FAIL actionlint "workflows exist but actionlint is unavailable (pin it in tools/go.mod)"
+		result FAIL actionlint "workflows exist but actionlint is unavailable (pin it in tools/actionlint/go.mod)"
 	fi
 fi
 

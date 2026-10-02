@@ -1,6 +1,6 @@
 # golangci-lint v2 configuration for iac-compliance-enforcer.
 # Copy to the repo root as .golangci.yml, then verify:
-#   go tool -modfile=tools/go.mod golangci-lint config verify
+#   go tool -modfile=tools/golangci-lint/go.mod golangci-lint config verify
 version: "2"
 
 run:
