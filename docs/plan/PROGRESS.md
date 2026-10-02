@@ -135,3 +135,28 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (AWS 7.0.0); GitHub docs (Free: environments only on public repositories); claude-api skill
   (Bedrock Mantle client, `anthropic.` model IDs, Bedrock feature availability).
 - Next: T-0003.
+
+### 2026-10-02 · decision · done
+- Owner decision D-03: the policy-bundle signing key is an AWS KMS key (ECC_NIST_P256,
+  SIGN_VERIFY) that never leaves KMS. Only policy-release.yml running for a `policies-v*` tag can
+  sign: its IAM role trusts only GitHub OIDC tokens for those tags and may only `kms:Sign` with
+  that key, so branch workflows (the loop's included) cannot sign. GitHub Free has no environments
+  or tag protection for private repositories, so repository write access stays with the owner.
+- Design: `opa build` can sign only with a local key file, so bundles are built unsigned and get a
+  detached signature, `<bundle>.sig`: base64 of the DER ECDSA P-256 signature over the tarball's
+  SHA-256 (`aws kms sign --message-type DIGEST`). iace checks it with `ecdsa.VerifyASN1` against the
+  trust store before parsing the tarball (standard library only). T-0802 records it in an ADR.
+- Backlog: T-0802 and T-0803 rewritten for this; new T-0808 (the owner creates the KMS key, the
+  OIDC provider and the role; the loop commits the public key). New decision D-08: GitHub Free
+  offers artifact attestations only for public repositories, and keyless cosign publishes the
+  repository and workflow names, so the M11 release plan needs a public repository or KMS-signed
+  checksums.
+- Files: docs/plan/BACKLOG.md; iace-repo-policy references/policy-supply-chain.md; iace-ci-cd
+  references/release.md; iace-security SKILL.md and references/threat-model.md (T5, T10);
+  iace-loop references/roadmap.md (T-0802, T-0803, T-0808 seeds).
+- Evidence: AWS KMS Sign API reference (DIGEST skips hashing; raw messages are limited to 4096
+  bytes; ECDSA signatures are DER per RFC 3279, base64 in the CLI). Scratch round trip with an
+  OpenSSL P-256 key signing the digest: the documented `openssl dgst -verify` command and Go's
+  `ecdsa.VerifyASN1` accept the signature and both reject a tampered bundle. GitHub docs:
+  attestations on Free, Pro and Team only for public repositories.
+- Next: T-0003.

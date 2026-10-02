@@ -502,13 +502,16 @@ before loading it alongside the built-in policies.
   - skills: iace-repo-policy, iace-ci-cd
   - depends: T-0801
   - accept:
-    - `make policy-bundle` builds a signed bundle (ES256) plus sha256; the release workflow publishes both; key custody follows D-03; docs/policies/publishing.md
+    - `make policy-bundle VERSION=…` builds the bundle with `opa build` (no OPA signing) and its sha256
+    - policy-release.yml (tag `policies-v*`) assumes the signing role through GitHub OIDC, signs the bundle's SHA-256 with the AWS KMS key (`aws kms sign`, ECDSA_SHA_256, DIGEST; D-03), verifies the signature with the embedded public key, then uploads the bundle, `.sig` and `.sha256`; actionlint passes
+    - docs/policies/publishing.md covers releasing and the owner's one-time AWS setup: the KMS key (ECC_NIST_P256, SIGN_VERIFY), the GitHub OIDC provider, and a role limited to `policies-v*` tags with `kms:Sign` on that key only
+    - an ADR records the signing design
   - attempts: 0
 - [ ] T-0803 · Load pinned, verified bundles
   - skills: iace-repo-policy, iace-security
   - depends: T-0802
   - accept:
-    - local and HTTPS bundles: the sha256 pin is required and must match; the signature is verified against the trust store (embedded official keys plus CI-provided keys)
+    - local and HTTPS bundles: the sha256 pin is required and must match; the detached signature (`<bundle>.sig`, ECDSA P-256 over the tarball's SHA-256) must verify against the trust store (embedded official keys plus CI-provided keys) before the tarball is parsed
     - size and time limits; the token is sent only to allowlisted hosts and never across redirects; tests cover tampering, a wrong key, a wrong digest and an oversized bundle
   - attempts: 0
 - [ ] T-0804 · Content-addressed cache and `--offline`
@@ -528,6 +531,13 @@ before loading it alongside the built-in policies.
   - depends: T-0803
   - accept:
     - authors in other repositories can test against the iace lib and capabilities without installing opa; docs/policies/authoring.md
+  - attempts: 0
+- [ ] T-0808 · Create the policy signing key and trust its public key
+  - skills: iace-repo-policy, iace-security
+  - depends: T-0802
+  - accept:
+    - needs-human: the owner follows docs/policies/publishing.md to create the KMS key, the GitHub OIDC provider and the signing role, and sets the role and key ARNs as repository variables
+    - the loop commits the public key (`aws kms get-public-key`, as PEM) to internal/policy/trust/ under its key ID, with a test that a signature made in the documented format verifies against it
   - attempts: 0
 
 ## M9 · Plan JSON input — status: planned
