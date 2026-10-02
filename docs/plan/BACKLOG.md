@@ -71,13 +71,13 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - accept:
     - SECURITY.md (private vulnerability reporting), CODEOWNERS (@thuansec), docs/security/threat-model.md adapted from the iace-security reference
   - attempts: 0
-- [!] T-0008 · Document `iace version --json` in the CLI contract
+- [x] T-0008 · Document `iace version --json` in the CLI contract
   - skills: iace-architecture
   - depends: T-0003
   - accept:
     - iace-architecture references/findings-and-cli.md lists the `iace version --json` fields (schema_version "1", name, version, commit, date), says changes to them follow the schema_version rules, and says a bare `iace` prints help and exits 0
-  - attempts: 0
-  - blocked: needs-human — the reference is a harness file (.claude/**), so the owner makes or approves the edit (T-0003 review finding)
+  - attempts: 1
+  - result: findings-and-cli.md documents the `iace version` text line, the `--json` document (key order, "dev" defaults, -X injection) and its schema_version rules, and that a bare `iace` prints help and exits 0; owner approved the harness edit
 
 ## M1 · Terraform loading (static HCL) — status: planned
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source

@@ -240,3 +240,15 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   in usage errors (new acceptance bullet on T-0206, before `--var` exists) and the `version
   --json` contract doc (T-0008, needs-human: harness file).
 - Next: T-0002 (pin each dev tool in its own module).
+
+### 2026-10-02 · T-0008 · done
+- What: the owner approved the harness edit. iace-architecture references/findings-and-cli.md now
+  documents `iace version`: the text line, the `--json` document (key order, "dev" defaults,
+  `-ldflags -X` injection) and its schema_version rules (adding a field keeps "1"; renaming or
+  removing one needs "2" and an ADR), and that a bare `iace` prints help and exits 0. The same
+  skill's project identity no longer calls the repository private.
+- Files: .claude/skills/iace-architecture/references/findings-and-cli.md,
+  .claude/skills/iace-architecture/SKILL.md, docs/plan/BACKLOG.md.
+- Evidence: the documented output matches internal/cli and the testscript `want.json` from T-0003.
+- Review: docs only, no reviewer.
+- Next: T-0002.

@@ -62,6 +62,23 @@ Rules:
 - Non-interactive by default. No prompts in any command, because CI has no TTY.
 - `--help` on every command has at least one runnable example.
 - Colour only when stderr/stdout is a TTY and `NO_COLOR` is unset.
+- A bare `iace` prints the root help to stdout and exits 0.
+
+### `iace version`
+Prints `iace <version> (commit <commit>, built <date>)`. With `--json` it prints a versioned
+document, keys in this order:
+```json
+{
+  "schema_version": "1",
+  "name": "iace",
+  "version": "v0.1.0",
+  "commit": "<full git sha>",
+  "date": "<commit date, RFC 3339>"
+}
+```
+Release builds set the last three with `-ldflags -X …/internal/version.{Version,Commit,Date}`;
+unset, each is `"dev"`. Changes follow the `schema_version` rules: adding a field keeps `"1"`,
+while renaming or removing one needs `"2"` and an ADR.
 
 ## Exit codes
 | code | meaning |
