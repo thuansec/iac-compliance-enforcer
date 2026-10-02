@@ -217,3 +217,26 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (both active).
 - Review: docs and plan only, no reviewer.
 - Next: T-0003.
+
+### 2026-10-02 · T-0003 · done
+- What: the Go module and the first command. go.mod declares go 1.27.0 with toolchain go1.27.1.
+  cmd/iace/main.go only calls cli.Main. internal/cli has Run (args → exit code: 0 ok, 2 on any
+  error, one line on stderr) and Main, the only os.Exit, plus `version [--json]`. internal/version
+  holds Version/Commit/Date, which only `-ldflags -X` sets (default "dev"), and the JSON document
+  (schema_version "1", name, version, commit, date).
+- Dependencies: spf13/cobra v1.10.2 (Apache-2.0, released 2025-12) and rogpeppe/go-internal v1.16.0
+  (BSD-3, released 2026-07, tests only); indirect pflag (BSD-3), mousetrap (Apache-2.0), x/sys and
+  x/tools (BSD-3). All pure Go (stdlib `net` comes in through pflag; releases build with
+  CGO_ENABLED=0); govulncheck: no vulnerabilities.
+- Files: go.mod, go.sum, cmd/iace/{main.go,main_test.go,testdata/script/*.txtar},
+  internal/cli/{cli.go,version.go,cli_test.go}, internal/version/{version.go,version_test.go}.
+- Evidence: every test failed against empty stubs first; `go test -race -shuffle=on -count=1 ./...`
+  passes; coverage 95.6%; the write-error test is mutation-checked (swallowing the error fails
+  it); TestLdflagsInjection builds the binary with -trimpath and -X and reads the values back;
+  `go mod tidy -diff` clean; gates full PASS (bootstrap fallback until T-0004).
+- Review: iace-reviewer APPROVE with four minor findings. Fixed here: cobra's lazily added `help`
+  command had no Example (the test now creates it and it has one), and Run(nil) read os.Args
+  (cobra's fallback; a helper-process test proves it no longer does). Recorded: flag values echoed
+  in usage errors (new acceptance bullet on T-0206, before `--var` exists) and the `version
+  --json` contract doc (T-0008, needs-human: harness file).
+- Next: T-0002 (pin each dev tool in its own module).

@@ -1,0 +1,4 @@
+# iace version prints the build information on stdout; release builds set it with -ldflags.
+exec iace version
+stdout '^iace dev \(commit dev, built dev\)$'
+! stderr .

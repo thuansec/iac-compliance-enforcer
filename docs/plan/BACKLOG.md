@@ -32,14 +32,15 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - from the repository root, `go tool -modfile=tools/<tool>/go.mod <tool>` prints its version for each tool, and `go -C tools/<tool> mod tidy -diff` is clean for each module
     - `gates.sh full` passes and runs actionlint from tools/actionlint/go.mod
   - attempts: 1
-- [ ] T-0003 · Scaffold the Go module and `iace version`
+- [x] T-0003 · Scaffold the Go module and `iace version`
   - skills: iace-go-standards, iace-architecture, iace-testing
   - depends: T-0001
   - accept:
     - go.mod module path is github.com/thuansec/iac-compliance-enforcer; `go build ./...` passes
     - cmd/iace/main.go is a thin main; internal/cli holds a cobra root plus `version` (`--json`), with version/commit/date injected via ldflags (default "dev")
     - a testscript e2e test covers `iace version` and `iace version --json`
-  - attempts: 0
+  - attempts: 1
+  - result: module on go 1.27.0 (toolchain go1.27.1) with cobra v1.10.2 and go-internal v1.16.0 (tests); thin cmd/iace; internal/cli (Run → exit code, usage errors exit 2 on one stderr line) with `version [--json]`; internal/version set by -ldflags -X (default "dev"); testscript e2e plus a real -X build test; coverage 95.6%
 - [ ] T-0004 · Add the Makefile, golangci-lint config and editor config
   - skills: iace-quality-gates, iace-go-standards
   - depends: T-0002, T-0003
@@ -70,6 +71,13 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - accept:
     - SECURITY.md (private vulnerability reporting), CODEOWNERS (@thuansec), docs/security/threat-model.md adapted from the iace-security reference
   - attempts: 0
+- [!] T-0008 · Document `iace version --json` in the CLI contract
+  - skills: iace-architecture
+  - depends: T-0003
+  - accept:
+    - iace-architecture references/findings-and-cli.md lists the `iace version --json` fields (schema_version "1", name, version, commit, date), says changes to them follow the schema_version rules, and says a bare `iace` prints help and exits 0
+  - attempts: 0
+  - blocked: needs-human — the reference is a harness file (.claude/**), so the owner makes or approves the edit (T-0003 review finding)
 
 ## M1 · Terraform loading (static HCL) — status: planned
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
@@ -179,11 +187,12 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
     - the fixture harness fails if any rule lacks a pass or a fail fixture
   - attempts: 0
 - [ ] T-0206 · Implement `iace scan` with text output and exit codes
-  - skills: iace-architecture, iace-reporting, iace-testing
+  - skills: iace-architecture, iace-reporting, iace-testing, iace-security
   - depends: T-0205
   - accept:
     - flags follow iace-architecture/references/findings-and-cli.md; exit 0 when clean, 1 for blocking findings, 2 for errors
     - testscript covers a clean repo, a failing repo, a broken policy and a Terraform parse error
+    - usage errors never echo flag values (pflag repeats them, e.g. `invalid argument "…" for "--var"`); a testscript with an obviously fake secret in `--var` shows stderr does not contain it (T-0003 review finding)
   - attempts: 0
 - [ ] T-0207 · Implement `iace rules list` and `iace rules show <id>`
   - skills: iace-architecture, iace-opa-engine
