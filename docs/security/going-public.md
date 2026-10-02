@@ -27,10 +27,10 @@ GitHub writes. Run each command with `!` in Claude Code or in a terminal, with a
 |---|---|---|---|
 | `main` ruleset | server-side merge gate for everyone: pull request, `ci-ok` green, branch up to date, squash only, no force push or deletion | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/main-ruleset.json` | active since 2026-10-02 (ruleset 24364215) |
 | release-tag ruleset | `v*` and `policies-v*` tags cannot be moved or deleted once pushed | `gh api -X POST repos/thuansec/iac-compliance-enforcer/rulesets --input docs/ci/tags-ruleset.json` | active since 2026-10-02 (ruleset 24364226) |
-| secret scanning with push protection | alerts on, and blocks pushes of, known credential formats | `gh api -X PATCH repos/thuansec/iac-compliance-enforcer -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` | unknown (the loop's token cannot read it) |
-| private vulnerability reporting | researchers can report privately (SECURITY.md, T-0007) | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/private-vulnerability-reporting` | off |
-| Dependabot alerts | alerts on vulnerable Go modules and actions | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/vulnerability-alerts` | unknown (the loop's token cannot read it) |
-| approval for outside contributors' workflow runs | pull requests from forks run CI only after approval | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors` | unknown (the loop's token cannot read it) |
+| secret scanning with push protection | alerts on, and blocks pushes of, known credential formats | `gh api -X PATCH repos/thuansec/iac-compliance-enforcer -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` | on (owner confirmed 2026-10-02; the loop's token cannot read it) |
+| private vulnerability reporting | researchers can report privately (SECURITY.md, T-0007) | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/private-vulnerability-reporting` | on (read back 2026-10-02) |
+| Dependabot alerts | alerts on vulnerable Go modules and actions | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/vulnerability-alerts` | on (owner confirmed 2026-10-02; the loop's token cannot read it) |
+| approval for outside contributors' workflow runs | pull requests from forks run CI only after approval | `gh api -X PUT repos/thuansec/iac-compliance-enforcer/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors` | on (owner confirmed 2026-10-02; the loop's token cannot read it) |
 
 Once the `main` ruleset is active, `"auto_merge": true` in `.claude/loop-policy.json` becomes
 possible (see `docs/ci/branch-workflow.md`). That is optional and the owner's decision.
