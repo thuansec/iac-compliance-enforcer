@@ -8,7 +8,7 @@ description: Architecture, package layout and data contracts of iac-compliance-e
 ## Project identity
 | item | value |
 |---|---|
-| Repository | github.com/thuansec/iac-compliance-enforcer (private), whose local working copy is this directory |
+| Repository | github.com/thuansec/iac-compliance-enforcer (public since 2026-10-02, D-08), whose local working copy is this directory |
 | Go module | `github.com/thuansec/iac-compliance-enforcer` |
 | CLI binary | `iace` (decision D-02) |
 | Per-repo config | `.iace.yaml` (schema `schemas/config.v1.json`, owned by `iace-repo-policy`) |
