@@ -10,11 +10,19 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - max_attempts_per_task: 3
 
 ## Decisions needed
-- D-01 · Repository license (Apache-2.0 suggested to match OPA). Blocks: T-1106.
-- D-02 · CLI name `iace` and config file `.iace.yaml`. Assumed until changed.
-- D-03 · Custody of the policy-bundle signing key (GitHub Actions secret vs cloud KMS). Blocks: T-0802.
-- D-05 · Approved AI providers and data-handling policy (Anthropic API, Bedrock, Vertex; data residency). Blocks: T-1004.
-- D-06 · CIS benchmark versions to map, and access to the benchmark documents. Affects: M6, M7 mappings.
+- D-03 · Where the policy-bundle signing key lives. iace loads central/org policy bundles only when
+  their signature verifies, so whoever can sign decides what every consuming repository's scan
+  enforces. The planned GitHub environment secret with required reviewers is not available here:
+  GitHub Free offers environments only on public repositories. Options:
+  (a) a repository Actions secret: free, but any workflow on any branch can read it, including
+  workflows on the loop's feature branches;
+  (b) AWS KMS (about US$1/month, one-time AWS setup by the owner): the key never leaves KMS, only
+  the tag-triggered release workflow can sign (GitHub OIDC role limited to `policies-v*` tags), and
+  CloudTrail logs every signature. `opa build` signs only with a local key file, so signing becomes
+  a separate step (e.g. `cosign sign-blob --key awskms://…`) and T-0803 verifies that signature;
+  (c) keyless Sigstore signing: no key to protect, but every signature is recorded in a public
+  transparency log (repository and workflow names become public), so it fits only a public repo.
+  Recommended: (b). Blocks: T-0802.
 
 ## M0 · Foundations — status: active
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -58,6 +66,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - accept:
     - docs/adr/0001 (record decisions), 0002 (Go with embedded OPA v1 rego package), 0003 (static analysis by default; never execute Terraform from scanned repos)
     - README.md covers purpose, status, a quickstart placeholder and links; CONTRIBUTING.md covers the dev loop and gates
+    - LICENSE holds the full Apache-2.0 text (D-01)
   - attempts: 0
 - [ ] T-0006 · Extend the CI workflow with the full Go/OPA jobs
   - skills: iace-ci-cd, iace-security
@@ -578,12 +587,13 @@ Goal: opt-in AI suggestions for violations, verified by re-scanning before anyon
   - accept:
     - the prompt follows references/prompt-contract.md; golden prompt tests; the structured-output JSON schema lives in schemas/ai-fix.v1.json
   - attempts: 0
-- [ ] T-1004 · Anthropic provider
+- [ ] T-1004 · Bedrock provider
   - skills: iace-ai-remediation, claude-api
   - depends: T-1003
   - accept:
-    - uses anthropic-sdk-go with default model claude-opus-5-5 and configurable effort; timeouts, retries, refusal handling and prompt caching
-    - all tests use httptest; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
+    - uses anthropic-sdk-go's Bedrock Mantle client with default model `anthropic.claude-opus-5-5` and configurable effort; timeouts, retries, refusal handling and prompt caching
+    - region and credentials come only from the AWS environment (never `.iace.yaml`) and are read only when AI is enabled; the disclosure names provider, region and model
+    - all tests use httptest with obviously fake credentials; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
   - attempts: 0
 - [ ] T-1005 · Fix validator
   - skills: iace-ai-remediation, iace-security, iace-opa-engine
@@ -603,12 +613,13 @@ Goal: opt-in AI suggestions for violations, verified by re-scanning before anyon
   - accept:
     - a 0600 cache keyed by prompt version, model and redacted context; max_findings, concurrency and a token budget; token usage in the summary
   - attempts: 0
-- [ ] T-1008 · Bedrock and Vertex providers (optional)
+- [x] T-1008 · Bedrock and Vertex providers (optional)
   - skills: iace-ai-remediation, claude-api
   - depends: T-1007
   - accept:
     - provider selection via config; same validation pipeline; httptest-based tests
   - attempts: 0
+  - result: superseded by T-1004 (D-05: Amazon Bedrock is the only approved provider; Vertex is not approved)
 - [ ] T-1009 · Opt-in eval harness
   - skills: iace-ai-remediation, iace-testing
   - depends: T-1007

@@ -47,8 +47,8 @@ exceptions:
 
 ai:                             # opt-in AI fix suggestions (M10)
   enabled: false
-  provider: anthropic           # anthropic | bedrock | vertex
-  model: claude-opus-5-5
+  provider: bedrock             # Amazon Bedrock, the only approved provider (D-05); region comes from the AWS environment
+  model: anthropic.claude-opus-5-5
   min_severity: high
   max_findings: 20
 ```
@@ -65,7 +65,7 @@ ai:                             # opt-in AI fix suggestions (M10)
 | `rule_params` | keys are rule IDs; values validated against the rule's `custom.params` JSON Schema |
 | `paths.exclude[]` | `glob` (doublestar syntax, relative, no `..`), `reason` required |
 | `exceptions[]` | see the iace-repo-policy SKILL.md exceptions section; IDs `^EXC-[A-Za-z0-9-]{1,40}$`, unique |
-| `ai` | `enabled` bool (default false); `provider` enum; `model` string; `min_severity` enum; `max_findings` 1–200 |
+| `ai` | `enabled` bool (default false); `provider` enum: `bedrock` only; `model` string (a Bedrock model ID); no region key; `min_severity` enum; `max_findings` 1–200 |
 
 Error messages cite `file:line:column` and the offending key path (`exceptions[2].expires`) and
 suggest the fix ("expires must be on or before 2026-12-30 (max_exception_days 90)").
