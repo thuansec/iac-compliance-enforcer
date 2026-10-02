@@ -1,9 +1,12 @@
 # CI for iac-compliance-enforcer. Every pull request must pass before it merges to main: the
-# loop's merge gate (.claude/hooks/guard-loop.py) and, once enabled, the GitHub ruleset in
-# docs/ci/main-ruleset.json both require the `ci-ok` check.
+# `main` ruleset (docs/ci/main-ruleset.json) and the loop's merge gate
+# (.claude/hooks/guard-loop.py) both require the `ci-ok` check.
 #
-# T-0006 extends this workflow with the full Go/OPA jobs. Keep `ci-ok` as the single required
-# check and add every new job to its `needs` list, so the ruleset never has to change.
+# Every job runs Makefile targets, so CI, the loop's gates and humans run the same commands.
+# Keep `ci-ok` as the single required check: add every new job to its `needs` list.
+#
+# setup-go keys its cache only on the files in cache-dependency-path, so each job lists the go.sum
+# files of what it builds: distinct keys let every job save and restore its own cache.
 name: ci
 
 on:
@@ -20,6 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The loop's own gate script (hook tests, every Makefile check, diff discipline), so CI checks
+  # exactly what the loop checked before it committed.
   gates:
     name: gates
     runs-on: ubuntu-24.04
@@ -28,17 +33,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: 0 # the diff checks compare against the base branch
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
-          cache: false
-
-      - name: Install actionlint
-        run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/*/go.sum
 
       - name: Quality gates (full)
         env:
@@ -46,10 +48,112 @@ jobs:
           IACE_GATES_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: bash .claude/skills/iace-quality-gates/scripts/gates.sh full
 
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/golangci-lint/go.sum
+            tools/actionlint/go.sum
+            tools/regal/go.sum
+            .golangci.yml
+
+      - name: Formatting, golangci-lint, regal and actionlint
+        run: make fmt-check lint
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Race-enabled tests (including the testscript e2e suite) and the coverage gate
+        run: make test cover-check
+
+  policy-test:
+    name: policy-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/opa/go.sum
+
+      - name: Strict policy compile and Rego tests
+        run: make policy-check policy-test
+
+  vuln:
+    name: vuln
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/govulncheck/go.sum
+
+      - name: govulncheck
+        run: make vuln
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false # compiles only this small module; caching six legs would cost more than it saves
+
+      - name: Static cross-build (CGO_ENABLED=0, -trimpath)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: make build
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [gates]
+    needs: [gates, lint, test, policy-test, vuln, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

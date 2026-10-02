@@ -60,14 +60,15 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - LICENSE holds the full Apache-2.0 text (D-01)
   - attempts: 1
   - result: ADRs 0001 (record decisions), 0002 (embed OPA via v1 rego) and 0003 (static analysis, never execute Terraform); README with purpose, status, quickstart placeholder and links; CONTRIBUTING with prerequisites, commands, how a change lands and the loop; LICENSE is the canonical Apache-2.0 text from apache.org
-- [ ] T-0006 · Extend the CI workflow with the full Go/OPA jobs
+- [x] T-0006 · Extend the CI workflow with the full Go/OPA jobs
   - skills: iace-ci-cd, iace-security
   - depends: T-0004
   - accept:
     - .github/workflows/ci.yml (it already has `gates` + `ci-ok`) gains lint, test (race), policy-test, vuln and cross-build jobs via make, each listed in `ci-ok`'s `needs` so `ci-ok` stays the single required check
     - every action is pinned to a full commit SHA resolved with `gh api`, with a version comment; top-level `permissions: contents: read`; checkout uses `persist-credentials: false`
     - actionlint passes; .github/dependabot.yml covers gomod and github-actions
-  - attempts: 0
+  - attempts: 1
+  - result: ci.yml runs gates plus lint, test (race, coverage, testscript e2e), policy-test, vuln and a linux/darwin/windows × amd64/arm64 build matrix, all via make and all in ci-ok's needs; checkout v7.0.1 and setup-go v7.0.0 pinned by SHA (resolved with gh api), go-version-file: go.mod, a cache key per job; dependabot.yml covers gomod (/, /tools/*) and github-actions
 - [ ] T-0007 · Write the security baseline documents
   - skills: iace-security
   - depends: T-0005
@@ -81,13 +82,14 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
     - iace-architecture references/findings-and-cli.md lists the `iace version --json` fields (schema_version "1", name, version, commit, date), says changes to them follow the schema_version rules, and says a bare `iace` prints help and exits 0
   - attempts: 1
   - result: findings-and-cli.md documents the `iace version` text line, the `--json` document (key order, "dev" defaults, -X injection) and its schema_version rules, and that a bare `iace` prints help and exits 0; owner approved the harness edit
-- [!] T-0009 · Update the golangci-lint asset for golangci-lint v2.14
-  - skills: iace-go-standards
-  - depends: T-0004
+- [!] T-0009 · Sync two harness references with the Makefile and CI
+  - skills: iace-go-standards, iace-ci-cd
+  - depends: T-0004, T-0006
   - accept:
     - iace-go-standards assets/golangci.yml uses gofumpt `extra: {group-params: true}` instead of the deprecated `extra-rules: true`, matching .golangci.yml
+    - iace-ci-cd SKILL.md lists the CI jobs as ci.yml has them: `policy-test` (not `policy`), with the testscript e2e suite running inside `test` rather than a separate `e2e` job
   - attempts: 0
-  - blocked: needs-human — the asset is a harness file (.claude/**), so the owner makes or approves the edit (T-0004 review finding)
+  - blocked: needs-human — both are harness files (.claude/**), so the owner makes or approves the edits (T-0004 and T-0006 review findings)
 
 ## M1 · Terraform loading (static HCL) — status: planned
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
@@ -174,6 +176,7 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
   - accept:
     - modules parse with annotations; metadata is validated against iace-rego-policies/references/metadata-schema.md
     - a duplicate rule ID, missing required metadata or a missing `deny` rule each produce a load error naming the file; there is a test per case
+    - go.mod's OPA library and tools/opa/go.mod pin the same version; a test asserts it, and .github/dependabot.yml groups the two OPA updates so they move together (ADR 0002)
   - attempts: 0
 - [ ] T-0203 · Compile and evaluate with restricted capabilities
   - skills: iace-opa-engine, iace-go-standards
