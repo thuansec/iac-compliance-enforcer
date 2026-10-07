@@ -419,3 +419,25 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   and plan_file is tied to plan mode. The decoder doc now says the schema is the authority.
   The fifth (sync the harness reference) is T-0110, blocked needs-human.
 - Next: T-0102 (discover root modules safely).
+
+## 2026-10-07 · T-0102a · done
+- What: T-0102 was split into T-0102a (this: walk the scan root safely) and T-0102b (root vs
+  child modules). New internal/fsutil wraps os.Root: reads stay inside the scan root, files open
+  with O_NONBLOCK on unix and are checked on the open handle (a FIFO can neither hang nor be
+  read), reads are capped with a growth check, and errors quote the path and drop the raw path
+  of *fs.PathError. terraform.Discover lists *.tf/*.tf.json per directory in a deterministic,
+  depth-first walk; skips hidden dirs and the files Terraform ignores; never follows symlinked
+  directories; records symlink_escape, symlinked_directory, not_regular, too_large and
+  file_limit skips; skipped entries count toward the 10k limit; unreadable dirs fail closed.
+- Files: internal/fsutil/{fsutil.go,open_unix.go,open_other.go,*_test.go},
+  internal/terraform/{doc.go,discover.go,discover_test.go,discover_unix_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. Coverage: fsutil 91.4%, terraform 95.2%. Mutation checks:
+  removing the IsRegular check or O_NONBLOCK makes the FIFO test fail. GOOS=windows/darwin
+  `go vet` pass. Symlink and FIFO tests live in `//go:build unix` files.
+- Review: iace-reviewer CHANGES_REQUIRED (1 major: an escaping symlinked directory left no trace;
+  4 minor: unbounded skips, limit-boundary tests, unreadable-dir test, newline injection via
+  paths). All fixed, then APPROVE with 2 minor (raw path inside *fs.PathError, a doc-comment
+  wrap), both fixed. Follow-ups are recorded in BACKLOG: T-0102b resolves hidden-dir modules
+  through fsutil; T-0109 turns every skip into a coverage gap.
+- Next: T-0102b (separate root modules from local child modules).

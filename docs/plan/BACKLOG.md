@@ -104,16 +104,26 @@ locations and without executing anything.
     - ADR 0004 records the input contract
   - attempts: 1
   - result: internal/model types, model.EncodeInput/DecodeInput (json/v2, deterministic), schemas/input.v1.json and ADR 0004; the reference example round-trips and validates in tests (follow-up T-0110)
-- [ ] T-0102 · Discover root modules safely
+- [x] T-0102a · Walk the scan root safely
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0101
   - accept:
-    - skips .terraform, .git and hidden dirs; never follows symlinks outside the scan root; enforces the file-size (5 MiB) and file-count limits with clear errors
-    - separates root modules from local child modules; tests cover symlink escape, oversized files and nested roots
+    - internal/fsutil confines reads to the scan root (os.Root), caps file size and refuses non-regular files (FIFOs, devices) without blocking
+    - discovery lists Terraform files per directory; skips .terraform, .git and hidden dirs; never follows symlinked directories or symlinks that leave the scan root; enforces the file-size (5 MiB) and file-count (10k) limits, each skip recorded with a clear reason
+    - tests cover symlink escape, oversized files, FIFOs, hidden dirs and the file-count limit
+  - attempts: 1
+  - result: internal/fsutil (os.Root, non-blocking open, size cap, newline-free errors) and terraform.Discover with recorded skips and an entry limit; skips become coverage gaps in T-0109
+- [ ] T-0102b · Separate root modules from local child modules
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0102a
+  - accept:
+    - a directory with Terraform files that no other discovered directory calls through a local `source` (`./`, `../`) is a root module; called directories are child modules; sources that leave the scan root are ignored for classification
+    - tests cover nested roots, a child called from two roots, a module calling itself, and .tf.json module calls
+    - local sources are resolved through internal/fsutil, not only against Discovery, so a module in a hidden directory (`./.modules/x`) is still found
   - attempts: 0
 - [ ] T-0103 · Parse HCL and JSON syntax files into raw blocks with ranges
   - skills: iace-terraform-parsing, iace-testing
-  - depends: T-0102
+  - depends: T-0102b
   - accept:
     - .tf and .tf.json are parsed with hclparse; diagnostics become structured warnings/errors with file:line
     - override files are handled or reported as warnings; FuzzParse has a seed corpus and runs 60s without a panic
@@ -158,6 +168,7 @@ locations and without executing anything.
   - depends: T-0108
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
+    - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
