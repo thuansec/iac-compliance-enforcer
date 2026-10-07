@@ -490,3 +490,28 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   misleading comment). All fixed, then APPROVE with 1 minor (owner for the ADR 0005 risk), fixed
   with T-0112 and threat-model entry T14. T-0109 now maps every diagnostic to a gap.
 - Next: T-0104 (evaluate variables and locals).
+
+## 2026-10-07 · T-0104a · done
+- What: T-0104 was split into T-0104a (this: bound evaluation), T-0104b (variable values) and
+  T-0104c (locals). (*ParsedModule).evalExpr is now the package's only path to Value. It checks
+  the expression's own source first:
+  - HCL tokens must pass the nesting limits and contain at most 1,000 binary operators.
+  - In .tf.json, every string with `${` or `%{` (keys included) is lexed as a template and
+    checked the same way, because hcl parses those only at evaluation time.
+  - An expression whose source is not one of the module's files fails closed.
+  - A rejected expression is unknown, plus an `expression_too_complex` warning at file:line.
+  - Diagnostics are re-sorted and deduplicated after evaluation.
+- Files: internal/terraform/{evalguard.go,evalguard_test.go,nesting.go,parse.go,fuzz_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.5%. A probe binary confirmed that a
+  600k-operator chain inside a JSON template crashes when evaluated with a context, and that 1,000
+  operators are fine. Mutation checks: disabling the guard fails 9 subtests, skipping the JSON
+  check fails 7, and treating missing source as safe fails the fail-closed test. FuzzParseFile now
+  evaluates every top-level attribute through evalExpr; a 60s run did 883,625 execs with no
+  failure.
+- Review: iace-reviewer CHANGES_REQUIRED (1 major: the fail-closed branches were untested; 3
+  minor: sorted and deduplicated diagnostics, JSON nesting boundary tests, Variables() also parses
+  JSON templates). All fixed, then APPROVE with 1 minor (dedup tie-breakers), fixed. Follow-ups:
+  T-0104c (guard Variables() calls), T-0111 (index-chain memory), and a T-0109 mapping for
+  expression_too_complex.
+- Next: T-0104b (evaluate variable values).
