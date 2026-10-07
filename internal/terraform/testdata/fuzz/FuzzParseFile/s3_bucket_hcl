@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 6.0\"\n    }\n  }\n}\n\nresource \"aws_s3_bucket\" \"logs\" {\n  bucket = \"example-logs\"\n}\n\nresource \"aws_s3_bucket_public_access_block\" \"logs\" {\n  bucket                  = aws_s3_bucket.logs.id\n  block_public_acls       = true\n  restrict_public_buckets = var.strict ? true : false\n}\n")
+bool(false)

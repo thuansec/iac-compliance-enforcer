@@ -25,6 +25,15 @@ const (
 
 var errTooDeep = errors.New("nesting too deep to parse safely")
 
+// nestingError is errTooDeep with the line where the limit was crossed (0 for JSON).
+type nestingError struct {
+	msg  string
+	line int
+}
+
+func (e *nestingError) Error() string { return e.msg }
+func (e *nestingError) Unwrap() error { return errTooDeep }
+
 // checkNesting reports whether a file can be parsed without unbounded recursion. It works on the
 // lexer's tokens (HCL) or a byte scan (JSON), neither of which recurses.
 //
@@ -70,7 +79,10 @@ func checkNesting(name string, data []byte) error {
 			unary = 0
 		}
 		if len(open)-1+conditionals+unary > maxNesting {
-			return fmt.Errorf("%w: more than %d levels at line %d", errTooDeep, maxNesting, tok.Range.Start.Line)
+			return &nestingError{
+				msg:  fmt.Sprintf("%v: more than %d levels at line %d", errTooDeep, maxNesting, tok.Range.Start.Line),
+				line: tok.Range.Start.Line,
+			}
 		}
 		if splats > maxSplats {
 			return fmt.Errorf("%w: more than %d splat operators", errTooDeep, maxSplats)

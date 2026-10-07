@@ -122,13 +122,14 @@ locations and without executing anything.
     - local sources are resolved through internal/fsutil, not only against Discovery, so a module in a hidden directory (`./.modules/x`) is still found
   - attempts: 1
   - result: terraform.ClassifyModules (literal local sources only, never evaluated) plus a pre-parse nesting guard against fatal stack overflows; follow-ups T-0111, T-0104 and T-0107 bullets
-- [ ] T-0103 · Parse HCL and JSON syntax files into raw blocks with ranges
+- [x] T-0103 · Parse HCL and JSON syntax files into raw blocks with ranges
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0102b
   - accept:
     - .tf and .tf.json are parsed with hclparse; diagnostics become structured warnings/errors with file:line
     - override files are handled or reported as warnings; FuzzParse has a seed corpus and runs 60s without a panic
-  - attempts: 0
+  - attempts: 1
+  - result: terraform.ParseModule (hclparse, top-level blocks with full ranges, structured diagnostics that never quote source values, override files reported per ADR 0005) and FuzzParseFile (60s, no failure); follow-ups T-0112 and a T-0109 bullet
 - [ ] T-0104 · Evaluate variables and locals
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0103
@@ -172,6 +173,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -180,6 +182,13 @@ locations and without executing anything.
   - accept:
     - a benchmark records peak memory of the nesting guard and the parse for a 5 MiB file (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on `a=1` lines)
     - the per-file cost fits the 1 GiB scan budget: the guard no longer allocates a token slice and/or MaxFileSize is lowered, with the decision recorded in an ADR
+  - attempts: 0
+- [ ] T-0112 · Merge override files with Terraform semantics
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0107
+  - accept:
+    - override.tf, *_override.tf and their .tf.json forms are merged into the blocks they name with Terraform's rules (attributes replace, nested blocks replace by type, locals/terraform/required_providers merge by key); an override for a block that does not exist is an error, as in Terraform
+    - fixtures show that a weakening override (`acl = "public-read"`) reaches the input document; the override_not_merged diagnostic and ADR 0005's accepted risk are retired (threat model T14)
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
