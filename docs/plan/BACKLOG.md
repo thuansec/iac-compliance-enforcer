@@ -92,7 +92,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - attempts: 1
   - result: owner-approved harness edits: the golangci asset uses gofumpt `extra.group-params` (the repo config's body is again identical to it); the iace-ci-cd skill lists the CI jobs as ci.yml has them and says both rulesets are active
 
-## M1 · Terraform loading (static HCL) — status: awaiting-approval
+## M1 · Terraform loading (static HCL) — status: active
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
 locations and without executing anything.
 
