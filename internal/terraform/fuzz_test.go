@@ -4,11 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 )
 
-// FuzzParseFile feeds arbitrary bytes to the parser as HCL or JSON. Parsing, the nesting guard
-// and module-source extraction must never panic or crash, and every diagnostic and block must
+// FuzzParseFile feeds arbitrary bytes to the parser as HCL or JSON. Parsing, the nesting guard,
+// module-source extraction and guarded evaluation must never panic or crash, and every diagnostic and block must
 // name the file it came from. Seeds are below and in testdata/fuzz/FuzzParseFile.
 func FuzzParseFile(f *testing.F) {
 	seeds := []struct {
@@ -49,5 +50,14 @@ func FuzzParseFile(f *testing.F) {
 			}
 		}
 		_ = moduleSources(name, data)
+		// Evaluate every block's attributes through the guard, with a context so that JSON
+		// strings are parsed as templates too.
+		ctx := &hcl.EvalContext{}
+		for _, b := range m.Blocks {
+			attrs, _ := b.Body.JustAttributes()
+			for _, a := range attrs {
+				_, _ = m.evalExpr(a.Expr, ctx)
+			}
+		}
 	})
 }

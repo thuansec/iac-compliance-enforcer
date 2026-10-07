@@ -46,8 +46,14 @@ func checkNesting(name string, data []byte) error {
 		return checkJSONNesting(data)
 	}
 	tokens, _ := hclsyntax.LexConfig(data, name, hcl.InitialPos)
-	open := []int{0} // per open bracket, the conditionals open inside it; [0] is the file body
-	conditionals, unary, splats := 0, 0, 0
+	return scanTokens(tokens, 0)
+}
+
+// scanTokens applies the nesting limits to a token stream and, when maxOps is positive, caps the
+// number of binary operators (evaluating an operator chain recurses once per operand).
+func scanTokens(tokens hclsyntax.Tokens, maxOps int) error {
+	open := []int{0} // per open bracket, the conditionals open inside it; [0] is the outermost level
+	conditionals, unary, splats, ops := 0, 0, 0, 0
 	for i, tok := range tokens {
 		top := len(open) - 1
 		switch tok.Type {
@@ -70,7 +76,13 @@ func checkNesting(name string, data []byte) error {
 		case hclsyntax.TokenStar:
 			if i > 0 && (tokens[i-1].Type == hclsyntax.TokenOBrack || tokens[i-1].Type == hclsyntax.TokenDot) {
 				splats++
+			} else {
+				ops++
 			}
+		case hclsyntax.TokenPlus, hclsyntax.TokenMinus, hclsyntax.TokenSlash, hclsyntax.TokenPercent,
+			hclsyntax.TokenEqualOp, hclsyntax.TokenNotEqual, hclsyntax.TokenLessThan, hclsyntax.TokenLessThanEq,
+			hclsyntax.TokenGreaterThan, hclsyntax.TokenGreaterThanEq, hclsyntax.TokenAnd, hclsyntax.TokenOr:
+			ops++
 		default: // other tokens do not nest
 		}
 		if tok.Type == hclsyntax.TokenBang || tok.Type == hclsyntax.TokenMinus {
@@ -86,6 +98,9 @@ func checkNesting(name string, data []byte) error {
 		}
 		if splats > maxSplats {
 			return fmt.Errorf("%w: more than %d splat operators", errTooDeep, maxSplats)
+		}
+		if maxOps > 0 && ops > maxOps {
+			return fmt.Errorf("%w: more than %d operators", errTooDeep, maxOps)
 		}
 	}
 	return nil

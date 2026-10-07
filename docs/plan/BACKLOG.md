@@ -130,17 +130,33 @@ locations and without executing anything.
     - override files are handled or reported as warnings; FuzzParse has a seed corpus and runs 60s without a panic
   - attempts: 1
   - result: terraform.ParseModule (hclparse, top-level blocks with full ranges, structured diagnostics that never quote source values, override files reported per ADR 0005) and FuzzParseFile (60s, no failure); follow-ups T-0112 and a T-0109 bullet
-- [ ] T-0104 · Evaluate variables and locals
-  - skills: iace-terraform-parsing, iace-testing
+- [x] T-0104a · Bound expression evaluation
+  - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0103
   - accept:
-    - defaults, terraform.tfvars, *.auto.tfvars (lexical order), --var-file and --var are applied with Terraform precedence; sensitive variables are tracked
+    - every expression is checked before Value is called: its own tokens must pass the nesting limits and contain at most 1,000 binary operators (evaluating a long operator chain recurses once per operand and crashes the process, found in T-0102b); a rejected expression is unknown plus a warning diagnostic with file:line
+    - templates inside .tf.json strings (parsed only at evaluation time) are checked the same way
+    - tests evaluate operator chains, deep templates in JSON strings and values at the limits without crashing
+  - attempts: 1
+  - result: evalExpr checks each expression's own tokens (nesting limits, at most 1,000 operators; JSON template strings too) and fails closed without source; follow-up bullets on T-0104c and T-0111
+- [ ] T-0104b · Evaluate variable values
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0104a
+  - accept:
+    - defaults, terraform.tfvars, *.auto.tfvars (lexical order), --var-file and --var are applied with Terraform precedence; --var-file paths are relative to the scan root and confined through fsutil; sensitive variables are tracked
+    - a variable without a value is unknown, not an error; a value that does not convert to the declared type is kept with a warning
+  - attempts: 0
+- [ ] T-0104c · Evaluate locals in dependency order
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0104b
+  - accept:
     - locals are evaluated in dependency order; a cycle yields unknown plus a warning; unknown paths are recorded
-    - expression evaluation is bounded (operator count or expression size) before Value is called: evaluating a long operator chain recurses once per operand and crashes the process (found in T-0102b)
+    - locals that reference resources or data sources are unknown but keep their references
+    - every Variables() or traversal call on an expression passes safeToEvaluate first (hcl parses .tf.json templates there too); evaluation diagnostics stay sorted and deduplicated
   - attempts: 0
 - [ ] T-0105 · Evaluate expressions with a curated function set
   - skills: iace-terraform-parsing, iace-security
-  - depends: T-0104
+  - depends: T-0104c
   - accept:
     - the function table is documented in the reference; unsupported functions yield unknown, never an error
     - file() and templatefile() are confined to the module directory with a size limit; tests cover escape attempts
@@ -173,7 +189,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex → limit_exceeded gap
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -182,6 +198,7 @@ locations and without executing anything.
   - accept:
     - a benchmark records peak memory of the nesting guard and the parse for a 5 MiB file (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on `a=1` lines)
     - the per-file cost fits the 1 GiB scan budget: the guard no longer allocates a token slice and/or MaxFileSize is lowered, with the decision recorded in an ADR
+    - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded too: at 5 MiB they evaluate but use about 2.4 GB (measured in the T-0104a review)
   - attempts: 0
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing

@@ -41,6 +41,9 @@ const (
 	// DiagUnsupportedBlock: a top-level block type iace does not know (a newer Terraform
 	// feature, for example); it is not checked.
 	DiagUnsupportedBlock DiagCode = "unsupported_block"
+	// DiagExpressionTooComplex: an expression was nested too deeply or had too many operators to
+	// evaluate safely, so its value is unknown. It is a limit_exceeded coverage gap.
+	DiagExpressionTooComplex DiagCode = "expression_too_complex"
 )
 
 // Diagnostic is a structured parse problem located in a file relative to the scan root. Line
@@ -81,8 +84,11 @@ type ParsedModule struct {
 	Dir string
 	// Blocks are in file order, then in source order within a file.
 	Blocks []Block
-	// Diagnostics are sorted by file, line, column, code and summary.
+	// Diagnostics are sorted by file, line, column, code and summary, without duplicates.
 	Diagnostics []Diagnostic
+
+	// src holds each file's bytes, so expressions can be checked before evaluation.
+	src map[string][]byte
 }
 
 // HasErrors reports whether any diagnostic is an error.
@@ -139,15 +145,28 @@ func ParseModule(ctx context.Context, root *fsutil.Root, dir Dir, limits Limits)
 		}
 		m.parseFile(parser, name, data)
 	}
+	m.sortDiagnostics()
+	return m, nil
+}
+
+// sortDiagnostics restores the documented order and drops exact duplicates, which arise when
+// the same expression is evaluated more than once (instances, repeated passes).
+func (m *ParsedModule) sortDiagnostics() {
 	slices.SortStableFunc(m.Diagnostics, func(a, b Diagnostic) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line),
-			cmp.Compare(a.Column, b.Column), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Summary, b.Summary))
+			cmp.Compare(a.Column, b.Column), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Summary, b.Summary),
+			// Every field takes part, so equal diagnostics end up adjacent for Compact.
+			cmp.Compare(a.Severity, b.Severity), cmp.Compare(a.Detail, b.Detail))
 	})
-	return m, nil
+	m.Diagnostics = slices.Compact(m.Diagnostics)
 }
 
 // parseFile adds one file's top-level blocks and diagnostics to the module.
 func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []byte) {
+	if m.src == nil {
+		m.src = map[string][]byte{}
+	}
+	m.src[name] = data
 	if err := checkNesting(name, data); err != nil {
 		line := 0
 		if ne, ok := errors.AsType[*nestingError](err); ok {
