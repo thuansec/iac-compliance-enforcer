@@ -139,13 +139,14 @@ locations and without executing anything.
     - tests evaluate operator chains, deep templates in JSON strings and values at the limits without crashing
   - attempts: 1
   - result: evalExpr checks each expression's own tokens (nesting limits, at most 1,000 operators; JSON template strings too) and fails closed without source; follow-up bullets on T-0104c and T-0111
-- [ ] T-0104b · Evaluate variable values
+- [x] T-0104b · Evaluate variable values
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0104a
   - accept:
     - defaults, terraform.tfvars, *.auto.tfvars (lexical order), --var-file and --var are applied with Terraform precedence; --var-file paths are relative to the scan root and confined through fsutil; sensitive variables are tracked
     - a variable without a value is unknown, not an error; a value that does not convert to the declared type is kept with a warning
-  - attempts: 0
+  - attempts: 1
+  - result: (*ParsedModule).EvaluateVariables applies default, tfvars, auto tfvars, --var-file and --var with Terraform precedence and parsing rules, optional() defaults and nullable; sensitivity fails closed; everything evaluated through evalExpr
 - [ ] T-0104c · Evaluate locals in dependency order
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0104b
@@ -189,7 +190,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex → limit_exceeded gap
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex and file_limit → limit_exceeded gaps
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
