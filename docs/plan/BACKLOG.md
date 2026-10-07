@@ -113,14 +113,15 @@ locations and without executing anything.
     - tests cover symlink escape, oversized files, FIFOs, hidden dirs and the file-count limit
   - attempts: 1
   - result: internal/fsutil (os.Root, non-blocking open, size cap, newline-free errors) and terraform.Discover with recorded skips and an entry limit; skips become coverage gaps in T-0109
-- [ ] T-0102b · Separate root modules from local child modules
+- [x] T-0102b · Separate root modules from local child modules
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0102a
   - accept:
     - a directory with Terraform files that no other discovered directory calls through a local `source` (`./`, `../`) is a root module; called directories are child modules; sources that leave the scan root are ignored for classification
     - tests cover nested roots, a child called from two roots, a module calling itself, and .tf.json module calls
     - local sources are resolved through internal/fsutil, not only against Discovery, so a module in a hidden directory (`./.modules/x`) is still found
-  - attempts: 0
+  - attempts: 1
+  - result: terraform.ClassifyModules (literal local sources only, never evaluated) plus a pre-parse nesting guard against fatal stack overflows; follow-ups T-0111, T-0104 and T-0107 bullets
 - [ ] T-0103 · Parse HCL and JSON syntax files into raw blocks with ranges
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0102b
@@ -134,6 +135,7 @@ locations and without executing anything.
   - accept:
     - defaults, terraform.tfvars, *.auto.tfvars (lexical order), --var-file and --var are applied with Terraform precedence; sensitive variables are tracked
     - locals are evaluated in dependency order; a cycle yields unknown plus a warning; unknown paths are recorded
+    - expression evaluation is bounded (operator count or expression size) before Value is called: evaluating a long operator chain recurses once per operand and crashes the process (found in T-0102b)
   - attempts: 0
 - [ ] T-0105 · Evaluate expressions with a curated function set
   - skills: iace-terraform-parsing, iace-security
@@ -155,6 +157,7 @@ locations and without executing anything.
   - accept:
     - local sources resolve only inside the scan root (an escape leaves the module unresolved with a warning); inputs and outputs flow; depth limit 32; cycles detected
     - remote modules resolve only via .terraform/modules/modules.json; unresolved modules are reported as coverage gaps
+    - a local child that no root instantiates (decoy call, `count = 0`, a source redirected by an override file) is scanned as a root or reported as a coverage gap, never silently skipped
   - attempts: 0
 - [ ] T-0108 · Extract references and provider versions
   - skills: iace-terraform-parsing
@@ -170,6 +173,13 @@ locations and without executing anything.
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
+  - attempts: 0
+- [ ] T-0111 · Bound parse memory per file
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0103
+  - accept:
+    - a benchmark records peak memory of the nesting guard and the parse for a 5 MiB file (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on `a=1` lines)
+    - the per-file cost fits the 1 GiB scan budget: the guard no longer allocates a token slice and/or MaxFileSize is lowered, with the decision recorded in an ADR
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
