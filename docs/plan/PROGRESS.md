@@ -441,3 +441,29 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   wrap), both fixed. Follow-ups are recorded in BACKLOG: T-0102b resolves hidden-dir modules
   through fsutil; T-0109 turns every skip into a coverage gap.
 - Next: T-0102b (separate root modules from local child modules).
+
+## 2026-10-07 · T-0102b · done
+- What: terraform.ClassifyModules splits discovered directories into roots and local children.
+  It reads only module blocks, accepts only literal string sources (`./`, `../`) whose target is
+  a directory inside the scan root (checked through fsutil, so hidden-dir modules are found and
+  symlinks cannot escape), ignores self-calls, and promotes the first directory of an
+  unreached call cycle to a root so nothing goes unscanned. New nesting guard: hcl v2.25.0
+  crashes with an unrecoverable stack overflow on deep nesting (brackets, blocks, templates,
+  for, unary operators, splat chains, conditional chains), so every file is checked on lexer
+  tokens (HCL) or bytes (JSON) before parsing: at most 512 levels including open conditionals and
+  unary runs, and 4,096 splats.
+- Files: internal/terraform/{modules.go,modules_test.go,nesting.go,nesting_test.go}, go.mod,
+  go.sum, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.5%. Crash thresholds were measured
+  with probe programs outside the tree (300k levels crash for most kinds; ternary chains crash
+  between 300k and 600k). Mutation check: without the literal-only check,
+  `source = true ? "./a" : "./b"` is accepted and the test fails. New deps: hashicorp/hcl/v2
+  v2.25.0 (MPL-2.0), zclconf/go-cty v1.19.0 (MIT), plus indirect MIT, Apache-2.0 and BSD
+  modules. golang.org/x/text was raised to v0.42.0 because govulncheck flagged GO-2026-5970,
+  reachable through hcl.
+- Review: iace-reviewer CHANGES_REQUIRED (2 major: ternary chains passed the guard and crashed;
+  `Value(nil)` evaluated operator chains and crashed. 3 minor). Both majors and the vacuous
+  .tf.json test were fixed, then APPROVE (the reviewer's bypass probes passed). Follow-ups: T-0111
+  (parse memory per file), a T-0104 bullet (bounded evaluation), a T-0107 bullet (children that
+  no root instantiates).
+- Next: T-0103 (parse HCL and JSON syntax files into raw blocks with ranges).
