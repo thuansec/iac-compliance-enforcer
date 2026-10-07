@@ -96,13 +96,14 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
 locations and without executing anything.
 
-- [ ] T-0101 · Define the input document v1 types and JSON Schema
+- [x] T-0101 · Define the input document v1 types and JSON Schema
   - skills: iace-architecture, iace-terraform-parsing, iace-testing
   - depends: T-0004
   - accept:
     - internal/model types match iace-architecture/references/input-document.md; schemas/input.v1.json validates the reference example in a test
     - ADR 0004 records the input contract
-  - attempts: 0
+  - attempts: 1
+  - result: internal/model types, model.EncodeInput/DecodeInput (json/v2, deterministic), schemas/input.v1.json and ADR 0004; the reference example round-trips and validates in tests (follow-up T-0110)
 - [ ] T-0102 · Discover root modules safely
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0101
@@ -159,6 +160,13 @@ locations and without executing anything.
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
+- [!] T-0110 · Sync the input-document reference with ADR 0004
+  - skills: iace-architecture
+  - depends: T-0101
+  - accept:
+    - .claude/skills/iace-architecture/references/input-document.md states the clarifications in ADR 0004 (backend null, `{file, range}` source ranges, `ignore_changes` "*", plan_file only in plan mode, nil inside values is null, gap file ""/line 0)
+  - attempts: 0
+  - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 
 ## M2 · Policy engine and walking skeleton — status: planned
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.

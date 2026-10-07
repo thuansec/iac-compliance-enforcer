@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thuansec/iac-compliance-enforcer/schemas/input.v1.json",
+  "title": "iace input document v1",
+  "description": "The Go to Rego contract: one document per root module (HCL mode) or plan file (plan mode), passed to OPA as input. See docs/adr/0004-define-the-input-document-v1-contract.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "terraform", "provider_versions", "providers", "resources", "module_calls", "variables", "outputs", "coverage_gaps"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "root_module"],
+      "properties": {
+        "kind": {"enum": ["hcl", "plan"]},
+        "root_module": {"$ref": "#/$defs/relPath", "minLength": 1},
+        "plan_file": {"$ref": "#/$defs/relPath", "minLength": 1}
+      },
+      "if": {"properties": {"kind": {"const": "plan"}}},
+      "then": {"required": ["plan_file"]},
+      "else": {"not": {"required": ["plan_file"]}}
+    },
+    "terraform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_version", "backend", "required_providers"],
+      "properties": {
+        "required_version": {"type": "string"},
+        "backend": {
+          "description": "null when the configuration declares no backend.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "values", "unknown"],
+              "properties": {
+                "type": {"type": "string", "minLength": 1},
+                "values": {"$ref": "#/$defs/values"},
+                "unknown": {"$ref": "#/$defs/paths"}
+              }
+            }
+          ]
+        },
+        "required_providers": {
+          "description": "Keyed by provider local name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "version"],
+            "properties": {
+              "source": {"type": "string"},
+              "version": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "provider_versions": {
+      "description": "Provider source address to the exact version from .terraform.lock.hcl or the plan.",
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "providers": {"type": "array", "items": {"$ref": "#/$defs/provider"}},
+    "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+    "module_calls": {"type": "array", "items": {"$ref": "#/$defs/moduleCall"}},
+    "variables": {"type": "array", "items": {"$ref": "#/$defs/variable"}},
+    "outputs": {"type": "array", "items": {"$ref": "#/$defs/output"}},
+    "coverage_gaps": {"type": "array", "items": {"$ref": "#/$defs/coverageGap"}}
+  },
+  "$defs": {
+    "relPath": {
+      "description": "A slash-separated path relative to the scan root: not absolute, no backslashes, no drive letter, no '..' segment.",
+      "type": "string",
+      "allOf": [
+        {"not": {"pattern": "^/"}},
+        {"not": {"pattern": "\\\\"}},
+        {"not": {"pattern": "^[A-Za-z]:"}},
+        {"not": {"pattern": "(^|/)\\.\\.(/|$)"}}
+      ]
+    },
+    "path": {
+      "description": "Attribute or block names (strings) and list indexes (non-negative integers), e.g. [\"ingress\", 0, \"cidr_blocks\"].",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {"type": "string"},
+          {"type": "integer", "minimum": 0}
+        ]
+      }
+    },
+    "paths": {"type": "array", "items": {"$ref": "#/$defs/path"}},
+    "values": {
+      "description": "Attribute values. Nested blocks are arrays of objects; unknown values are null and listed in unknown.",
+      "type": "object"
+    },
+    "addresses": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "range": {
+      "description": "1-based; columns count bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_line", "start_column", "end_line", "end_column"],
+      "properties": {
+        "start_line": {"type": "integer", "minimum": 1},
+        "start_column": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "end_column": {"type": "integer", "minimum": 1}
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "range"],
+      "properties": {
+        "file": {"$ref": "#/$defs/relPath", "minLength": 1},
+        "range": {"$ref": "#/$defs/range"}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_name", "alias", "source", "values", "unknown", "sensitive", "source_range"],
+      "properties": {
+        "local_name": {"type": "string", "minLength": 1},
+        "alias": {"type": "string"},
+        "source": {"type": "string"},
+        "values": {"$ref": "#/$defs/values"},
+        "unknown": {"$ref": "#/$defs/paths"},
+        "sensitive": {"$ref": "#/$defs/paths"},
+        "source_range": {"$ref": "#/$defs/location"}
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "base_address", "mode", "type", "name", "index", "module", "provider", "provider_config", "values", "unknown", "sensitive", "references", "meta", "source"],
+      "properties": {
+        "address": {"type": "string", "minLength": 1},
+        "base_address": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["managed", "data"]},
+        "type": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "index": {
+          "description": "Instance key: null without count/for_each or when unknown, an integer for count, a string for for_each.",
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 0},
+            {"type": "string"}
+          ]
+        },
+        "module": {"type": "string"},
+        "provider": {"type": "string"},
+        "provider_config": {"type": "string"},
+        "values": {"$ref": "#/$defs/values"},
+        "unknown": {"$ref": "#/$defs/paths"},
+        "sensitive": {"$ref": "#/$defs/paths"},
+        "references": {
+          "description": "Dot-joined attribute path to module-qualified addresses.",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/addresses"}
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count_unknown", "for_each_unknown", "depends_on", "lifecycle"],
+          "properties": {
+            "count_unknown": {"type": "boolean"},
+            "for_each_unknown": {"type": "boolean"},
+            "depends_on": {"$ref": "#/$defs/addresses"},
+            "lifecycle": {
+              "description": "Only settings written in the configuration are present.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "prevent_destroy": {"type": "boolean"},
+                "ignore_changes": {
+                  "description": "Dot-joined attribute paths; Terraform's all keyword is \"*\".",
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "range", "attributes"],
+          "properties": {
+            "file": {"$ref": "#/$defs/relPath", "minLength": 1},
+            "range": {"$ref": "#/$defs/range"},
+            "attributes": {
+              "description": "Dot-joined attribute path to the range of its expression.",
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/range"}
+            },
+            "module_call": {"$ref": "#/$defs/location"}
+          }
+        }
+      }
+    },
+    "moduleCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "source", "version", "resolved", "reason", "source_range"],
+      "properties": {
+        "address": {"type": "string", "minLength": 1},
+        "source": {"type": "string"},
+        "version": {"type": "string"},
+        "resolved": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "source_range": {"$ref": "#/$defs/location"}
+      }
+    },
+    "variable": {
+      "description": "No value: values are inlined where the variable is used.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "module", "sensitive", "has_default", "type"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "module": {"type": "string"},
+        "sensitive": {"type": "boolean"},
+        "has_default": {"type": "boolean"},
+        "type": {"type": "string"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "module", "sensitive", "references", "source_range"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "module": {"type": "string"},
+        "sensitive": {"type": "boolean"},
+        "references": {"$ref": "#/$defs/addresses"},
+        "source_range": {"$ref": "#/$defs/location"}
+      }
+    },
+    "coverageGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail", "file", "line"],
+      "properties": {
+        "kind": {"enum": ["parse_error", "unresolved_module", "unknown_expansion", "limit_exceeded", "unsupported_function"]},
+        "detail": {"type": "string"},
+        "file": {"description": "\"\" when the gap is not tied to a file.", "$ref": "#/$defs/relPath"},
+        "line": {"description": "0 when unknown.", "type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
