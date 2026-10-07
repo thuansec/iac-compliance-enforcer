@@ -515,3 +515,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   T-0104c (guard Variables() calls), T-0111 (index-chain memory), and a T-0109 mapping for
   expression_too_complex.
 - Next: T-0104b (evaluate variable values).
+
+## 2026-10-07 · T-0104b · done
+- What: (*ParsedModule).EvaluateVariables evaluates a root module's variables in Terraform's
+  precedence: default, terraform.tfvars, terraform.tfvars.json, *.auto.tfvars(.json) in lexical
+  order (module directory only), --var-file in order, then --var in order.
+  - Types come from typeexpr.TypeConstraintWithDefaults, so optional(T, default) defaults apply.
+  - A value that does not convert is kept with a warning; an unset variable is unknown.
+  - nullable = false replaces null with the default.
+  - Sensitivity fails closed (anything but a clean false is sensitive), and sensitive values
+    carry SensitiveMark.
+  - As in Terraform, --var takes a primitive-typed or untyped value literally and parses complex
+    types and explicit `any`.
+  - Pipeline mistakes are errors: bad --var-file paths, malformed, undeclared or mistyped --var,
+    and the argument is never echoed. Repository problems are diagnostics: undeclared names,
+    tfvars syntax errors, references, duplicate declarations, more tfvars files than the limit.
+  - Every value goes through evalExpr; .tf.json type strings are lexed as expressions before
+    typeexpr parses them.
+- Files: internal/terraform/{variables.go,variables_test.go,variables_internal_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.2%. Mutation checks: dropping
+  defaults.Apply fails the optional-attribute test; starting sensitivity at false fails the
+  fail-closed test.
+- Review: iace-reviewer CHANGES_REQUIRED (2 major: optional(T, default) became a parse error and
+  defaults were never applied; `sensitive = "true"` failed open. 6 minor: --var type mismatch,
+  duplicate declarations, the argument echoed in an error, nullable, the tfvars file count and
+  memory, untested path checks). All fixed, then APPROVE with 2 minor (a --var-file naming a
+  module file dropped its source; a test at exactly the file limit), both fixed.
+- Next: T-0104c (evaluate locals in dependency order).
