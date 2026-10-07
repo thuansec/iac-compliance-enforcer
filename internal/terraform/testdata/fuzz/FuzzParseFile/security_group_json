@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("{\n  \"resource\": {\n    \"aws_security_group\": {\n      \"web\": {\n        \"name\": \"web\",\n        \"ingress\": [\n          {\"from_port\": 443, \"to_port\": 443, \"protocol\": \"tcp\", \"cidr_blocks\": [\"10.0.0.0/16\"]}\n        ],\n        \"tags\": {\"env\": \"${var.env}\"}\n      }\n    }\n  },\n  \"//\": \"fixture\"\n}\n")
+bool(true)

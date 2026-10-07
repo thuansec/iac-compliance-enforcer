@@ -467,3 +467,26 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   (parse memory per file), a T-0104 bullet (bounded evaluation), a T-0107 bullet (children that
   no root instantiates).
 - Next: T-0103 (parse HCL and JSON syntax files into raw blocks with ranges).
+
+## 2026-10-07 · T-0103 · done
+- What: terraform.ParseModule parses a directory's .tf and .tf.json files with hclparse. Files
+  are read through fsutil with the size limit and pass the nesting guard first. It returns the
+  top-level blocks (type, labels, file, full range from header to closing brace, body) in file
+  order, plus sorted Diagnostics (severity, code, summary, file, line, column).
+  - A file the parser rejects contributes no blocks.
+  - Unknown top-level block types are warnings; top-level arguments are errors.
+  - Override files are reported (`override_not_merged`) and checked for syntax and nesting, but
+    not merged (ADR 0005).
+  - Diagnostics keep only hcl's Summary, because its Detail can quote source values.
+  - Terraform 1.14 `action` blocks are known.
+- Files: internal/terraform/{parse.go,parse_test.go,fuzz_test.go,nesting.go},
+  internal/terraform/testdata/fuzz/FuzzParseFile/*, docs/adr/0005-report-override-files-instead-of-merging-them.md,
+  docs/security/threat-model.md (T14), docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.4%. FuzzParseFile: 15 seeds (12 inline,
+  3 corpus files); 60s runs did 626,764 execs (first version) and 794,588 execs (final), with no
+  failure. Mutation check: passing hcl's Detail through makes 5 leak cases fail.
+- Review: iace-reviewer CHANGES_REQUIRED (2 major: hcl Detail leaked source values; nothing owned
+  turning diagnostics into gaps. 3 minor: overrides not syntax-checked, missing `action` block, a
+  misleading comment). All fixed, then APPROVE with 1 minor (owner for the ADR 0005 risk), fixed
+  with T-0112 and threat-model entry T14. T-0109 now maps every diagnostic to a gap.
+- Next: T-0104 (evaluate variables and locals).
