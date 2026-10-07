@@ -392,3 +392,10 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - The owner's personal email is on early commits and pull-request refs: the owner's call, so
     no follow-up task (docs/security/going-public.md).
 - Next: M1 is awaiting the owner's approval; set its status to `active` in BACKLOG to continue.
+
+## 2026-10-07 · M1 · approved
+- What: the owner approved milestone M1; its status moves from `awaiting-approval` to `active`.
+- Files: docs/plan/BACKLOG.md, docs/plan/PROGRESS.md
+- Evidence: plan-only change; `gates.sh full` green.
+- Review: plan only, approved by the owner; no reviewer.
+- Next: T-0101.
