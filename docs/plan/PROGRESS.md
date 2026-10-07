@@ -399,3 +399,23 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Evidence: plan-only change; `gates.sh full` green.
 - Review: plan only, approved by the owner; no reviewer.
 - Next: T-0101.
+
+## 2026-10-07 · T-0101 · done
+- What: the input document v1 contract in code. internal/model has the Go types, `Path` and
+  `InstanceKey` with strict JSON, a `Values` type whose nils encode as null (unknown), and
+  `EncodeInput` (json/v2, sorted keys, no null collections) and `DecodeInput` (rejects unknown
+  members and other schema versions). schemas/input.v1.json is strict (`additionalProperties:
+  false`, relative slash paths, plan_file only in plan mode). ADR 0004 records the decisions.
+- Files: internal/model/{doc,input,path,values,codec}.go, internal/model/input_test.go,
+  internal/model/testdata/input-example.json, schemas/input.v1.json,
+  docs/adr/0004-define-the-input-document-v1-contract.md, go.mod, go.sum
+- Evidence: `gates.sh full` 13 pass (1 warn: progress, now written); internal/model coverage
+  92.5%. The reference example decodes, round-trips unchanged and validates; a document setting
+  every Go field validates (drift check); 20 malformed documents are rejected; decode errors do not
+  quote values. New deps: santhosh-tekuri/jsonschema/v6 v6.0.3 (Apache-2.0, maintained, pure Go)
+  and google/go-cmp v0.7.0 (BSD-3), both test-only so far.
+- Review: iace-reviewer APPROVE with 5 minor findings. Fixed four: typed nils in values now
+  encode as null, decode errors name only the JSON kind, a test pins the example to the reference,
+  and plan_file is tied to plan mode. The decoder doc now says the schema is the authority.
+  The fifth (sync the harness reference) is T-0110, blocked needs-human.
+- Next: T-0102 (discover root modules safely).
