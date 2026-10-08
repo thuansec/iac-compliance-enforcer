@@ -39,13 +39,24 @@ const (
 	jsonEscapeFactor = 6
 )
 
-// supportedFunctions maps each Terraform function iace evaluates to its go-cty stdlib
-// implementation. Only functions whose stdlib semantics match Terraform's, and whose cost the
+// supportedFunctions maps each Terraform function iace evaluates to its implementation: a go-cty
+// stdlib function, or iace's own where Terraform's semantics differ from any stdlib function.
+// Only functions whose semantics match Terraform's, and whose cost the
 // argument and result sizes bound, are listed; docs/reference/terraform-functions.md documents
 // the table, and every other function evaluates as unknown. Keep both in sync. Functions that
 // build sets are left out: cty hashes numbers with ten significant digits, so a set of close
 // numbers compares every pair at a cost that grows with their precision.
 var supportedFunctions = map[string]function.Function{
+	// Terraform's own semantics, implemented in functions_terraform.go
+	"base64decode": base64DecodeFunc,
+	"base64encode": base64EncodeFunc,
+	"coalesce":     coalesceFunc,
+	"endswith":     endsWithFunc,
+	"index":        indexFunc,
+	"length":       lengthFunc,
+	"lookup":       lookupFunc,
+	"startswith":   startsWithFunc,
+	"strcontains":  strContainsFunc,
 	// string
 	"chomp":      stdlib.ChompFunc,
 	"format":     stdlib.FormatFunc,
@@ -99,14 +110,17 @@ var unboundedFunctions = map[string]function.Function{
 	"try": tryfunc.TryFunc,
 }
 
-// callCost returns a bound on the size of a call's result, for a function whose result can
-// grow faster than its arguments. sizes are the arguments' valueSize.
-type callCost func(args []cty.Value, sizes []int) int
+// callCost returns a bound on the size of a call's result and the work the call does beyond
+// measuring its arguments and result, for a function whose result or work can grow faster than
+// its arguments. sizes are the arguments' valueSize.
+type callCost func(args []cty.Value, sizes []int) (out, work int)
 
-// callCosts lists the functions whose result can grow faster than their arguments.
+// callCosts lists the functions whose result or work can grow faster than their arguments.
 var callCosts = map[string]callCost{
+	"contains":   setComparisonCost,
 	"format":     formatCost,
 	"formatlist": formatListCost,
+	"index":      setComparisonCost,
 }
 
 // unknownFunction stands in for every function iace does not evaluate. Its parameters do not
@@ -235,7 +249,14 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 			for _, n := range sizes {
 				total += n
 			}
-			if !ok || cost != nil && cost(conv, sizes) > maxFunctionValueSize || !m.chargeFunctionWork(total) {
+			if !ok {
+				return limited()
+			}
+			out, work := 0, 0
+			if cost != nil {
+				out, work = cost(conv, sizes)
+			}
+			if out > maxFunctionValueSize || !m.chargeFunctionWork(total, work) {
 				return limited()
 			}
 			val, err := f.Call(conv)
@@ -306,23 +327,23 @@ func (m *ParsedModule) chargeFunctionWork(amounts ...int) bool {
 }
 
 // formatCost bounds format: each verb can print any argument, padded to its width.
-func formatCost(args []cty.Value, sizes []int) int {
+func formatCost(args []cty.Value, sizes []int) (out, work int) {
 	if len(args) == 0 || !args[0].IsKnown() || args[0].IsNull() {
-		return 0
+		return 0, 0
 	}
 	largest := 0
 	for _, n := range sizes[1:] {
 		largest = max(largest, n)
 	}
 	f, _ := args[0].Unmark()
-	return formatBound(f.AsString(), largest)
+	return formatBound(f.AsString(), largest), 0
 }
 
 // formatListCost bounds formatlist: one format result per row, where the rows are as many as
 // the longest list argument and each verb prints at most the largest element.
-func formatListCost(args []cty.Value, sizes []int) int {
+func formatListCost(args []cty.Value, sizes []int) (out, work int) {
 	if len(args) == 0 || !args[0].IsKnown() || args[0].IsNull() {
-		return 0
+		return 0, 0
 	}
 	rows, largest := 1, 0
 	for i, a := range args[1:] {
@@ -340,7 +361,38 @@ func formatListCost(args []cty.Value, sizes []int) int {
 		}
 	}
 	f, _ := args[0].Unmark()
-	return saturatingMul(rows, formatBound(f.AsString(), largest))
+	return saturatingMul(rows, formatBound(f.AsString(), largest)), 0
+}
+
+// setComparisonCost charges the pairwise work of comparing values that hold sets, for
+// functions that compare elements of a collection with a value (contains, index). cty compares
+// two sets by looking up each element of one in the other, and when number hashes collide
+// (cty hashes ten significant digits) each lookup compares every element: the work is bounded
+// by the product of the sizes. Values without sets compare in linear time.
+func setComparisonCost(args []cty.Value, sizes []int) (out, work int) {
+	if len(args) < 2 || !typeHasSet(args[0].Type()) && !typeHasSet(args[1].Type()) {
+		return 0, 0
+	}
+	return 0, saturatingMul(sizes[0], sizes[1])
+}
+
+// typeHasSet reports whether a value of type ty can hold a set.
+func typeHasSet(ty cty.Type) bool {
+	switch {
+	case ty == cty.DynamicPseudoType || ty.IsSetType():
+		return true
+	case ty.IsListType() || ty.IsMapType():
+		return typeHasSet(ty.ElementType())
+	case ty.IsTupleType():
+		return slices.ContainsFunc(ty.TupleElementTypes(), typeHasSet)
+	case ty.IsObjectType():
+		for _, at := range ty.AttributeTypes() {
+			if typeHasSet(at) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // formatBound bounds the output of formatting f once when no argument is larger than largest:

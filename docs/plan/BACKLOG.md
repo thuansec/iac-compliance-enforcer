@@ -165,20 +165,40 @@ locations and without executing anything.
     - every call is bounded (argument size before conversion, result size and nesting, number digits, format widths, formatlist rows, a per-module work budget); a call over a bound is unknown with a function_limit warning; tests sit just below, at and just above each bound
   - attempts: 1
   - result: locals evaluate with 39 go-cty stdlib functions plus try/can (docs/reference/terraform-functions.md, a test per function and a doc-sync test); unsupported and provider functions are unknown with one unsupported_function warning per name; every call is sized before conversion (number digits included) and bounded per call (2^18) and per module (2^23), else unknown + function_limit; set functions, distinct and lookup moved to T-0105b; follow-up T-0115
-- [ ] T-0105b · Add the Terraform-specific pure functions
+- [x] T-0105b · Add Terraform's linear pure functions
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105a
   - accept:
-    - length (strings too), coalesce (skips empty strings), index (position of a value), replace (plain and /regex/), regex, regexall, startswith, endswith, strcontains, base64encode, base64decode (UTF-8 checked), cidrsubnet, cidrhost and cidrnetmask, implemented in iace (never copied from Terraform, BUSL-1.1) with Terraform's documented semantics and a test per function
-    - lookup with Terraform's optional, nullable default; distinct, toset, setunion, setintersection and setsubtract with a cost bound that holds when cty number hashes collide (a set of close numbers compares every pair, found in the T-0105a review)
-    - superlinear costs are bounded like T-0105a (replace output, regex pattern × input, pairwise comparisons × element size)
-  - attempts: 0
+    - length (strings by grapheme, tuples and objects by type), coalesce (skips null and empty strings), index (position of a value), lookup (optional, nullable default; objects and maps), startswith, endswith, strcontains, base64encode and base64decode (UTF-8 checked), implemented in iace (never copied from Terraform, BUSL-1.1) with Terraform's documented semantics, a test per function and tests for each error and unknown case
+    - each goes through the T-0105a bounded wrapper; the reference doc lists them
+  - attempts: 2
+  - result: length, coalesce, index, lookup, startswith, endswith, strcontains, base64encode and base64decode in functions_terraform.go (from Terraform's docs), registered in the bounded table and documented with a semantics table; index/contains charge pairwise work when sets are involved; valueSize handles unknown and marked set elements; T-0105 remainder split into T-0105d/e/f; follow-up T-0116
 - [ ] T-0105c · Confine file(), fileexists() and templatefile() to the module directory
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
   - accept:
     - file(), fileexists() and templatefile() read only inside the module directory through fsutil, with a size limit (1 MiB); tests cover escape attempts (`..`, absolute paths, symlinks)
     - templatefile() evaluates with the same bounded function table; a missing file or a template error is unknown with a warning, never an error
+  - attempts: 0
+- [ ] T-0105d · Add replace, regex and regexall with bounded regular expressions
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0105b
+  - accept:
+    - replace (plain and /regex/ with $-expansion), regex and regexall with Terraform's semantics and a test per function
+    - superlinear costs are bounded before the work happens: replace output (exact for plain, an upper bound from match count and `$` references for regex), regex program size (estimated from the parsed pattern, counted repetitions included) × input length charged to the work budget, and regexall results (matches × groups); tests sit below, at and above each bound
+  - attempts: 0
+- [ ] T-0105e · Add cidrsubnet, cidrhost and cidrnetmask
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0105b
+  - accept:
+    - IPv4 and IPv6 prefixes with Terraform's documented semantics (negative hostnum counts from the end, newbits limits, cidrnetmask IPv4 only), implemented with net/netip and math/big, with tests for every error case
+  - attempts: 0
+- [ ] T-0105f · Add distinct and the set functions with a collision-proof cost bound
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0105b
+  - accept:
+    - distinct, toset, setunion, setintersection and setsubtract with a cost bound that holds when cty number hashes collide (a set of close numbers compares every pair, found in the T-0105a review): pairwise comparisons × element size are charged before the work happens
+    - a regression test with 1,024 numbers differing past ten significant digits stays within the module budget
   - attempts: 0
 - [ ] T-0106 · Expand count, for_each and dynamic blocks
   - skills: iace-terraform-parsing, iace-testing
@@ -204,7 +224,7 @@ locations and without executing anything.
   - attempts: 0
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108, T-0113, T-0115
+  - depends: T-0108, T-0113, T-0115, T-0116
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
@@ -239,6 +259,13 @@ locations and without executing anything.
   - accept:
     - when a traversal's later steps are static attribute or index steps (`local.cfg.env`), the estimate resolves them against the evaluated value and charges that sub-value's size, not the whole value's (T-0104c review: 6+ field reads of a ~45 KB map are a false value_too_large today)
     - the estimate stays an upper bound: tests with dynamic index steps and splats still charge the whole value
+  - attempts: 0
+- [ ] T-0116 · Bound set comparisons, unification and conversion into set types
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0105b
+  - accept:
+    - comparing values that hold sets (`==`/`!=`) and unifying or converting values into set types (HCL conditionals, tolist/tomap/concat/coalescelist, lookup's default, coalesce, tfvars into `set(...)` variables, set literals) no longer compare every pair when cty number hashes collide (T-0105b review: 300 colliding numbers take 1.8s in `true ? <tuple> : var.nums`, 5–21s through lookup's default); such an expression or value is unknown with a limit warning
+    - each path has a colliding-number regression test that finishes within the per-module time budget, and the reference's worst-case note drops its T-0116 exception
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing

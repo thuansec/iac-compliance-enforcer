@@ -114,6 +114,16 @@ func TestSupportedFunctions(t *testing.T) {
 		"jsondecode": {`jsondecode("{\"a\":[1,true]}")`, `{ a = [1, true] }`},
 		"jsonencode": {`jsonencode({ b = [1, "x"], a = null })`, `"{\"a\":null,\"b\":[1,\"x\"]}"`},
 
+		"base64decode": {`base64decode("aMOpbGxv")`, `"héllo"`},
+		"base64encode": {`base64encode("héllo")`, `"aMOpbGxv"`},
+		"coalesce":     {`coalesce(null, "", "b", "c")`, `"b"`},
+		"endswith":     {`endswith("main.tf", ".tf")`, `true`},
+		"index":        {`index(["a", "b", "c"], "b")`, `1`},
+		"length":       {`length("éx")`, `2`},
+		"lookup":       {`lookup({ a = "x" }, "b", "d")`, `"d"`},
+		"startswith":   {`startswith("arn:aws:s3", "arn:")`, `true`},
+		"strcontains":  {`strcontains("hello", "ell")`, `true`},
+
 		"abs":    {`abs(-2)`, `2`},
 		"max":    {`max(1, 3, 2)`, `3`},
 		"min":    {`min(1, 3, 2)`, `1`},
