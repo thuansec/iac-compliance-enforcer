@@ -862,3 +862,50 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its minor finding (check the conversion error instead of comparing with
     NilVal) was applied, and the gates re-ran.
 - Next: T-0106b (count and for_each).
+
+## 2026-10-08 · T-0106b · done
+- What: DecodeResources now expands count and for_each.
+  - Meta-arguments are recorded once per block. The body is decoded once per instance, with
+    `count`/`each` bound; their sizes and sensitivity are measured once per instance.
+  - count: converted to a number. A sensitive count expands as Terraform allows, with plain
+    indexes. Unknown gives a `[*]` placeholder with count_unknown (unknown_expansion). Null,
+    negative, fractional or non-numeric gives the placeholder with invalid_expansion.
+  - for_each:
+    - a map or object, where each.value is the element (sensitive element values flow
+      through);
+    - a set of strings, where each.value is the key;
+    - sensitive keys, null, a list or a non-string set → invalid;
+    - unknown → placeholder;
+    - both count and for_each → placeholder with both flags.
+  - Keys are sorted and quoted with hclwrite (`$${`, `%%{`, `\u0007`), as Terraform writes
+    addresses.
+  - Caps, each reported per truncated resource (expansion_limit):
+    - 10,000 instances per resource;
+    - 100,000 per module;
+    - maxInstanceStructure 2^27 estimated bytes (instance 1024, attribute 256, block 768);
+    - maxExpansionWork 2^21 bytes of re-evaluated source (measured 200–630 ns/byte, so about
+      1s at worst).
+- Files: internal/terraform/{resources.go,resources_expand.go,resources_expand_test.go,
+  resources_expand_internal_test.go,resources_test.go,fuzz_test.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; fuzzing 45s, clean.
+  - TestExpansionHeap, live heap at the module limits:
+    - bare: 100,000 instances, 66 MB;
+    - 20 attributes: 20,971 instances, 115 MB;
+    - 20 blocks: 8,065 instances, 32 MB;
+    - nested blocks: 37,449 instances, 104 MB.
+  - Value-heavy shapes can add about 206 MB more (T-0118).
+  - Mutation checks each fail a test: each cap removed, sensitive count rejected, a number set
+    accepted, negative/fractional accepted, each-sensitivity lost.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: a sensitive count was wrongly invalid. Terraform allows it; fixed.
+    - Major: per-instance structure was uncharged (a 1.2 KB file held 273 MB). Fixed with the
+      structure budget and the heap test.
+    - Minors, all fixed: strconv quoting differed from Terraform's; later resources were cut
+      without a warning; there was no exact work-bound test.
+  - Round 2: APPROVE, with two minors.
+    - Re-evaluation measured up to 630 ns/byte, so maxExpansionWork was lowered to 2^21.
+    - Value-heavy memory is now follow-up T-0118, which also covers dynamic blocks in
+      instanceStructure.
+  - T-0113 now names resource instances as an amplifier.
+- Next: T-0106c (dynamic blocks).

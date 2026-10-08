@@ -212,13 +212,14 @@ locations and without executing anything.
     - meta-arguments (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`, `provisioner`, `connection`) are not values: `provider` (`aws.eu`), `depends_on` (addresses) and `lifecycle` (`prevent_destroy`, `ignore_changes` with `all` as `*`) are recorded; a `dynamic` block, a `.tf.json` body, an evaluation error or a value over the size limits is unknown with a warning, never an error
   - attempts: 1
   - result: ParsedModule.DecodeResources decodes HCL resource and data bodies into one instance each (values, unknown paths, sensitive marks, attribute ranges, provider/depends_on/lifecycle meta, raw count/for_each for T-0106b); dynamic blocks and JSON bodies are unknown with dynamic_block_not_expanded / json_body_not_decoded warnings; per-attribute and per-module (2^22) size limits with a pre-evaluation estimate; T-0106 split into a–d
-- [ ] T-0106b · Expand count and for_each into instances
+- [x] T-0106b · Expand count and for_each into instances
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0106a
   - accept:
     - instance addresses look like `type.name[0]` and `type.name["key"]` with `count.index`, `each.key` and `each.value` set; `count = 0` and an empty `for_each` produce no instances; invalid values (negative or fractional count, for_each over a list or with sensitive keys) are unknown with a warning, as Terraform would reject them
     - unknown count/for_each yields one placeholder instance (`type.name[*]`, index null) marked count_unknown/for_each_unknown, evaluated with unknown `count.index`/`each.*`; the expansion cap (10,000 instances per resource by default) keeps the first instances and produces a warning
-  - attempts: 0
+  - attempts: 1
+  - result: count and for_each expand into `type.name[0]` / `type.name["key"]` instances (HCL-quoted keys, sorted) with count.index/each bound; sensitive count expands as in Terraform; unknown or invalid expansions are one `[*]` placeholder with unknown_expansion / invalid_expansion; caps of 10,000 instances per resource, 100,000 per module, 2^27 estimated bytes of instance structure and 2^21 bytes of re-evaluated source, each truncated resource reported (expansion_limit); follow-up T-0118
 - [ ] T-0106c · Expand dynamic blocks
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0106b
@@ -255,7 +256,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error, dynamic_block_not_expanded and json_body_not_decoded → coverage gaps naming the file (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error, dynamic_block_not_expanded and json_body_not_decoded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -279,6 +280,7 @@ locations and without executing anything.
   - accept:
     - evaluation work inside one expression is bounded: nested for expressions over collections cannot multiply into a hang or OOM (T-0104c review: three nested fors over a 200-element list built 8M elements in 3.1s; 1,000 elements would be about 1e9). An expression over the bound is unknown with a limit diagnostic that T-0109 maps to a limit_exceeded gap
     - applies to every evalExpr caller (variables, locals, later attributes) and to templatefile templates (`%{ for }` directives nest the same way); tests just below, at and just above the bound
+    - resource instances multiply a body's expression cost (T-0106b review): maxExpansionWork counts source bytes, so a for expression in a block with count = 10,000 runs 10,000 times; the bound covers the per-instance work, not just one evaluation
   - attempts: 0
 - [ ] T-0114 · Charge only the used part of a value in the locals size estimate
   - skills: iace-terraform-parsing, iace-testing
@@ -308,6 +310,14 @@ locations and without executing anything.
     - formatting, comparing or hashing a number that is not an integer costs time quadratic in its fractional bits (math/big's exact decimal expansion; found in the T-0105f work: one comparison or `tostring` of `1e-78000` takes 1.9s while its size is 78k units); tostring, jsonencode, format, formatlist, contains, index, `==`/`!=` and templates charge numberFormatCost as the set functions do, or such a value is unknown with a limit warning
     - conversions in the type pass are charged before they run, as T-0105f does for the set functions: a bounded function whose parameter types convert numbers (`join`, `formatlist`, `concat` into strings, …) formats them when its type is decided, and cty skips the call when another argument is unknown (T-0105f review: `[for i in range(3) : join(var.u, [1e-40000])]` took 1.37s for 6 work units); tested with an unknown argument in a `for` loop
     - a test per path with `1e-78000` finishes within the per-module time budget, and the reference's worst-case note drops its T-0117 exception
+  - attempts: 0
+- [ ] T-0118 · Weigh resource values by their memory, not only their units
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0106c
+  - accept:
+    - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
+    - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
+    - when T-0106c expands dynamic blocks, instanceStructure counts each expanded entry, not the dynamic block once
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
