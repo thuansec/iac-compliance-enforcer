@@ -668,4 +668,8 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE, with 2 minor doc findings, both fixed. T-0116 was widened to all
     unification and conversion into set types (HCL conditionals included), and the reference's
     worst-case note now names that exception.
+- CI round 1 (attempt 2): red. TestSetComparisonsAreCharged had a 2s wall-clock assertion,
+  and under -race in CI the limited call took 2.7s, because iterating a set of colliding numbers
+  sorts it at a cost per comparison. The test now asserts only the outcome (unknown with
+  function_limit), which fails without the charge.
 - Next: T-0105c (file functions confined to the module directory).

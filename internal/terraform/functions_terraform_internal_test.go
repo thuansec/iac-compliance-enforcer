@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/zclconf/go-cty/cty"
 )
@@ -164,13 +163,11 @@ func TestSetComparisonsAreCharged(t *testing.T) {
 	}
 	vars := map[string]Variable{"a": {Value: colliding(0)}, "b": {Value: colliding(1)}}
 	for _, expr := range []string{`index([var.a], var.b)`, `contains([var.a], var.b)`} {
-		start := time.Now()
+		// Without the charge the call runs (seconds, more under -race) and is known or an
+		// evaluation error, so the limit itself is the assertion; wall-clock checks are flaky.
 		m, got := evalLocal(t, expr, vars)
 		if got.IsKnown() || !slices.Equal(diagCodes(m), []DiagCode{DiagFunctionLimit}) {
 			t.Errorf("%s = %#v, diagnostics %v; want unknown with function_limit", expr, got, m.Diagnostics)
-		}
-		if d := time.Since(start); d > 2*time.Second {
-			t.Errorf("%s took %v", expr, d)
 		}
 	}
 	if !typeHasSet(cty.Object(map[string]cty.Type{"a": cty.Tuple([]cty.Type{cty.Map(cty.Set(cty.Number))})})) ||

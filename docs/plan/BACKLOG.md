@@ -171,7 +171,7 @@ locations and without executing anything.
   - accept:
     - length (strings by grapheme, tuples and objects by type), coalesce (skips null and empty strings), index (position of a value), lookup (optional, nullable default; objects and maps), startswith, endswith, strcontains, base64encode and base64decode (UTF-8 checked), implemented in iace (never copied from Terraform, BUSL-1.1) with Terraform's documented semantics, a test per function and tests for each error and unknown case
     - each goes through the T-0105a bounded wrapper; the reference doc lists them
-  - attempts: 1
+  - attempts: 2
   - result: length, coalesce, index, lookup, startswith, endswith, strcontains, base64encode and base64decode in functions_terraform.go (from Terraform's docs), registered in the bounded table and documented with a semantics table; index/contains charge pairwise work when sets are involved; valueSize handles unknown and marked set elements; T-0105 remainder split into T-0105d/e/f; follow-up T-0116
 - [ ] T-0105c · Confine file(), fileexists() and templatefile() to the module directory
   - skills: iace-terraform-parsing, iace-security
