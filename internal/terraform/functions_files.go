@@ -40,8 +40,9 @@ const maxFunctionFileSize = 1 << 20
 // module's function work is spent.
 const fileCallCost = 1 << 10
 
-// fileFunctionNames are the filesystem functions, built per module by fileFunctions.
-var fileFunctionNames = []string{"file", "fileexists", "templatefile"}
+// moduleFunctionNames are the functions built per module, because they read the module's files
+// or charge its function work themselves: fileFunctions, replaceFunc and regexFunc.
+var moduleFunctionNames = []string{"file", "fileexists", "regex", "regexall", "replace", "templatefile"}
 
 // pendingDiag is a warning a function call raised, reported at the evaluated expression.
 type pendingDiag struct {

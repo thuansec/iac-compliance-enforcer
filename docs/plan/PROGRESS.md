@@ -708,3 +708,48 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     charging before the UTF-8 check.
   - Round 3: APPROVE.
 - Next: T-0105d (replace, regex and regexall with bounded regular expressions).
+
+## 2026-10-08 · T-0105d · done
+- What: replace (plain and /regex/), regex and regexall, with every cost bounded before it is
+  paid.
+  - All three are iace module functions; regex and regexall return go-cty's result shapes
+    (string, tuple of unnamed groups, object of named groups, null for unmatched groups).
+  - Patterns:
+    - at most 4 KiB;
+    - charged 64 units per byte plus one per class rune, and parsed once per module (cache of
+      256; past it, one slot shared by a call's type check and run);
+    - a parse-tree estimate that never undercounts Go's program refuses anything over 8,192
+      before compiling; the compiled program must be ≤ 4,096 instructions.
+  - Matching: each search is charged size × (groups+1) × (len+1). Find-all stops at the
+    matches the remaining work affords (2k+1 searches for k matches) and at what a result
+    holds; otherwise the call is unknown.
+  - replace checks its output size before building it: exactly for a plain substring, from the
+    matches and `$` count for a regex. It builds from the matches, equal to Go's
+    ReplaceAllString.
+  - The bounded wrapper:
+    - spends work on refused calls;
+    - treats an unknown result whose type does not match the declared one as limited.
+- Files: internal/terraform/{functions_regex.go,functions_regex_internal_test.go,race_on_test.go,
+  race_off_test.go,functions.go,functions_files.go,parse.go,functions_internal_test.go},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 96.6%.
+  - Tests: per-function semantics, a differential test against ReplaceAllString (784 cases),
+    estimate ≥ compiled size on 26 patterns, exact budget boundaries, allocation tests
+    (oversized replace and compile refusals), a retained-heap test for the cache, and a
+    budget sweep for can().
+  - Mutation checks each fail a test: no estimate gate, unscaled per-search charge, no
+    compiled-size check, no pattern cap, no cache cap, kept parse trees, no rune charge, no
+    one-slot reuse, no regex replace charge, no `$` term, no plain bound.
+- Review: iace-reviewer, 4 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blockers: find-all is quadratic (`x*y|x` over 40k took 23–46s), and go-cty compiled
+      patterns in Type before the cost check, with refused calls free.
+    - Major: the estimate was up to 2× low.
+    - Fixed by the redesign above.
+  - Round 2: major: unbounded cache memory with Unicode classes (252 MiB in one module). Fixed
+    with the 256-entry cache, dropped parse trees and the rune charge.
+  - Round 3: major: past the cache, Type and Impl could disagree near the budget's end, so
+    can() gave a wrong known false. Fixed with the one-slot reuse and the conformance check.
+  - Round 4: APPROVE. Note: a non-conforming known result in bounded is an error, which can()
+    reads as false; only a future bug could reach it.
+- Next: T-0105e (cidrsubnet, cidrhost, cidrnetmask).

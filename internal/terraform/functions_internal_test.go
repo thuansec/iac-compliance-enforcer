@@ -184,7 +184,7 @@ func TestFunctionTableMatchesReference(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	if diff := cmp.Diff(slices.Sorted(slices.Values(append(tableNames(), fileFunctionNames...))), names); diff != "" {
+	if diff := cmp.Diff(slices.Sorted(slices.Values(append(tableNames(), moduleFunctionNames...))), names); diff != "" {
 		t.Errorf("reference table (-code +doc):\n%s", diff)
 	}
 }
@@ -627,5 +627,20 @@ func TestSetFunctionsAreUnknown(t *testing.T) {
 		if got.IsKnown() || !slices.Contains(diagCodes(m), DiagUnsupportedFunction) {
 			t.Errorf("%s = %#v, diagnostics %v; want unknown and unsupported", name, got, m.Diagnostics)
 		}
+	}
+}
+
+// TestRefusedCallsSpendWork: a call whose arguments are over the limit spends the work of
+// measuring them, so refused calls cannot repeat for free.
+func TestRefusedCallsSpendWork(t *testing.T) {
+	t.Parallel()
+	m := &ParsedModule{}
+	big := cty.StringVal(strings.Repeat("x", maxFunctionValueSize))
+	if _, limited := boundedCall(t, m, "upper", big); !limited || m.fnWork != maxFunctionValueSize {
+		t.Errorf("upper over the limit: limited %v, work %d, want %d", limited, m.fnWork, maxFunctionValueSize)
+	}
+	m = &ParsedModule{fnWork: maxFunctionWork - 10}
+	if _, limited := boundedCall(t, m, "upper", big); !limited || m.fnWork != maxFunctionWork {
+		t.Errorf("upper with 10 work left: limited %v, work %d", limited, m.fnWork)
 	}
 }
