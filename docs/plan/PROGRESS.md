@@ -753,3 +753,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 4: APPROVE. Note: a non-conforming known result in bounded is an error, which can()
     reads as false; only a future bug could reach it.
 - Next: T-0105e (cidrsubnet, cidrhost, cidrnetmask).
+
+## 2026-10-08 · T-0105e · done
+- What: cidrsubnet, cidrhost and cidrnetmask, written from Terraform's docs with net/netip and
+  math/big, in the bounded table.
+  - Prefixes are parsed strictly: leading zeros, zones and IPv4-mapped prefixes are errors.
+    Host bits are dropped.
+  - Numbers must be whole. newbits is between 0 and min(32, free bits), and netnum fits newbits.
+    A negative hostnum counts back from the end. cidrnetmask is IPv4 only.
+  - A result in IPv4-mapped IPv6 space is unknown: Terraform prints it as IPv4 text
+    (cidrsubnet("::/80", 16, 65535) is "0.0.0.0/0" there), so a known different value would let
+    an open ingress rule pass.
+  - Error messages never quote the arguments, which may be sensitive or huge.
+- Files: internal/terraform/{functions_network.go,functions_network_internal_test.go,functions.go,
+  functions_internal_test.go}, docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 96.7%. 50 cases cover every error
+  branch, the /0, /31, /32 and IPv6 boundaries, unknown and sensitive arguments, and Terraform's
+  documented IPv6 example. Mutation checks each fail a test: negative netnum accepted, host bits
+  kept, IPv4-mapped prefixes accepted, hostnum below range accepted.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: IPv4-mapped results differed from Terraform's text, an evasion path.
+    - Minor: arguments quoted in errors; stale comments; untested boundaries.
+    - All fixed. newbits > 32 is now unknown (fail closed).
+  - Round 2: APPROVE, with a minor fix to a test comment, applied.
+- Note: the newbits limit of 32 follows Terraform's documented behavior; it could not be checked
+  against current Terraform source offline. It fails closed either way.
+- Next: T-0105f (distinct and the set functions with a collision-proof cost bound).

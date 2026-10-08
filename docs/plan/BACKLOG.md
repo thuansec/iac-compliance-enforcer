@@ -189,12 +189,13 @@ locations and without executing anything.
     - superlinear costs are bounded before the work happens: replace output (exact for plain, an upper bound from match count and `$` references for regex), regex program size (estimated from the parsed pattern, counted repetitions included) × input length charged to the work budget, and regexall results (matches × groups); tests sit below, at and above each bound
   - attempts: 1
   - result: replace, regex and regexall as iace module functions with go-cty's result shapes; patterns ≤ 4 KiB, charged per byte and per class rune, refused by a parse-tree estimate before compiling and by the real program size (≤ 4,096) after; each search charged size × (groups+1) × (len+1) with find-all stopping at what the work affords; replace output checked before building and equal to Go's ReplaceAllString; cache of 256 patterns; refused calls spend work
-- [ ] T-0105e · Add cidrsubnet, cidrhost and cidrnetmask
+- [x] T-0105e · Add cidrsubnet, cidrhost and cidrnetmask
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
   - accept:
     - IPv4 and IPv6 prefixes with Terraform's documented semantics (negative hostnum counts from the end, newbits limits, cidrnetmask IPv4 only), implemented with net/netip and math/big, with tests for every error case
-  - attempts: 0
+  - attempts: 1
+  - result: cidrsubnet, cidrhost and cidrnetmask with net/netip and math/big from Terraform's docs; strict parsing, newbits ≤ 32, negative hostnum from the end; IPv4-mapped prefixes and results are unknown (Terraform prints them as IPv4 text); errors never quote arguments
 - [ ] T-0105f · Add distinct and the set functions with a collision-proof cost bound
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b

@@ -25,13 +25,13 @@ function.
 | type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `tostring`, `try` |
 | encoding | `base64decode`\*, `base64encode`\*, `jsondecode`, `jsonencode` |
 | numeric | `abs`, `max`, `min`, `signum` |
+| network | `cidrhost`\*, `cidrnetmask`\*, `cidrsubnet`\* |
 | filesystem | `file`\*, `fileexists`\*, `templatefile`\* |
 
 ## Not evaluated yet
 
 These are unknown today. The backlog task that adds each is in brackets.
 
-- Network functions [T-0105e]: `cidrsubnet`, `cidrhost`, `cidrnetmask`.
 - Functions that build sets or compare all pairs, which need a bounded implementation
   [T-0105f]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
   number by its first ten significant digits, so a set of close numbers compares every pair,
@@ -88,6 +88,10 @@ arguments, and adds a `function_limit` warning at the expression. The input docu
 | `lookup(map, key, default?)` | A map's element or an object's attribute. A missing key returns the default (it may be null; for a map it is converted to the element type), and is an error without one. A map or key that is not wholly known makes the result unknown, as in Terraform. |
 | `startswith`, `endswith`, `strcontains` | String prefix, suffix and substring tests. |
 | `replace(str, substr, rep)` | A `substr` wrapped in slashes (`"/\\d+/"`) is an RE2 regular expression whose matches are replaced with Go's `$1`, `${name}` expansion. Any other `substr` is replaced literally, and `""` inserts `rep` between every character. An invalid expression is an error. |
+| `cidrsubnet(prefix, newbits, netnum)` | The subnet numbered `netnum` (0 to 2^newbits − 1) after extending the prefix by `newbits` bits, which must fit the address. IPv4 and IPv6. Host bits in `prefix` are dropped. |
+| `cidrhost(prefix, hostnum)` | The address numbered `hostnum` in the prefix; a negative number counts back from the last address (-1). |
+| `cidrnetmask(prefix)` | The dotted mask of an IPv4 prefix; IPv6 is an error. |
+| CIDR prefixes | Parsed strictly: leading zeros (`010.0.0.0/8`, `/08`), zones and IPv4-mapped IPv6 prefixes are errors, so the value is unknown where Terraform might still answer. A result that lands in IPv4-mapped IPv6 space (`cidrsubnet("::/80", 16, 65535)`) is unknown too: Terraform prints it as IPv4 text (`0.0.0.0/0`). `newbits` is at most 32, as in Terraform, and numbers must be whole; a negative `netnum` or `newbits` is an error. |
 | `base64encode(s)`, `base64decode(s)` | Standard Base64 of a string's UTF-8 bytes. Decoding fails on invalid Base64 or a result that is not UTF-8. |
 
 A result computed from a sensitive argument stays sensitive. That includes `lookup`

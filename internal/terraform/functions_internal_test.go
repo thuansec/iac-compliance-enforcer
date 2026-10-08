@@ -87,6 +87,9 @@ func TestSupportedFunctions(t *testing.T) {
 		"trimsuffix": {`trimsuffix("a.tf", ".tf")`, `"a"`},
 		"upper":      {`upper("abc")`, `"ABC"`},
 
+		"cidrhost":     {`cidrhost("10.0.0.0/24", 5)`, `"10.0.0.5"`},
+		"cidrnetmask":  {`cidrnetmask("10.0.0.0/8")`, `"255.0.0.0"`},
+		"cidrsubnet":   {`cidrsubnet("10.0.0.0/16", 8, 1)`, `"10.0.1.0/24"`},
 		"chunklist":    {`chunklist([1, 2, 3], 2)`, `[[1, 2], [3]]`},
 		"coalescelist": {`coalescelist([], ["a"])`, `["a"]`},
 		"compact":      {`compact(["a", "", "b"])`, `["a", "b"]`},
