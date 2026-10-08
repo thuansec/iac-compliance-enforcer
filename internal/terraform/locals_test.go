@@ -283,14 +283,14 @@ locals {
 	}
 }
 
-// TestEvaluateLocalsUnsupportedExpressionsAreUnknown: function calls (until the function table
-// exists), invalid references and Terraform-only objects are unknown, never errors.
+// TestEvaluateLocalsUnsupportedExpressionsAreUnknown: unsupported function calls, invalid
+// references and Terraform-only objects are unknown, never errors.
 func TestEvaluateLocalsUnsupportedExpressionsAreUnknown(t *testing.T) {
 	t.Parallel()
 	m, locals := evalLocals(t, map[string]string{
 		"main.tf": `
 locals {
-  fn        = upper("x")
+  fn        = timestamp()
   missing   = local.nope
   workspace = "${terraform.workspace}-x"
   where     = path.module
@@ -384,7 +384,7 @@ func TestEvaluateLocalsDiagnosticsStaySorted(t *testing.T) {
 	t.Parallel()
 	m, vars, err := evalVars(t, ".", map[string]string{
 		"b.tf": "locals {\n  y = local.y\n}\n",
-		"a.tf": "locals {\n  x = upper(\"x\")\n}\n",
+		"a.tf": "locals {\n  x = timestamp()\n}\n",
 	}, terraform.VarOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -394,7 +394,7 @@ func TestEvaluateLocalsDiagnosticsStaySorted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := []string{"evaluation@a.tf:2", "local_cycle@b.tf:2"}
+	want := []string{"unsupported_function@a.tf:2", "local_cycle@b.tf:2"}
 	if diff := cmp.Diff(want, codes(m)); diff != "" {
 		t.Errorf("diagnostics (-want +got):\n%s", diff)
 	}

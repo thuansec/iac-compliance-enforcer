@@ -81,6 +81,8 @@ type localState struct {
 	// safe: the expression passed safeToEvaluate, so its traversals were read.
 	safe   bool
 	cyclic bool
+	// calls are the functions the expression calls, if it is safe.
+	calls []functionCall
 }
 
 // EvaluateLocals evaluates the module's locals in dependency order, with vars as var.*. A local
@@ -91,10 +93,11 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 	states, order := m.declareLocals()
 	for _, name := range order {
 		s := states[name]
-		if !m.safeToEvaluate(s.attr.Expr) {
+		calls, safe := m.inspectExpr(s.attr.Expr)
+		if !safe {
 			continue // evalExpr reports it; hcl must not parse its JSON templates
 		}
-		s.safe = true
+		s.safe, s.calls = true, calls
 		s.uses = map[string]int{}
 		for _, tr := range s.attr.Expr.Variables() {
 			switch root := tr.RootName(); root {
@@ -320,6 +323,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 			locals[dep] = done[dep].Value
 		}
 		ectx.Variables["local"] = cty.ObjectVal(locals)
+		ectx.Functions = m.functions(s.attr.Expr, s.calls)
 		for _, root := range s.roots {
 			ectx.Variables[root] = cty.DynamicVal
 		}
@@ -352,7 +356,8 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 	return val
 }
 
-// valueSize measures v: one unit per value plus one per string byte, map key or attribute name.
+// valueSize measures v: one unit per value plus one per string byte, map key or attribute name,
+// and per decimal digit of a number's magnitude.
 // It reports false as soon as the size passes limit or the nesting passes depth, and walks with
 // an explicit stack that never holds more than limit values.
 func valueSize(v cty.Value, limit, depth int) (int, bool) {
@@ -375,6 +380,8 @@ func valueSize(v cty.Value, limit, depth int) (int, bool) {
 		case !val.IsKnown() || val.IsNull():
 		case ty == cty.String:
 			size += len(val.AsString())
+		case ty == cty.Number:
+			size += numberDigits(val)
 		case ty.IsCollectionType() || ty.IsObjectType() || ty.IsTupleType():
 			for elems := val.ElementIterator(); elems.Next(); {
 				k, ev := elems.Element()
@@ -551,4 +558,21 @@ func unknownPaths(v cty.Value) []cty.Path {
 		slices.Reverse(stack[first:])
 	}
 	return out
+}
+
+// numberDigits bounds the decimal digits cty writes for a known number: those of its magnitude
+// (or its leading zeros, for a tiny one) plus those of its mantissa's precision, since a
+// fraction such as 0.1 is held to 512 bits and formats to about 150 digits. cty formats,
+// converts and compares numbers in decimal, at a cost that grows with the digits, while the
+// binary value itself is cheap to build.
+func numberDigits(v cty.Value) int {
+	f := v.AsBigFloat()
+	if f.IsInf() {
+		return 0
+	}
+	exp := f.MantExp(nil)
+	if exp < 0 {
+		exp = -exp
+	}
+	return (exp + int(f.MinPrec())) * 30103 / 100000 // log10(2)
 }

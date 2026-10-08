@@ -582,3 +582,51 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Note: this iteration resumed work an interrupted session left uncommitted on the branch
   without marking the task [~].
 - Next: T-0105 (curated function set).
+
+## 2026-10-08 · T-0105a · done
+- What: locals now evaluate with a curated, bounded function table.
+  - T-0105 was split: T-0105a (this), T-0105b (Terraform's own pure functions) and T-0105c
+    (file/fileexists/templatefile confined to the module).
+  - Supported: 39 go-cty stdlib functions whose semantics match Terraform's, plus try/can.
+    `core::name` aliases them. The table is documented in docs/reference/terraform-functions.md;
+    a test checks that the doc matches the code, and every function has a case.
+  - Every other called name is unknown, never an error, including provider:: functions, impure
+    functions and undefined names. Each name gets one unsupported_function warning per module.
+    Calls are found by walking the syntax tree (JSON templates are parsed after the token guard),
+    and sensitive arguments keep the result sensitive.
+  - Bounds: the wrapper takes untyped arguments, sizes them (valueSize now counts a number's
+    decimal digits, magnitude plus 512-bit mantissa) before converting them as hcl would, and
+    applies the per-call argument and result limits (2^18 units, maxNesting), a format/formatlist
+    output bound, and a per-module work budget (2^23 units, about 1.5s worst case). Over any
+    bound, the call is unknown and keeps its sensitivity, and the expression gets a function_limit
+    warning.
+  - Variables and tfvars still evaluate without functions, as in Terraform.
+- Files: internal/terraform/{functions.go,functions_internal_test.go,evalguard.go,locals.go,
+  parse.go,locals_test.go,fuzz_test.go}, docs/reference/terraform-functions.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.6%. Tests sit below, at and above
+  every bound. Mutation checks (dropping the format cost, the result check, the sensitive mark
+  on a limit, the once-per-name dedupe, or MinPrec in numberDigits) each fail a test.
+  FuzzParseFile ran 45s (about 800k execs) with new function seeds and found nothing. Probes:
+  - tostring(1e6000000), join or format over 1e2000000, and toset over colliding numbers took
+    24 ms in total (the reviewer measured 10–20s and minutes before the fix).
+  - 3,000 locals of heavy calls stop at the module budget.
+  - 24,000 high-precision fractions with 100 contains/jsonencode locals: 13 ms.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - 2 blockers. distinct does quadratic work on costly number comparisons. cty sets degrade to
+      comparing every pair when number hashes collide.
+    - 1 major: numbers counted 1 unit whatever their size, and hcl converted arguments before
+      the wrapper ran.
+    - 4 minor: lookup's semantics differ from Terraform's, the lexer reported in/if as
+      functions, T-0109 did not map the new diagnostics, and some at-bound tests were missing.
+    - All fixed: distinct, toset, setunion, setintersection, setsubtract and lookup moved to
+      T-0105b; numbers are sized by their digits; the wrapper converts arguments itself; calls
+      are found with VisitAll; T-0109 updated.
+  - Round 2: CHANGES_REQUIRED, 1 blocker: number size ignored mantissa precision. Fixed.
+  - Round 3: APPROVE.
+- Note: the function table in the harness reference
+  (.claude/skills/iace-terraform-parsing/references/hcl-evaluation.md) lists functions that now
+  sit in T-0105b/c or stay unknown, and a 1 MiB string cap where the code uses 2^18 units. The
+  repo doc is authoritative for what is implemented. The owner may want to sync the skill text.
+- Next: T-0105b (Terraform-specific pure functions).
