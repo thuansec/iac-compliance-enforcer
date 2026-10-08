@@ -22,6 +22,38 @@ const (
 	// DiagJSONBodyNotDecoded: a resource written in JSON syntax is not decoded yet (T-0106d),
 	// so its whole value is unknown.
 	DiagJSONBodyNotDecoded DiagCode = "json_body_not_decoded"
+	// DiagUnknownExpansion: count or for_each is not known statically, so the resource is one
+	// placeholder instance ("type.name[*]") evaluated with an unknown count.index or each.
+	DiagUnknownExpansion DiagCode = "unknown_expansion"
+	// DiagInvalidExpansion: count or for_each has a value Terraform rejects (negative,
+	// fractional, sensitive, a list, both set together, ...); the resource is a placeholder.
+	DiagInvalidExpansion DiagCode = "invalid_expansion"
+	// DiagExpansionLimit: a resource has more instances than maxInstancesPerResource, or the
+	// module more than maxInstancesPerModule; the instances past the limit are not decoded.
+	DiagExpansionLimit DiagCode = "expansion_limit"
+)
+
+// Limits on count and for_each expansion. Each instance evaluates the whole block again, so
+// maxExpansionWork bounds the source bytes evaluated for instances after each block's first
+// (instanceCost):
+// otherwise a large body times many instances could take hours. Evaluating a block costs 200
+// to 630ns per byte (a tuple of 200 numbers took 2.6s for 2^22 bytes), so 2^21 is about a second
+// at worst.
+const (
+	maxInstancesPerResource = 10_000
+	maxInstancesPerModule   = 100_000
+	maxExpansionWork        = 1 << 21
+	// maxInstanceStructure bounds, in estimated bytes, the structure of a module's decoded
+	// instances that maxResourcesSize does not count: each instance's Resource and maps, and an
+	// entry per attribute and nested block (instanceStructure). Values are counted separately.
+	maxInstanceStructure = 1 << 27
+	// instanceOverhead, attributeOverhead and blockOverhead are the estimated bytes of one
+	// decoded instance and of each of its attributes and nested blocks. Measured live heap per
+	// instance: 660 bytes bare, about 240 more per attribute, and about 170 per empty block or
+	// 710 per block holding blocks (TestExpansionHeap).
+	instanceOverhead  = 1024
+	attributeOverhead = 256
+	blockOverhead     = 768
 )
 
 // maxResourcesSize bounds the attribute values of all of a module's resources together, in
@@ -30,14 +62,22 @@ const (
 // maxLocalValueSize.
 const maxResourcesSize = 1 << 22
 
-// Resource is one resource or data source block, decoded without a provider schema. Expanding
-// count and for_each into instances is T-0106b; until then each block is one instance.
+// Resource is one instance of a resource or data source block, decoded without a provider
+// schema: a block with count or for_each has one Resource per instance.
 type Resource struct {
 	Mode model.ResourceMode
 	Type string
 	Name string
-	// Address is "type.name" or "data.type.name".
+	// Address is the instance address: BaseAddress followed by "[0]", `["key"]`, or "[*]" for
+	// the placeholder of an unknown or invalid expansion.
 	Address string
+	// BaseAddress is "type.name" or "data.type.name".
+	BaseAddress string
+	// Index is the instance key; NoKey without count or for_each and for a placeholder.
+	Index model.InstanceKey
+	// CountUnknown and ForEachUnknown mark a placeholder: count or for_each was unknown or
+	// invalid (both when they are set together).
+	CountUnknown, ForEachUnknown bool
 	// Value is an object of the block's attributes and nested blocks, each nested block type a
 	// tuple of objects in source order. Meta-arguments are not part of it. It is unknown, wholly
 	// or in part, where iace cannot evaluate it statically, and keeps SensitiveMark where a
@@ -72,6 +112,24 @@ type resourceDecoder struct {
 	// remaining is what is left of maxResourcesSize; totalWarned records the warning for it.
 	remaining   int
 	totalWarned bool
+	// inst holds count and each for the instance being decoded, with their sizes and whether
+	// they contain a sensitive value; instances counts the module's instances.
+	inst          map[string]cty.Value
+	instSizes     map[string]int
+	instSensitive map[string]bool
+	instances     int
+	// expansionWork is the source bytes evaluated for repeated instances, at most
+	// maxExpansionWork; structure is the instances' estimated structure, at most
+	// maxInstanceStructure.
+	expansionWork int
+	structure     int
+}
+
+// instanceSpec is one instance to decode: its key, address suffix and count or each.
+type instanceSpec struct {
+	key    model.InstanceKey
+	suffix string
+	vars   map[string]cty.Value
 }
 
 // DecodeResources decodes the module's resource and data blocks, in block order, evaluating
@@ -95,24 +153,47 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 		if (b.Type != "resource" && b.Type != "data") || len(b.Labels) != 2 {
 			continue
 		}
-		r := Resource{Type: b.Labels[0], Name: b.Labels[1], File: b.File, Range: b.Range, DefRange: b.DefRange}
+		base := Resource{Type: b.Labels[0], Name: b.Labels[1], File: b.File, Range: b.Range, DefRange: b.DefRange}
 		if b.Type == "resource" {
-			r.Mode, r.Address = model.ModeManaged, r.Type+"."+r.Name
+			base.Mode, base.BaseAddress = model.ModeManaged, base.Type+"."+base.Name
 		} else {
-			r.Mode, r.Address = model.ModeData, "data."+r.Type+"."+r.Name
+			base.Mode, base.BaseAddress = model.ModeData, "data."+base.Type+"."+base.Name
 		}
-		r.Attributes = map[string]hcl.Range{}
 		body, ok := b.Body.(*hclsyntax.Body)
 		if !ok {
 			m.diag(SeverityWarning, DiagJSONBodyNotDecoded, "Resource in JSON syntax not decoded",
 				"iace does not decode resources written in JSON syntax yet, so this resource's values are unknown.",
 				b.File, b.DefRange.Start.Line, b.DefRange.Start.Column)
-			r.Value = cty.DynamicVal
-		} else {
-			r.Value = d.body(body, "", &r, true)
+			base.Address, base.Value, base.Unknown = base.BaseAddress, cty.DynamicVal, []cty.Path{{}}
+			base.Attributes = map[string]hcl.Range{}
+			out = append(out, base)
+			continue
 		}
-		r.Unknown = unknownPaths(r.Value)
-		out = append(out, r)
+		d.metaArguments(body, &base)
+		cost, structure := instanceCost(body), instanceStructure(body)
+		for i, spec := range d.expand(&base) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if d.instances >= maxInstancesPerModule || d.structure+structure > maxInstanceStructure ||
+				i > 0 && d.expansionWork+cost > maxExpansionWork {
+				d.moduleLimit(&base)
+				break
+			}
+			if i > 0 {
+				d.expansionWork += cost
+			}
+			d.structure += structure
+			d.instances++
+			r := base
+			r.Address, r.Index = base.BaseAddress+spec.suffix, spec.key
+			r.Attributes = map[string]hcl.Range{}
+			d.setInstance(spec.vars)
+			r.Value = d.body(body, "", &r, true)
+			r.Unknown = unknownPaths(r.Value)
+			out = append(out, r)
+		}
+		d.setInstance(nil)
 	}
 	m.sortDiagnostics()
 	return out, nil
@@ -124,8 +205,8 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource, top bool) cty.Value {
 	attrs := map[string]cty.Value{}
 	for _, a := range sortedSyntaxAttributes(body.Attributes) {
-		if top && d.meta(a, r) {
-			continue
+		if top && isMetaArgument(a.Name) {
+			continue // recorded once by metaArguments
 		}
 		r.Attributes[prefix+a.Name] = a.Expr.Range()
 		attrs[a.Name] = d.attribute(a)
@@ -134,11 +215,8 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource,
 	dynamic := map[string]bool{}
 	for _, b := range body.Blocks {
 		switch {
-		case top && b.Type == "lifecycle":
-			d.lifecycle(b, r)
-			continue
-		case top && (b.Type == "provisioner" || b.Type == "connection"):
-			continue // run at apply time; no policy input
+		case top && (b.Type == "lifecycle" || b.Type == "provisioner" || b.Type == "connection"):
+			continue // lifecycle is recorded by metaArguments; the others run at apply time
 		case b.Type == "dynamic":
 			if len(b.Labels) > 0 {
 				dynamic[b.Labels[0]] = true
@@ -162,6 +240,60 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource,
 		attrs[name] = cty.DynamicVal
 	}
 	return cty.ObjectVal(attrs)
+}
+
+// instanceCost is the source an instance of a resource body evaluates: one, plus the bytes of
+// its attributes and nested blocks other than meta-arguments, which are evaluated once.
+func instanceCost(body *hclsyntax.Body) int {
+	cost := 1
+	for _, a := range body.Attributes {
+		if !isMetaArgument(a.Name) {
+			cost += a.SrcRange.End.Byte - a.SrcRange.Start.Byte
+		}
+	}
+	for _, b := range body.Blocks {
+		if b.Type != "lifecycle" && b.Type != "provisioner" && b.Type != "connection" {
+			r := b.Range()
+			cost += r.End.Byte - r.Start.Byte
+		}
+	}
+	return cost
+}
+
+// instanceStructure estimates the bytes of one decoded instance of body, values aside:
+// instanceOverhead, plus attributeOverhead per attribute and blockOverhead per nested block at
+// any depth (meta-arguments included; a dynamic block counts once). Recursion follows block
+// nesting, which the nesting guard bounds.
+func instanceStructure(body *hclsyntax.Body) int {
+	n := instanceOverhead + attributeOverhead*len(body.Attributes)
+	for _, b := range body.Blocks {
+		n += blockOverhead
+		if b.Type != "dynamic" {
+			n += instanceStructure(b.Body) - instanceOverhead
+		}
+	}
+	return n
+}
+
+// isMetaArgument reports whether name is a meta-argument attribute of a resource body.
+func isMetaArgument(name string) bool {
+	switch name {
+	case "count", "for_each", "provider", "depends_on":
+		return true
+	}
+	return false
+}
+
+// metaArguments records the meta-arguments of a resource body in r, once for all its instances.
+func (d *resourceDecoder) metaArguments(body *hclsyntax.Body, r *Resource) {
+	for _, a := range sortedSyntaxAttributes(body.Attributes) {
+		d.meta(a, r)
+	}
+	for _, b := range body.Blocks {
+		if b.Type == "lifecycle" {
+			d.lifecycle(b, r)
+		}
+	}
 }
 
 // meta records a in r if it is a meta-argument of the resource body, and reports whether it was.
@@ -294,52 +426,70 @@ func (d *resourceDecoder) invalid(e hcl.Expression, summary string) {
 // too complex to inspect: its references are not walked, so its unknown is unmarked, which
 // leaks nothing since an unknown holds no value (locals do the same).
 func (d *resourceDecoder) attribute(a *hclsyntax.Attribute) cty.Value {
-	calls, safe := d.m.inspectExpr(a.Expr)
+	v, _ := d.evalBounded(a.Expr, a.Name, a.NameRange)
+	return v
+}
+
+// evalBounded evaluates expr, the value of the attribute name at nameRange, as attribute does.
+// ok is false when it was not evaluated or failed, which has been reported; the value is then
+// unknown.
+func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRange hcl.Range) (val cty.Value, ok bool) {
+	calls, safe := d.m.inspectExpr(expr)
 	if !safe {
-		v, _ := d.m.evalExpr(a.Expr, nil) // reports the expression as too complex
-		return v
+		v, _ := d.m.evalExpr(expr, nil) // reports the expression as too complex
+		return v, false
 	}
-	r := a.Expr.Range()
+	r := expr.Range()
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": d.vars}}
 	locals := map[string]cty.Value{}
 	est := r.End.Byte - r.Start.Byte
 	sensitive := false
 	// Each reference costs map lookups only: sizes and sensitivity are cached per value.
-	for _, tr := range a.Expr.Variables() {
+	for _, tr := range expr.Variables() {
 		root := tr.RootName()
-		name, _ := traversalAttr(tr, 1)
+		attr, _ := traversalAttr(tr, 1)
 		switch root {
 		case "var":
-			if d.vars.Type().HasAttribute(name) {
-				v := d.vars.GetAttr(name)
-				est += d.size("var."+name, v)
-				sensitive = sensitive || d.isSensitive("var."+name, v)
+			if d.vars.Type().HasAttribute(attr) {
+				v := d.vars.GetAttr(attr)
+				est += d.size("var."+attr, v)
+				sensitive = sensitive || d.isSensitive("var."+attr, v)
 			}
 		case "local":
-			if l, ok := d.locals[name]; ok {
-				locals[name] = l.Value
-				est += d.size("local."+name, l.Value)
-				sensitive = sensitive || d.isSensitive("local."+name, l.Value)
+			if l, ok := d.locals[attr]; ok {
+				locals[attr] = l.Value
+				est += d.size("local."+attr, l.Value)
+				sensitive = sensitive || d.isSensitive("local."+attr, l.Value)
 			}
 		case "path":
 			ectx.Variables["path"] = pathObject()
 			est++
+		case "count", "each":
+			v, ok := d.inst[root]
+			if !ok {
+				ectx.Variables[root] = cty.DynamicVal
+				est++
+				break
+			}
+			ectx.Variables[root] = v
+			est += d.instSizes[root]
+			sensitive = sensitive || d.instSensitive[root]
 		default:
 			ectx.Variables[root] = cty.DynamicVal
 			est++
 		}
 	}
 	ectx.Variables["local"] = cty.ObjectVal(locals)
-	ectx.Functions = d.m.functions(a.Expr, calls)
+	ectx.Functions = d.m.functions(expr, calls)
 	unknown := cty.DynamicVal
 	if sensitive {
 		unknown = unknown.Mark(SensitiveMark)
 	}
 	if est > maxLocalValueSize || est > d.remaining {
-		d.tooLarge(a, est <= maxLocalValueSize)
-		return unknown
+		d.tooLarge(name, nameRange, est <= maxLocalValueSize)
+		return unknown, false
 	}
-	val, diags := d.m.evalExpr(a.Expr, ectx)
+	val, diags := d.m.evalExpr(expr, ectx)
 	if diags.HasErrors() {
 		// hcl's Summary only: its Detail can quote values.
 		summary := diags[0].Summary
@@ -352,30 +502,29 @@ func (d *resourceDecoder) attribute(a *hclsyntax.Attribute) cty.Value {
 		d.m.diag(SeverityWarning, DiagEvaluation, summary,
 			"The expression could not be evaluated, so its value is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
-		return unknown
+		return unknown, false
 	}
 	size, ok := valueSize(val, maxLocalValueSize, maxNesting)
 	if !ok || size > d.remaining {
-		d.tooLarge(a, ok)
-		return unknown
+		d.tooLarge(name, nameRange, ok)
+		return unknown, false
 	}
 	d.remaining -= size
-	return val
+	return val, true
 }
 
 // tooLarge reports an attribute over the limit for one value at that attribute, and the first
 // one past what remains of maxResourcesSize once for the module.
-func (d *resourceDecoder) tooLarge(a *hclsyntax.Attribute, total bool) {
-	r := a.NameRange
+func (d *resourceDecoder) tooLarge(name string, r hcl.Range, total bool) {
 	switch {
 	case !total:
 		d.m.diag(SeverityWarning, DiagValueTooLarge, "Attribute value too large",
-			fmt.Sprintf("The attribute %q would pass the size or nesting limit for evaluated values, so its value is unknown.", a.Name),
+			fmt.Sprintf("The attribute %q would pass the size or nesting limit for evaluated values, so its value is unknown.", name),
 			r.Filename, r.Start.Line, r.Start.Column)
 	case !d.totalWarned:
 		d.totalWarned = true
 		d.m.diag(SeverityWarning, DiagValueTooLarge, "Resource values too large together",
-			fmt.Sprintf("The resources' attribute values reach the size limit for a module at %q: from there on, attributes that do not fit are unknown.", a.Name),
+			fmt.Sprintf("The resources' attribute values reach the size limit for a module at %q: from there on, attributes that do not fit are unknown.", name),
 			r.Filename, r.Start.Line, r.Start.Column)
 	}
 }

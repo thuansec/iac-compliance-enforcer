@@ -216,7 +216,7 @@ resource "aws_s3_bucket" "c" {
 	if len(m.Diagnostics) != 0 {
 		t.Errorf("diagnostics: %v", m.Diagnostics)
 	}
-	b := resource(t, res, "aws_s3_bucket.b")
+	b := resource(t, res, "aws_s3_bucket.b[1]")
 	for _, meta := range []string{"count", "provider", "depends_on", "lifecycle", "provisioner", "connection"} {
 		if b.Value.Type().HasAttribute(meta) {
 			t.Errorf("value has meta-argument %q", meta)
@@ -238,12 +238,15 @@ resource "aws_s3_bucket" "c" {
 	if got := attr(t, b.Value, "settings.0.count"); !got.RawEquals(cty.NumberIntVal(3)) {
 		t.Errorf("settings.0.count = %#v", got)
 	}
-	// count.index is set by expansion (T-0106b); until then it is unknown.
-	if diff := cmp.Diff([]string{"bucket"}, paths(b.Unknown)); diff != "" {
-		t.Errorf("unknown (-want +got):\n%s", diff)
+	// Every instance records the meta-arguments, and count.index is set.
+	if got := attr(t, b.Value, "bucket"); !got.RawEquals(cty.StringVal("logs-1")) {
+		t.Errorf("bucket = %#v", got)
+	}
+	if b0 := resource(t, res, "aws_s3_bucket.b[0]"); b0.ProviderConfig != "aws.eu" || len(b0.DependsOn) != 3 {
+		t.Errorf("aws_s3_bucket.b[0] = %+v", b0)
 	}
 
-	c := resource(t, res, "aws_s3_bucket.c")
+	c := resource(t, res, `aws_s3_bucket.c["a"]`)
 	if c.ForEach == nil || c.Count != nil || c.ProviderConfig != "" || len(c.DependsOn) != 0 || c.Lifecycle.PreventDestroy != nil {
 		t.Errorf("c = %+v", c)
 	}
