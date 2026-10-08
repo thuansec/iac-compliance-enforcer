@@ -20,7 +20,7 @@ function.
 
 | group | functions |
 |---|---|
-| string | `chomp`, `endswith`\*, `format`, `formatlist`, `join`, `lower`, `split`, `startswith`\*, `strcontains`\*, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
+| string | `chomp`, `endswith`\*, `format`, `formatlist`, `join`, `lower`, `regex`\*, `regexall`\*, `replace`\*, `split`, `startswith`\*, `strcontains`\*, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
 | collection | `chunklist`, `coalesce`\*, `coalescelist`, `compact`, `concat`, `contains`, `element`, `flatten`, `index`\*, `keys`, `length`\*, `lookup`\*, `merge`, `range`, `reverse`, `slice`, `sort`, `values`, `zipmap` |
 | type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `tostring`, `try` |
 | encoding | `base64decode`\*, `base64encode`\*, `jsondecode`, `jsonencode` |
@@ -31,8 +31,6 @@ function.
 
 These are unknown today. The backlog task that adds each is in brackets.
 
-- Regular expressions, whose cost depends on the pattern [T-0105d]: `replace` (plain and
-  `/regex/`), `regex`, `regexall`.
 - Network functions [T-0105e]: `cidrsubnet`, `cidrhost`, `cidrnetmask`.
 - Functions that build sets or compare all pairs, which need a bounded implementation
   [T-0105f]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
@@ -70,10 +68,14 @@ types. Converting a number to a string, for example, costs as much as its digits
 | `format` and `formatlist` | checked before the call: the format string, every width and precision, and each verb printing the largest argument escaped six times, multiplied by the row count for `formatlist` |
 | `range` | 1,024 elements (go-cty's own limit; past it the call fails, and the local is unknown) |
 | `contains`, `index` with sets | when the list's elements or the value can hold a set, the sizes of both arguments multiplied, charged to the module work (cty compares sets element by element, and colliding number hashes make that pairwise) |
+| regular expression patterns | at most 4 KiB, charged 64 units per byte plus one per rune their classes expand to (`\pL` is over a thousand), and parsed once per module for up to 256 patterns (each further one for every call); refused before compiling when a parse-tree estimate (never below Go's program) passes 8,192 instructions, and when the compiled program passes 4,096 |
+| regular expression matching | each search charged program size × (groups + 1) × (input length + 1) before it runs, since finding all matches searches again after each one and each search can scan to the end; `regexall` and `replace` with `/re/` stop at the matches the remaining work affords (and at what a result can hold), else the call is unknown. Long inputs with many matches are therefore unknown |
+| `replace` output | exact for a plain substring; for `/re/`, the unmatched text plus, per match, the replacement with each `$` reference counted as the whole match, checked before the result is built |
 | work across a module | 2^23 units (about 1.5s of evaluation at worst, except for conversions into set types, which are not bounded yet: T-0116): the size of every call's arguments and result |
 
-A call over a bound is unknown, keeps the sensitivity of its arguments, and adds a
-`function_limit` warning at the expression. The input document reports it as a
+A refused call still spends module work: as much as was measured of its arguments, so refused
+calls cannot repeat for free. A call over a bound is unknown, keeps the sensitivity of its
+arguments, and adds a `function_limit` warning at the expression. The input document reports it as a
 `limit_exceeded` coverage gap.
 
 ## Semantics of iace's own functions
@@ -85,6 +87,7 @@ A call over a bound is unknown, keeps the sensitivity of its arguments, and adds
 | `index(list, value)` | The position of the first equal element of a list or tuple. An unknown list or value, or an unknown comparison before a match, makes the result unknown. An empty list or a missing value is an error. |
 | `lookup(map, key, default?)` | A map's element or an object's attribute. A missing key returns the default (it may be null; for a map it is converted to the element type), and is an error without one. A map or key that is not wholly known makes the result unknown, as in Terraform. |
 | `startswith`, `endswith`, `strcontains` | String prefix, suffix and substring tests. |
+| `replace(str, substr, rep)` | A `substr` wrapped in slashes (`"/\\d+/"`) is an RE2 regular expression whose matches are replaced with Go's `$1`, `${name}` expansion. Any other `substr` is replaced literally, and `""` inserts `rep` between every character. An invalid expression is an error. |
 | `base64encode(s)`, `base64decode(s)` | Standard Base64 of a string's UTF-8 bytes. Decoding fails on invalid Base64 or a result that is not UTF-8. |
 
 A result computed from a sensitive argument stays sensitive. That includes `lookup`

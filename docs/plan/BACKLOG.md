@@ -181,13 +181,14 @@ locations and without executing anything.
     - templatefile() evaluates with the same bounded function table; a missing file or a template error is unknown with a warning, never an error
   - attempts: 1
   - result: file, fileexists and templatefile read only through a sub-root of the module directory (fsutil.Root.OpenRoot), relative to it with path.module "."; refusals and template errors are unknown with file_outside_module, file_unreadable or template_error warnings; reads are capped at 1 MiB and at the remaining work, every call and byte is charged; templates use the guard and bounded table; follow-up bullets on T-0107, T-0109 and T-0113
-- [ ] T-0105d · Add replace, regex and regexall with bounded regular expressions
+- [x] T-0105d · Add replace, regex and regexall with bounded regular expressions
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
   - accept:
     - replace (plain and /regex/ with $-expansion), regex and regexall with Terraform's semantics and a test per function
     - superlinear costs are bounded before the work happens: replace output (exact for plain, an upper bound from match count and `$` references for regex), regex program size (estimated from the parsed pattern, counted repetitions included) × input length charged to the work budget, and regexall results (matches × groups); tests sit below, at and above each bound
-  - attempts: 0
+  - attempts: 1
+  - result: replace, regex and regexall as iace module functions with go-cty's result shapes; patterns ≤ 4 KiB, charged per byte and per class rune, refused by a parse-tree estimate before compiling and by the real program size (≤ 4,096) after; each search charged size × (groups+1) × (len+1) with find-all stopping at what the work affords; replace output checked before building and equal to Go's ReplaceAllString; cache of 256 patterns; refused calls spend work
 - [ ] T-0105e · Add cidrsubnet, cidrhost and cidrnetmask
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b

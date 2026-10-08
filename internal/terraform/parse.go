@@ -107,6 +107,11 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// regexes caches the module's regular expressions by pattern.
+	regexes map[string]*regexEntry
+	// lastRegex is the last pattern parsed past the cache, with its pattern.
+	lastRegex        *regexEntry
+	lastRegexPattern string
 }
 
 // HasErrors reports whether any diagnostic is an error.

@@ -174,6 +174,9 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 		for name, f := range m.fileFunctions() {
 			m.fns[name] = m.bounded(f, nil)
 		}
+		m.fns["replace"] = m.bounded(m.replaceFunc(), nil)
+		m.fns["regex"] = m.bounded(m.regexFunc(false), nil)
+		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil)
 		m.unsupportedSeen = map[string]bool{}
 	}
 	fns := m.fns
@@ -244,7 +247,8 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 				}
 				return unknown, nil
 			}
-			conv, sizes, ok, err := convertArgs(f, args, m.functionArgsLimit())
+			argsLimit := m.functionArgsLimit()
+			conv, sizes, ok, err := convertArgs(f, args, argsLimit)
 			if err != nil {
 				return cty.NilVal, err
 			}
@@ -253,6 +257,9 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 				total += n
 			}
 			if !ok {
+				// Measuring stopped at argsLimit; a refused call still spends that work, so
+				// refused calls cannot repeat for free.
+				m.spendFunctionWork(argsLimit)
 				return limited()
 			}
 			out, work := 0, 0
@@ -260,11 +267,20 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 				out, work = cost(conv, sizes)
 			}
 			if out > maxFunctionValueSize || !m.chargeFunctionWork(total, work) {
+				m.spendFunctionWork(total)
 				return limited()
 			}
 			val, err := f.Call(conv)
 			if err != nil {
 				return cty.NilVal, err
+			}
+			if errs := val.Type().TestConformance(retType); errs != nil && retType != cty.DynamicPseudoType {
+				// f decided its type again and differently (a limit reached in between): an
+				// unknown result is a limit, anything else a bug that must not become a value.
+				if !val.IsKnown() {
+					return limited()
+				}
+				return cty.NilVal, fmt.Errorf("function result does not conform to its type: %w", errs[0])
 			}
 			size, ok := valueSize(val, maxFunctionValueSize, maxNesting)
 			if !ok || !m.chargeFunctionWork(size) {
@@ -327,6 +343,11 @@ func (m *ParsedModule) chargeFunctionWork(amounts ...int) bool {
 	}
 	m.fnWork += sum
 	return true
+}
+
+// spendFunctionWork charges n, or whatever work is left if that is less.
+func (m *ParsedModule) spendFunctionWork(n int) {
+	m.fnWork += min(max(n, 0), maxFunctionWork-m.fnWork)
 }
 
 // formatCost bounds format: each verb can print any argument, padded to its width.
