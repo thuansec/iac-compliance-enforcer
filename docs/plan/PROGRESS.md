@@ -861,4 +861,4 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       documented; T-0106d now depends on T-0106c; T-0109 now maps the two new codes.
   - Round 2: APPROVE. Its minor finding (check the conversion error instead of comparing with
     NilVal) was applied, and the gates re-ran.
-- Next: T-0106b (count and for_each). Note: T-0111 is now the first ready task in file order.
+- Next: T-0106b (count and for_each).
