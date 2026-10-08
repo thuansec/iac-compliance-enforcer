@@ -948,3 +948,50 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       accepted.
   - Round 2: APPROVE, no findings.
 - Next: T-0106d (.tf.json resource bodies, with an ADR on the block-vs-map heuristic).
+
+## 2026-10-08 · T-0106d · done
+- What: resource and data bodies in `.tf.json` decode like HCL bodies.
+  - DecodeResources works through a `resourceBody` interface (HCL and JSON implementations of
+    metaArguments, cost, structure and decode).
+  - JSON bodies read `lifecycle`, `provisioner`, `connection` and `dynamic` as blocks
+    (PartialContent), and every other property as an attribute (JustAttributes, sorted by
+    source). A body Terraform would reject is wholly unknown with a warning.
+  - ADR 0006 (amends ADR 0004 rule 1): JSON properties keep their written shape, so a nested
+    block written as one object stays an object, and so do its unknown and sensitive paths.
+    The iace.lib.tf path helpers resolve index 0 against an object, and `tf.blocks` is required
+    for iteration.
+  - T-0201 gains the helpers and a lint, and T-0205 requires a `.tf.json` fail fixture for every
+    rule. The schema description and model comment note the exception, and T-0110 now covers
+    ADR 0006.
+  - Meta-arguments work as in HCL. A second lifecycle block is now ignored with a warning in
+    both syntaxes (HCL used to apply every one), and so is a JSON lifecycle that is not an
+    object.
+  - JSON `dynamic` blocks, at the top or inside a nested block object (any value holding a
+    "dynamic" key with an object or array), are unknown with json_dynamic_not_expanded, once
+    per resource, until T-0106e. The detection walk is linear.
+- Files: internal/terraform/{resources_json.go,resources_json_test.go,
+  resources_json_internal_test.go,resources.go,resources_test.go,fuzz_test.go},
+  internal/model/input.go, schemas/input.v1.json, docs/adr/0006-decode-json-resource-bodies-as-written.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; JSON fuzz seed, 45s, clean. Mutation checks each fail a
+  test:
+  - JSON meta-arguments in values, lifecycle ignored, dynamic not unknown;
+  - duplicate lifecycle accepted, PartialContent errors ignored;
+  - nested dynamic kept, nested dynamic losing sensitivity, a string "dynamic" treated as a
+    block;
+  - JSON lifecycle error ignored, UnmarkDeep in the walk (3.2M allocations for 2,300 values).
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: a nested JSON dynamic was silent data.
+    - Major: the ADR missed the unknown-path shape, and the false-positive and misjudged-unknown
+      modes (the seed EC2 rule indexes [0]).
+    - Major: the schema/contract text and T-0110 were not updated.
+    - Minors: a JSON lifecycle that is not an object was silent; the dynamic warning fired per
+      instance.
+    - All fixed.
+  - Round 2: CHANGES_REQUIRED.
+    - Major (DoS): the dynamic-key walk used UnmarkDeep per node, nodes × depth, 91s. Fixed with
+      a shallow Unmark and an allocation-bounded test.
+    - Minor: the lint and guide now also cover `[_]` and `some … in` iteration.
+  - Round 3: APPROVE, no findings.
+- Next: T-0106e (dynamic blocks in JSON).

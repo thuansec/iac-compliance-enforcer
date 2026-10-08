@@ -31,6 +31,7 @@ func FuzzParseFile(f *testing.F) {
 		{`{"module": {"net": {"source": "./net"}}, "variable": {"v": [{"default": 1}]}}`, true},
 		{`{"a": ` + strings.Repeat("[", 600) + strings.Repeat("]", 600) + `}`, true},
 		{`{"unterminated": `, true},
+		{`{"resource": {"x": {"y": {"count": 2, "provider": "a.b", "depends_on": ["x.z"], "a": "${count.index}", "b": {"c": [1]}, "lifecycle": {"ignore_changes": "all"}, "dynamic": {"d": {"for_each": [1], "content": {}}}}}}}`, true},
 		{"locals {\n  a = local.b\n  b = [local.a, aws_s3_bucket.x.id]\n  c = \"${local.a}-${data.d.e.f}\"\n}\n", false},
 		{`{"locals": {"a": "${local.b}", "b": "${module.m.o}", "c": {"k": "${local.a}"}}}`, true},
 		{"locals {\n  a = formatlist(\"%5s\", distinct(concat(split(\",\", \"a,b\"), [jsonencode({ k = 1 })])))\n  b = try(provider::aws::f(local.a), timestamp(), core::upper(\"x\"))\n}\n", false},
