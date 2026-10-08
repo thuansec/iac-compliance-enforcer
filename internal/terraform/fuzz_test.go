@@ -11,8 +11,9 @@ import (
 )
 
 // FuzzParseFile feeds arbitrary bytes to the parser as HCL or JSON. Parsing, the nesting guard,
-// module-source extraction, guarded evaluation and locals evaluation must never panic or crash,
-// and every diagnostic and block must name the file it came from. Seeds are below and in testdata/fuzz/FuzzParseFile.
+// module-source extraction, guarded evaluation, locals evaluation and resource decoding must
+// never panic or crash, and every diagnostic and block must name the file it came from. Seeds
+// are below and in testdata/fuzz/FuzzParseFile.
 func FuzzParseFile(f *testing.F) {
 	seeds := []struct {
 		src    string
@@ -34,6 +35,7 @@ func FuzzParseFile(f *testing.F) {
 		{`{"locals": {"a": "${local.b}", "b": "${module.m.o}", "c": {"k": "${local.a}"}}}`, true},
 		{"locals {\n  a = formatlist(\"%5s\", distinct(concat(split(\",\", \"a,b\"), [jsonencode({ k = 1 })])))\n  b = try(provider::aws::f(local.a), timestamp(), core::upper(\"x\"))\n}\n", false},
 		{`{"locals": {"a": "${format(\"%d\", max(1, 2))}", "b": "${uuid()}"}}`, true},
+		{"resource \"x\" \"y\" {\n  provider = a.b.c\n  depends_on = [\"s\", var.x, x.y[0]]\n  dup = 1\n  dup {}\n  lifecycle {\n    ignore_changes = [a[\"b\"][0], all]\n    prevent_destroy = 1\n  }\n  n { m { k = path.module } }\n}\n", false},
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s.src), s.isJSON)
@@ -72,6 +74,15 @@ func FuzzParseFile(f *testing.F) {
 		for name, l := range locals {
 			if l.Value.Type() == cty.NilType {
 				t.Errorf("local.%s has no value", name)
+			}
+		}
+		res, err := m.DecodeResources(context.Background(), nil, locals)
+		if err != nil {
+			t.Fatalf("DecodeResources: %v", err)
+		}
+		for _, r := range res {
+			if r.Value.Type() == cty.NilType || r.File != name {
+				t.Errorf("resource %s has no value or names %q", r.Address, r.File)
 			}
 		}
 	})

@@ -328,13 +328,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 			ectx.Variables[root] = cty.DynamicVal
 		}
 		if slices.Contains(s.roots, "path") {
-			// Paths resolve against the module directory (see fileFunctions), so path.module is
-			// "."; the root module and working directory are not known for a module on its own.
-			ectx.Variables["path"] = cty.ObjectVal(map[string]cty.Value{
-				"module": cty.StringVal("."),
-				"root":   cty.UnknownVal(cty.String),
-				"cwd":    cty.UnknownVal(cty.String),
-			})
+			ectx.Variables["path"] = pathObject()
 		}
 	}
 	val, diags := m.evalExpr(s.attr.Expr, ectx)

@@ -204,16 +204,38 @@ locations and without executing anything.
     - a regression test with 1,024 numbers differing past ten significant digits stays within the module budget
   - attempts: 1
   - result: distinct, toset, setunion, setintersection and setsubtract in the bounded table; a `before` cost is checked before arguments are converted and charged in both the type pass and the call; setBuildCost charges elements × comparison weight (weight² for nested sets), where numbers weigh their quadratic decimal formatting; compound sets with costly numbers are refused; follow-up T-0117
-- [ ] T-0106 · Expand count, for_each and dynamic blocks
-  - skills: iace-terraform-parsing, iace-testing
+- [x] T-0106a · Decode resource and data blocks into instances without a schema
+  - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0105c
   - accept:
-    - instance addresses look like `type.name[0]` and `type.name["key"]`; unknown count/for_each yields one placeholder instance marked unknown
-    - the expansion cap (10,000 by default) produces a warning; dynamic blocks expand
+    - each HCL `resource` and `data` block becomes one instance (`type.name`, `data.type.name`) whose value holds its evaluated attributes (with `var`, `local` and `path`; resources, data sources, modules, `count`, `each`, `self` and `terraform` are unknown) and its nested blocks as arrays of objects in source order, with the outermost unknown paths and sensitive marks kept, and each attribute's source range keyed by its dot-joined path (`metadata_options.0.http_tokens`)
+    - meta-arguments (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`, `provisioner`, `connection`) are not values: `provider` (`aws.eu`), `depends_on` (addresses) and `lifecycle` (`prevent_destroy`, `ignore_changes` with `all` as `*`) are recorded; a `dynamic` block, a `.tf.json` body, an evaluation error or a value over the size limits is unknown with a warning, never an error
+  - attempts: 1
+  - result: ParsedModule.DecodeResources decodes HCL resource and data bodies into one instance each (values, unknown paths, sensitive marks, attribute ranges, provider/depends_on/lifecycle meta, raw count/for_each for T-0106b); dynamic blocks and JSON bodies are unknown with dynamic_block_not_expanded / json_body_not_decoded warnings; per-attribute and per-module (2^22) size limits with a pre-evaluation estimate; T-0106 split into a–d
+- [ ] T-0106b · Expand count and for_each into instances
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0106a
+  - accept:
+    - instance addresses look like `type.name[0]` and `type.name["key"]` with `count.index`, `each.key` and `each.value` set; `count = 0` and an empty `for_each` produce no instances; invalid values (negative or fractional count, for_each over a list or with sensitive keys) are unknown with a warning, as Terraform would reject them
+    - unknown count/for_each yields one placeholder instance (`type.name[*]`, index null) marked count_unknown/for_each_unknown, evaluated with unknown `count.index`/`each.*`; the expansion cap (10,000 instances per resource by default) keeps the first instances and produces a warning
+  - attempts: 0
+- [ ] T-0106c · Expand dynamic blocks
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0106b
+  - accept:
+    - `dynamic "x" { for_each, iterator, labels, content }` expands into `x` list entries after any static `x` blocks are merged in source order, with the iterator (default: the label) as `x.key`/`x.value`, nested dynamics included; attribute ranges point at the `content` attributes
+    - an unknown for_each produces one entry evaluated with an unknown iterator and marks the block path unknown; expansion counts toward the instance cap and the size limits
+  - attempts: 0
+- [ ] T-0106d · Decode .tf.json resource bodies
+  - skills: iace-terraform-parsing, iace-architecture, iace-testing
+  - depends: T-0106c
+  - accept:
+    - resource and data bodies in `.tf.json` files decode like HCL bodies; without a schema an object or array of objects may be a nested block or a map attribute, so the heuristic is chosen and recorded in an ADR (with the input-document consequence for policies) and tested both ways
+    - meta-arguments in JSON (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`, `dynamic`) are handled as in HCL
   - attempts: 0
 - [ ] T-0107 · Resolve local and pre-downloaded modules
   - skills: iace-terraform-parsing, iace-security
-  - depends: T-0106
+  - depends: T-0106c, T-0106d
   - accept:
     - local sources resolve only inside the scan root (an escape leaves the module unresolved with a warning); inputs and outputs flow; depth limit 32; cycles detected
     - remote modules resolve only via .terraform/modules/modules.json; unresolved modules are reported as coverage gaps
@@ -233,7 +255,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable and template_error → coverage gaps naming the file (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error, dynamic_block_not_expanded and json_body_not_decoded → coverage gaps naming the file (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file

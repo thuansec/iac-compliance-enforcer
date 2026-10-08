@@ -814,3 +814,51 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Minor: other functions' type-pass conversions of numbers (`join`) are
     uncharged when an argument is unknown. This predates the task and was added to T-0117.
 - Next: T-0106 (count, for_each and dynamic blocks).
+
+## 2026-10-08 · T-0106a · done
+- What: T-0106 split into T-0106a–d. No schema-less resource decoding existed, and count/for_each,
+  dynamic blocks and JSON bodies each need their own slice. This slice adds
+  `ParsedModule.DecodeResources(ctx, vars, locals)`, which turns each HCL `resource` and `data`
+  block into one `Resource`:
+  - address, mode, type, name, file and ranges;
+  - a value object of the evaluated attributes, with nested blocks as tuples of objects in source
+    order;
+  - unknown paths, sensitive marks, and attribute ranges keyed by dot-joined path.
+  - Evaluation context: `var`, the referenced locals, and `path` (`pathObject`, now shared with
+    locals). Resources, data sources, modules, `count`, `each`, `self` and `terraform` are
+    unknown. `terraform.workspace` stays unknown, consistent with locals (the parsing skill
+    suggests "default", but a CI workspace can be anything).
+  - Meta-arguments only at the top level:
+    - raw `count`/`for_each` kept for T-0106b;
+    - `provider` → "aws.eu";
+    - `depends_on` → sorted addresses;
+    - `lifecycle` → prevent_destroy (converted to bool) and ignore_changes (dot paths, `all` → `*`);
+    - `provisioner` and `connection` skipped.
+    Invalid meta-arguments are ignored with an `evaluation` warning.
+  - Fail closed:
+    - a `dynamic` block makes its type unknown (`dynamic_block_not_expanded`);
+    - a `.tf.json` body is wholly unknown (`json_body_not_decoded`);
+    - an attribute/block name clash is unknown;
+    - an evaluation error is unknown, and stays sensitive when an input is.
+  - Size: a pre-evaluation estimate and a post-evaluation measure, with maxLocalValueSize per
+    attribute and 2^22 per module (`value_too_large`). Size and sensitivity of each var and local
+    are cached, so references cost lookups. Ephemeral resources are not decoded.
+- Files: internal/terraform/{resources.go,resources_test.go,locals.go,fuzz_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. FuzzParseFile now also decodes resources (60s, about 770k
+  inputs, clean). Mutation checks each fail a test:
+  - no module budget, no estimate, no sensitivity cache;
+  - meta-arguments also in nested blocks;
+  - dynamic not unknown, a clash keeping the block, an unknown losing sensitivity.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: ContainsMarked ran per reference, uncached, so 2,000 references to an 800 KB
+      variable took 93s. Fixed with the cache, and a test bounding allocation (without the
+      cache: 86s and 72 GB). Profiling then showed the linear walk at 2^24 units took about 4s,
+      so the module budget is now 2^22.
+    - Minors: `provider = aws["eu"]` silently lost the alias (now invalid); prevent_destroy did
+      not convert "true" (now converted); the too-complex path's unmarked unknown is now
+      documented; T-0106d now depends on T-0106c; T-0109 now maps the two new codes.
+  - Round 2: APPROVE. Its minor finding (check the conversion error instead of comparing with
+    NilVal) was applied, and the gates re-ran.
+- Next: T-0106b (count and for_each). Note: T-0111 is now the first ready task in file order.
