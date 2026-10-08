@@ -995,3 +995,45 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - Minor: the lint and guide now also cover `[_]` and `some … in` iteration.
   - Round 3: APPROVE, no findings.
 - Next: T-0106e (dynamic blocks in JSON).
+
+## 2026-10-08 · T-0106e · done
+- What: dynamic blocks written in JSON expand like HCL ones.
+  - The HCL dynamic() validates its block and hands a dynamicSpec to a syntax-neutral
+    expandDynamic(). That core holds the iterator binding, shadowing and restore, the marks,
+    unknown/null/non-collection handling, the per-block cap, and the module structure and work
+    charges.
+  - jsonDynamic reads a dynamic block with hcl's schema decoding (for_each, iterator, labels,
+    content).
+  - jsonBody, parsed with the resource or nested schema, decodes bodies recursively.
+  - A property whose source holds a dynamic block (a structural ExprMap/ExprList walk, memoized
+    by source range so nesting stays linear), or that shares a dynamic type, decodes as an array
+    of blocks through hcl's JSON block decoding. Its entries record ranges.
+  - Static and dynamic entries merge in source order (ADR 0007 amends ADR 0006; T-0110 now
+    covers it).
+  - JSON re-evaluation is charged at jsonEvalFactor 4 per byte, because each evaluation
+    re-parses the string templates (measured about 1.7µs per byte). Each dynamic block is charged
+    from its "dynamic" key to its closing brace; its DefRange is only the opening brace.
+  - json_dynamic_not_expanded is removed. Duplicate "dynamic" keys expand.
+- Files: internal/terraform/{resources_json.go,resources_dynamic.go,resources.go,
+  resources_json_dynamic_test.go,resources_json_test.go,resources_json_internal_test.go},
+  docs/adr/0007-decode-json-properties-holding-dynamic-blocks-as-blocks.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; fuzzing 45s, clean.
+  - Mutation checks each fail a test:
+    - static entries not merged, nested dynamic kept as data, a dynamic lifecycle accepted;
+    - JSON entries costing nothing, two contents accepted, dynamic source not charged (33s and
+      a failure);
+    - no JSON factor, source order ignored, no memo (771 MB against 40 MB).
+  - The reviewer's worst case (2.4 MB at depth 400) dropped from 111s to 1.9s.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: a JSON dynamic cost 1 byte, so count × dynamic took 74s.
+    - Major: detection evaluated out of iterator scope, and double-charged values.
+    - Major: no ADR amending 0006.
+    - Minor: static-first ordering.
+    - All fixed.
+  - Round 2: CHANGES_REQUIRED.
+    - Blocker: the structural walk was depth × size. Memoized.
+    - Minor: the full-body JustAttributes failed on duplicate block keys. Each block is now
+      measured from its own ranges.
+  - Round 3: APPROVE. Minor (memoizing scalar leaves costs memory) is recorded in T-0111.
+- Next: T-0107 (resolve local and pre-downloaded modules).

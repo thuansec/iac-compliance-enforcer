@@ -27,14 +27,7 @@ type iterator struct {
 func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Path, r *Resource,
 	blocks map[string][]cty.Value, unknown map[string]bool, top bool,
 ) {
-	invalidAt := func(rng hcl.Range, name, why string) {
-		if name != "" {
-			unknown[name] = true
-		}
-		d.m.diag(SeverityWarning, DiagInvalidExpansion, "Invalid dynamic block",
-			"Terraform rejects this dynamic block ("+why+"), so iace treats the blocks of its type as unknown.",
-			rng.Filename, rng.Start.Line, rng.Start.Column)
-	}
+	invalidAt := func(rng hcl.Range, name, why string) { d.invalidDynamic(rng, name, why, unknown) }
 	if len(b.Labels) != 1 {
 		invalidAt(b.TypeRange, "", "it needs exactly one label, the block type")
 		return
@@ -66,22 +59,64 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 		invalidAt(b.TypeRange, name, "it needs exactly one content block")
 		return
 	}
-	iterName := name
+	var iter hcl.Expression
 	if it := b.Body.Attributes["iterator"]; it != nil {
-		tr, diags := hcl.AbsTraversalForExpr(it.Expr)
+		iter = it.Expr
+	}
+	body := content[0].Body
+	d.expandDynamic(dynamicSpec{
+		name:      name,
+		forEach:   forEach.AsHCLAttribute(),
+		iterator:  iter,
+		cost:      instanceCost(body),
+		structure: blockOverhead + instanceStructure(body) - instanceOverhead,
+		decode: func(i int) cty.Value {
+			return d.nested(name, body, prefix, path, i, r)
+		},
+	}, path, blocks, unknown)
+}
+
+// dynamicSpec is a dynamic block whose form is valid, in either syntax.
+type dynamicSpec struct {
+	name     string
+	forEach  *hcl.Attribute
+	iterator hcl.Expression // nil: the iterator is named after the block type
+	// cost and structure are what one entry costs (instanceCost, and its structure estimate);
+	// decode decodes the content as entry i of the type.
+	cost, structure int
+	decode          func(i int) cty.Value
+}
+
+// invalidDynamic reports a dynamic block Terraform rejects, and makes its type unknown when
+// it has one.
+func (d *resourceDecoder) invalidDynamic(rng hcl.Range, name, why string, unknown map[string]bool) {
+	if name != "" {
+		unknown[name] = true
+	}
+	d.m.diag(SeverityWarning, DiagInvalidExpansion, "Invalid dynamic block",
+		"Terraform rejects this dynamic block ("+why+"), so iace treats the blocks of its type as unknown.",
+		rng.Filename, rng.Start.Line, rng.Start.Column)
+}
+
+// expandDynamic expands a valid dynamic block into entries of its type in blocks, as dynamic
+// describes. path is the cty path of the body holding it.
+func (d *resourceDecoder) expandDynamic(spec dynamicSpec, path cty.Path, blocks map[string][]cty.Value, unknown map[string]bool) {
+	name := spec.name
+	iterName := name
+	if spec.iterator != nil {
+		tr, diags := hcl.AbsTraversalForExpr(spec.iterator)
 		if diags.HasErrors() || len(tr) != 1 {
-			invalidAt(it.Expr.Range(), name, "iterator must be a name")
+			d.invalidDynamic(spec.iterator.Range(), name, "iterator must be a name", unknown)
 			return
 		}
 		iterName = tr.RootName()
 	}
-	v, ok := d.evalBounded(forEach.Expr, "for_each", forEach.NameRange)
+	v, ok := d.evalBounded(spec.forEach.Expr, "for_each", spec.forEach.NameRange)
 	if !ok {
 		unknown[name] = true // already reported
 		return
 	}
 	v, marks := v.Unmark()
-	body := content[0].Body
 	entry := func(key, val cty.Value) {
 		saved, had := d.iters[iterName]
 		it := cty.ObjectVal(map[string]cty.Value{"key": key, "value": val})
@@ -93,7 +128,7 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 			d.iters = map[string]iterator{}
 		}
 		d.iters[iterName] = iterator{val: it, size: size, sensitive: it.ContainsMarked() || len(marks) > 0}
-		e := d.nested(name, body, prefix, path, len(blocks[name]), r)
+		e := spec.decode(len(blocks[name]))
 		if had {
 			d.iters[iterName] = saved
 		} else {
@@ -102,7 +137,7 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 		blocks[name] = append(blocks[name], e.WithMarks(marks))
 	}
 	typePath := append(slices.Clip(path), cty.GetAttrStep{Name: name})
-	rng := forEach.Expr.Range()
+	rng := spec.forEach.Expr.Range()
 	ty := v.Type()
 	switch {
 	case !v.IsKnown() || ty.IsSetType() && !v.IsWhollyKnown():
@@ -113,19 +148,17 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 		entry(cty.DynamicVal, cty.DynamicVal)
 		return
 	case v.IsNull():
-		invalidAt(rng, name, "for_each is null")
+		d.invalidDynamic(rng, name, "for_each is null", unknown)
 		return
 	case !v.CanIterateElements():
-		invalidAt(rng, name, "for_each must be a collection")
+		d.invalidDynamic(rng, name, "for_each must be a collection", unknown)
 		return
 	}
-	cost := instanceCost(body)
-	structure := blockOverhead + instanceStructure(body) - instanceOverhead
 	n := 0
 	for it := v.ElementIterator(); it.Next(); n++ {
 		limit := n == maxInstancesPerResource ||
-			d.structure+structure > maxInstanceStructure ||
-			n > 0 && d.expansionWork+cost > maxExpansionWork
+			d.structure+spec.structure > maxInstanceStructure ||
+			n > 0 && d.expansionWork+spec.cost > maxExpansionWork
 		if limit {
 			d.m.diag(SeverityWarning, DiagExpansionLimit, "Too many dynamic blocks",
 				"This dynamic block passes the limit for entries (per block, or the module's instances, their size or the source evaluated again), so iace checks the entries before it and treats the number of entries as unknown.",
@@ -134,9 +167,9 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 			return
 		}
 		if n > 0 {
-			d.expansionWork += cost
+			d.expansionWork += spec.cost
 		}
-		d.structure += structure
+		d.structure += spec.structure
 		entry(it.Element())
 	}
 }

@@ -236,13 +236,14 @@ locations and without executing anything.
     - meta-arguments in JSON (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`) are handled as in HCL; JSON `dynamic` blocks are unknown with a warning until T-0106e
   - attempts: 1
   - result: JSON resource bodies decode through a shared resourceBody interface: lifecycle/provisioner/connection/dynamic as blocks, every other property as an attribute kept in its written shape (ADR 0006, amending ADR 0004 rule 1, with path helpers and JSON fixtures required in T-0201/T-0205); meta-arguments as in HCL; JSON dynamic blocks, top-level or nested, are unknown with json_dynamic_not_expanded until T-0106e; duplicate or malformed lifecycle blocks are ignored with a warning
-- [ ] T-0106e · Expand dynamic blocks written in JSON
+- [x] T-0106e · Expand dynamic blocks written in JSON
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0106d
   - accept:
     - `"dynamic": {"x": {"for_each": …, "iterator": …, "content": {…}}}` in a JSON resource body, a JSON content body, or inside a nested block object (today unknown with json_dynamic_not_expanded) expands as in HCL, through hcl's schema-based block decoding of JSON bodies: iterator scope, sensitive for_each, unknown for_each (one entry, type path unknown), invalid forms (invalid_expansion) and the shared limits; json_dynamic_not_expanded is removed
     - tests mirror the HCL dynamic tests on JSON input, including an iterator shadowing local
-  - attempts: 0
+  - attempts: 1
+  - result: JSON dynamic blocks (top-level, in content bodies, and inside nested block objects) expand through the syntax-neutral expandDynamic core shared with HCL; properties holding a dynamic block (detected structurally, memoized) or sharing a dynamic type decode as arrays of blocks with nested ranges, merged in source order (ADR 0007); JSON re-evaluation is charged at 4× per byte including each dynamic block's full source; json_dynamic_not_expanded removed; follow-up in T-0111
 - [ ] T-0107 · Resolve local and pre-downloaded modules
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0106c, T-0106e
@@ -265,7 +266,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error and json_dynamic_not_expanded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -275,6 +276,7 @@ locations and without executing anything.
     - a benchmark records peak memory of the nesting guard and the parse for a 5 MiB file (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on `a=1` lines)
     - the per-file cost fits the 1 GiB scan budget: the guard no longer allocates a token slice and/or MaxFileSize is lowered, with the decision recorded in an ADR
     - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded too: at 5 MiB they evaluate but use about 2.4 GB (measured in the T-0104a review)
+    - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: today a flat 2.4 MB array allocates about 2.4 GB in total and keeps one memo entry per element (T-0106e review)
   - attempts: 0
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing
@@ -327,12 +329,12 @@ locations and without executing anything.
     - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
     - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
   - attempts: 0
-- [!] T-0110 · Sync the input-document reference with ADR 0004 and ADR 0006
+- [!] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
   - skills: iace-architecture
   - depends: T-0101
   - accept:
     - .claude/skills/iace-architecture/references/input-document.md states the clarifications in ADR 0004 (backend null, `{file, range}` source ranges, `ignore_changes` "*", plan_file only in plan mode, nil inside values is null, gap file ""/line 0)
-    - it states ADR 0006's amendment of rule 1: in .tf.json input a nested block written as one object stays an object (values and unknown/sensitive paths), and rules read nested blocks through the iace.lib.tf path helpers
+    - it states ADR 0006's amendment of rule 1: in .tf.json input a nested block written as one object stays an object (values and unknown/sensitive paths), and rules read nested blocks through the iace.lib.tf path helpers; and ADR 0007's amendment: a JSON property holding a dynamic block (or sharing a dynamic block's type) is decoded as an array of blocks, with ranges under its entry paths
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 

@@ -16,9 +16,6 @@ import (
 
 // Diagnostic codes for resource decoding.
 const (
-	// DiagJSONDynamicNotExpanded: a dynamic block in JSON syntax is not expanded yet (T-0106e),
-	// so the nested blocks of its type are unknown.
-	DiagJSONDynamicNotExpanded DiagCode = "json_dynamic_not_expanded"
 	// DiagUnknownExpansion: count or for_each is not known statically, so the resource is one
 	// placeholder instance ("type.name[*]") evaluated with an unknown count.index or each.
 	DiagUnknownExpansion DiagCode = "unknown_expansion"
@@ -124,6 +121,8 @@ type resourceDecoder struct {
 	// being decoded whose number of entries is unknown (an unknown or truncated dynamic block).
 	iters        map[string]iterator
 	extraUnknown []cty.Path
+	// dynamicSource memoizes holdsDynamicSource by source range.
+	dynamicSource map[sourceKey]bool
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.

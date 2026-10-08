@@ -1,7 +1,6 @@
 package terraform_test
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -136,8 +135,9 @@ func TestDecodeJSONResourcesFailClosed(t *testing.T) {
 `,
 	})
 	dyn := resource(t, res, "x.dyn")
-	if diff := cmp.Diff([]string{"ingress"}, paths(dyn.Unknown)); diff != "" {
-		t.Errorf("x.dyn unknown (-want +got):\n%s", diff)
+	// JSON dynamic blocks expand (T-0106e).
+	if len(dyn.Unknown) != 0 || !attr(t, dyn.Value, "ingress.0.port").RawEquals(cty.NumberIntVal(1)) {
+		t.Errorf("x.dyn = %#v, unknown %v", dyn.Value, paths(dyn.Unknown))
 	}
 	if got := attr(t, dyn.Value, "name"); !got.RawEquals(cty.StringVal("n")) {
 		t.Errorf("x.dyn.name = %#v", got)
@@ -152,7 +152,7 @@ func TestDecodeJSONResourcesFailClosed(t *testing.T) {
 		t.Errorf("x.unknown_count = %+v", r)
 	}
 	got := strings.Join(codes(m), " ")
-	for _, want := range []string{"json_dynamic_not_expanded@main.tf.json:6", "evaluation@main.tf.json:9", "evaluation@main.tf.json:12", "evaluation@main.tf.json:16"} {
+	for _, want := range []string{"evaluation@main.tf.json:9", "evaluation@main.tf.json:12", "evaluation@main.tf.json:16"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("diagnostics %s lack %s", got, want)
 		}
@@ -203,9 +203,9 @@ func TestJSONResourceInvalidShape(t *testing.T) {
 	}
 }
 
-// TestJSONNestedDynamicIsUnknown: a dynamic block inside a nested block in JSON would read as
-// plain data, hiding the blocks it generates, so the attribute holding it is unknown and warns.
-func TestJSONNestedDynamicIsUnknown(t *testing.T) {
+// TestJSONNestedDynamicExpands: a property holding a dynamic block can only be a nested block,
+// so it is decoded as blocks and the dynamic block expands; a string "dynamic" stays data.
+func TestJSONNestedDynamicExpands(t *testing.T) {
 	t.Parallel()
 	m, res := decodeResources(t, map[string]string{
 		"vars.tf": "variable \"pw\" {\n  default   = \"hunter2\"\n  sensitive = true\n}\n",
@@ -226,23 +226,26 @@ func TestJSONNestedDynamicIsUnknown(t *testing.T) {
 `,
 	})
 	y := res[0]
-	if diff := cmp.Diff([]string{"list", "secret", "setting"}, paths(y.Unknown)); diff != "" {
-		t.Errorf("unknown (-want +got):\n%s", diff)
+	if len(y.Unknown) != 0 {
+		t.Errorf("unknown: %v", paths(y.Unknown))
 	}
-	if s := attr(t, y.Value, "secret"); !s.HasMark(terraform.SensitiveMark) {
-		t.Errorf("secret = %#v, want unknown and sensitive", s)
-	}
-	if got := attr(t, y.Value, "plain.dynamic"); !got.RawEquals(cty.StringVal("a string is data")) {
-		t.Errorf("plain.dynamic = %#v", got)
-	}
-	want := []string{
-		"json_dynamic_not_expanded@main.tf.json:6", "json_dynamic_not_expanded@main.tf.json:7",
-		"json_dynamic_not_expanded@main.tf.json:8", "evaluation@main.tf.json:10",
-	}
-	got := codes(m)
-	for _, w := range want {
-		if !slices.Contains(got, w) {
-			t.Errorf("diagnostics %v lack %s", got, w)
+	for path, want := range map[string]cty.Value{
+		"setting.0.ingress.0.port": cty.NumberIntVal(22),
+		"list.0.a":                 cty.NumberIntVal(1),
+		"secret.0.c.0":             cty.EmptyObjectVal,
+		"plain.dynamic":            cty.StringVal("a string is data"),
+	} {
+		if got := attr(t, y.Value, path); !got.RawEquals(want) {
+			t.Errorf("%s = %#v, want %#v", path, got, want)
 		}
+	}
+	if n := attr(t, y.Value, "list").LengthInt(); n != 2 {
+		t.Errorf("list has %d entries, want 2", n)
+	}
+	if p := attr(t, y.Value, "secret.0.p"); !p.HasMark(terraform.SensitiveMark) {
+		t.Errorf("secret.0.p = %#v, want sensitive", p)
+	}
+	if diff := cmp.Diff([]string{"evaluation@main.tf.json:10"}, codes(m)); diff != "" {
+		t.Errorf("diagnostics (-want +got):\n%s", diff)
 	}
 }
