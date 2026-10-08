@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty/function"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/fsutil"
 )
@@ -89,6 +90,15 @@ type ParsedModule struct {
 
 	// src holds each file's bytes, so expressions can be checked before evaluation.
 	src map[string][]byte
+
+	// fns is the bounded function table, built at the first evaluation that calls a function;
+	// unsupportedSeen holds the unsupported function names already reported.
+	fns             map[string]function.Function
+	unsupportedSeen map[string]bool
+	// fnWork is the work charged to function calls so far, at most maxFunctionWork; fnLimited
+	// records that a call during the current evaluation was over a function limit.
+	fnWork    int
+	fnLimited bool
 }
 
 // HasErrors reports whether any diagnostic is an error.

@@ -32,6 +32,8 @@ func FuzzParseFile(f *testing.F) {
 		{`{"unterminated": `, true},
 		{"locals {\n  a = local.b\n  b = [local.a, aws_s3_bucket.x.id]\n  c = \"${local.a}-${data.d.e.f}\"\n}\n", false},
 		{`{"locals": {"a": "${local.b}", "b": "${module.m.o}", "c": {"k": "${local.a}"}}}`, true},
+		{"locals {\n  a = formatlist(\"%5s\", distinct(concat(split(\",\", \"a,b\"), [jsonencode({ k = 1 })])))\n  b = try(provider::aws::f(local.a), timestamp(), core::upper(\"x\"))\n}\n", false},
+		{`{"locals": {"a": "${format(\"%d\", max(1, 2))}", "b": "${uuid()}"}}`, true},
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s.src), s.isJSON)

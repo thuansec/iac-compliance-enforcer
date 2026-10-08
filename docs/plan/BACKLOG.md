@@ -156,16 +156,33 @@ locations and without executing anything.
     - every Variables() or traversal call on an expression passes safeToEvaluate first (hcl parses .tf.json templates there too); evaluation diagnostics stay sorted and deduplicated
   - attempts: 1
   - result: (*ParsedModule).EvaluateLocals evaluates locals in dependency order (iterative Tarjan; cycles unknown + local_cycle), resources/data/modules unknown with transitive References, bounded by per-local and total value budgets, a reference cap (ReferencesIncomplete) and Unknown path caps; follow-ups T-0113, T-0114
-- [ ] T-0105 · Evaluate expressions with a curated function set
+- [x] T-0105a · Evaluate locals with a curated, bounded function table
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0104c
   - accept:
-    - the function table is documented in the reference; unsupported functions yield unknown, never an error
-    - file() and templatefile() are confined to the module directory with a size limit; tests cover escape attempts
+    - locals evaluate with a table of go-cty stdlib functions whose semantics match Terraform's, documented in docs/reference/terraform-functions.md with a test per function
+    - unsupported functions (provider-defined ones included) yield unknown, never an error, with one unsupported_function warning per name per module; sensitive arguments keep the result sensitive
+    - every call is bounded (argument size before conversion, result size and nesting, number digits, format widths, formatlist rows, a per-module work budget); a call over a bound is unknown with a function_limit warning; tests sit just below, at and just above each bound
+  - attempts: 1
+  - result: locals evaluate with 39 go-cty stdlib functions plus try/can (docs/reference/terraform-functions.md, a test per function and a doc-sync test); unsupported and provider functions are unknown with one unsupported_function warning per name; every call is sized before conversion (number digits included) and bounded per call (2^18) and per module (2^23), else unknown + function_limit; set functions, distinct and lookup moved to T-0105b; follow-up T-0115
+- [ ] T-0105b · Add the Terraform-specific pure functions
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0105a
+  - accept:
+    - length (strings too), coalesce (skips empty strings), index (position of a value), replace (plain and /regex/), regex, regexall, startswith, endswith, strcontains, base64encode, base64decode (UTF-8 checked), cidrsubnet, cidrhost and cidrnetmask, implemented in iace (never copied from Terraform, BUSL-1.1) with Terraform's documented semantics and a test per function
+    - lookup with Terraform's optional, nullable default; distinct, toset, setunion, setintersection and setsubtract with a cost bound that holds when cty number hashes collide (a set of close numbers compares every pair, found in the T-0105a review)
+    - superlinear costs are bounded like T-0105a (replace output, regex pattern × input, pairwise comparisons × element size)
+  - attempts: 0
+- [ ] T-0105c · Confine file(), fileexists() and templatefile() to the module directory
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0105b
+  - accept:
+    - file(), fileexists() and templatefile() read only inside the module directory through fsutil, with a size limit (1 MiB); tests cover escape attempts (`..`, absolute paths, symlinks)
+    - templatefile() evaluates with the same bounded function table; a missing file or a template error is unknown with a warning, never an error
   - attempts: 0
 - [ ] T-0106 · Expand count, for_each and dynamic blocks
   - skills: iace-terraform-parsing, iace-testing
-  - depends: T-0105
+  - depends: T-0105c
   - accept:
     - instance addresses look like `type.name[0]` and `type.name["key"]`; unknown count/for_each yields one placeholder instance marked unknown
     - the expansion cap (10,000 by default) produces a warning; dynamic blocks expand
@@ -187,11 +204,11 @@ locations and without executing anything.
   - attempts: 0
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108, T-0113
+  - depends: T-0108, T-0113, T-0115
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex and file_limit → limit_exceeded gaps
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -222,6 +239,13 @@ locations and without executing anything.
   - accept:
     - when a traversal's later steps are static attribute or index steps (`local.cfg.env`), the estimate resolves them against the evaluated value and charges that sub-value's size, not the whole value's (T-0104c review: 6+ field reads of a ~45 KB map are a false value_too_large today)
     - the estimate stays an upper bound: tests with dynamic index steps and splats still charge the whole value
+  - attempts: 0
+- [ ] T-0115 · Bound number magnitude outside function calls
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0105a
+  - accept:
+    - template interpolation and operators no longer format, convert or compare numbers whose decimal digits pass the value-size limit (T-0105a review: `"${1e2000000}-"` takes 1.6s, and multiplying locals squares the magnitude per local); such an expression is unknown with a limit warning
+    - number literals are checked where they are lexed, and tests cover templates, comparisons and a chain of multiplying locals, each finishing within the per-module time budget
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
