@@ -89,3 +89,39 @@ func TestStatFollowsSymlinksOnlyInsideTheRoot(t *testing.T) {
 		t.Error("Stat(sub/../../x) succeeded, want an escape error")
 	}
 }
+
+// TestOpenRootConfinesToTheDirectory: a sub-root refuses ".." and symlinks that leave its
+// directory, even to files inside the parent root.
+func TestOpenRootConfinesToTheDirectory(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "secret.txt"), []byte("parent"))
+	if err := os.Mkdir(filepath.Join(dir, "mod"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "mod", "data.txt"), []byte("inside"))
+	for name, target := range map[string]string{
+		"up.txt":     filepath.Join("..", "secret.txt"),
+		"inside.txt": "data.txt",
+	} {
+		if err := os.Symlink(target, filepath.Join(dir, "mod", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub, err := openRoot(t, dir).OpenRoot("mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Close() })
+	for _, name := range []string{"up.txt", "../secret.txt"} {
+		if data, err := sub.ReadFile(name, 1024); err == nil {
+			t.Errorf("ReadFile(%s) = %q, want an escape error", name, data)
+		}
+	}
+	if data, err := sub.ReadFile("inside.txt", 1024); err != nil || string(data) != "inside" {
+		t.Errorf("ReadFile(inside.txt) = %q, %v", data, err)
+	}
+	if _, err := openRoot(t, dir).OpenRoot("missing"); err == nil {
+		t.Error("OpenRoot(missing) succeeded")
+	}
+}

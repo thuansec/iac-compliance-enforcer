@@ -38,6 +38,16 @@ func (r *Root) Close() error {
 	return r.root.Close()
 }
 
+// OpenRoot opens the directory name inside r as a root of its own, so that neither ".." nor a
+// symlink can leave that directory. The caller closes it.
+func (r *Root) OpenRoot(name string) (*Root, error) {
+	sub, err := r.root.OpenRoot(filepath.FromSlash(name))
+	if err != nil {
+		return nil, WrapPathError("open directory", name, err)
+	}
+	return &Root{root: sub}, nil
+}
+
 // ReadDir lists a directory in name order. Entry types are not followed through symlinks.
 func (r *Root) ReadDir(name string) ([]fs.DirEntry, error) {
 	entries, err := fs.ReadDir(r.root.FS(), name)

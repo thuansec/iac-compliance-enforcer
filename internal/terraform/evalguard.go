@@ -33,15 +33,19 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
-	m.fnLimited = false
+	m.fnLimited, m.fnDiags = false, nil
 	val, diags := expr.Value(ctx)
+	r := expr.Range()
 	if m.fnLimited {
-		r := expr.Range()
 		m.diag(SeverityWarning, DiagFunctionLimit, "Function call too large",
 			"A function call would pass the size or work limit for function calls, so its value is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
-		m.sortDiagnostics()
 	}
+	for _, d := range m.fnDiags {
+		m.diag(SeverityWarning, d.code, d.summary, d.detail, r.Filename, r.Start.Line, r.Start.Column)
+	}
+	m.fnDiags = nil
+	m.sortDiagnostics()
 	return val, diags
 }
 

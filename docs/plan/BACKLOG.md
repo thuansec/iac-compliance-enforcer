@@ -173,13 +173,14 @@ locations and without executing anything.
     - each goes through the T-0105a bounded wrapper; the reference doc lists them
   - attempts: 2
   - result: length, coalesce, index, lookup, startswith, endswith, strcontains, base64encode and base64decode in functions_terraform.go (from Terraform's docs), registered in the bounded table and documented with a semantics table; index/contains charge pairwise work when sets are involved; valueSize handles unknown and marked set elements; T-0105 remainder split into T-0105d/e/f; follow-up T-0116
-- [ ] T-0105c · Confine file(), fileexists() and templatefile() to the module directory
+- [x] T-0105c · Confine file(), fileexists() and templatefile() to the module directory
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
   - accept:
     - file(), fileexists() and templatefile() read only inside the module directory through fsutil, with a size limit (1 MiB); tests cover escape attempts (`..`, absolute paths, symlinks)
     - templatefile() evaluates with the same bounded function table; a missing file or a template error is unknown with a warning, never an error
-  - attempts: 0
+  - attempts: 1
+  - result: file, fileexists and templatefile read only through a sub-root of the module directory (fsutil.Root.OpenRoot), relative to it with path.module "."; refusals and template errors are unknown with file_outside_module, file_unreadable or template_error warnings; reads are capped at 1 MiB and at the remaining work, every call and byte is charged; templates use the guard and bounded table; follow-up bullets on T-0107, T-0109 and T-0113
 - [ ] T-0105d · Add replace, regex and regexall with bounded regular expressions
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
@@ -214,6 +215,7 @@ locations and without executing anything.
     - local sources resolve only inside the scan root (an escape leaves the module unresolved with a warning); inputs and outputs flow; depth limit 32; cycles detected
     - remote modules resolve only via .terraform/modules/modules.json; unresolved modules are reported as coverage gaps
     - a local child that no root instantiates (decoy call, `count = 0`, a source redirected by an override file) is scanned as a root or reported as a coverage gap, never silently skipped
+    - inside a child module instance, path.module is the child's path relative to the root module, path.root is ".", and file/fileexists/templatefile resolve relative paths against the root module directory as Terraform does (T-0105c resolves them against the module's own directory, which is right only for root modules)
   - attempts: 0
 - [ ] T-0108 · Extract references and provider versions
   - skills: iace-terraform-parsing
@@ -228,7 +230,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable and template_error → coverage gaps naming the file (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -251,7 +253,7 @@ locations and without executing anything.
   - depends: T-0104c
   - accept:
     - evaluation work inside one expression is bounded: nested for expressions over collections cannot multiply into a hang or OOM (T-0104c review: three nested fors over a 200-element list built 8M elements in 3.1s; 1,000 elements would be about 1e9). An expression over the bound is unknown with a limit diagnostic that T-0109 maps to a limit_exceeded gap
-    - applies to every evalExpr caller (variables, locals, later attributes); tests just below, at and just above the bound
+    - applies to every evalExpr caller (variables, locals, later attributes) and to templatefile templates (`%{ for }` directives nest the same way); tests just below, at and just above the bound
   - attempts: 0
 - [ ] T-0114 · Charge only the used part of a value in the locals size estimate
   - skills: iace-terraform-parsing, iace-testing

@@ -171,6 +171,9 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 		for name, f := range unboundedFunctions {
 			m.fns[name] = f
 		}
+		for name, f := range m.fileFunctions() {
+			m.fns[name] = m.bounded(f, nil)
+		}
 		m.unsupportedSeen = map[string]bool{}
 	}
 	fns := m.fns
