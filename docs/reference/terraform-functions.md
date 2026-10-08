@@ -21,21 +21,12 @@ function.
 | group | functions |
 |---|---|
 | string | `chomp`, `endswith`\*, `format`, `formatlist`, `join`, `lower`, `regex`\*, `regexall`\*, `replace`\*, `split`, `startswith`\*, `strcontains`\*, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
-| collection | `chunklist`, `coalesce`\*, `coalescelist`, `compact`, `concat`, `contains`, `element`, `flatten`, `index`\*, `keys`, `length`\*, `lookup`\*, `merge`, `range`, `reverse`, `slice`, `sort`, `values`, `zipmap` |
-| type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `tostring`, `try` |
+| collection | `chunklist`, `coalesce`\*, `coalescelist`, `compact`, `concat`, `contains`, `distinct`, `element`, `flatten`, `index`\*, `keys`, `length`\*, `lookup`\*, `merge`, `range`, `reverse`, `setintersection`, `setsubtract`, `setunion`, `slice`, `sort`, `values`, `zipmap` |
+| type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `toset`, `tostring`, `try` |
 | encoding | `base64decode`\*, `base64encode`\*, `jsondecode`, `jsonencode` |
 | numeric | `abs`, `max`, `min`, `signum` |
 | network | `cidrhost`\*, `cidrnetmask`\*, `cidrsubnet`\* |
 | filesystem | `file`\*, `fileexists`\*, `templatefile`\* |
-
-## Not evaluated yet
-
-These are unknown today. The backlog task that adds each is in brackets.
-
-- Functions that build sets or compare all pairs, which need a bounded implementation
-  [T-0105f]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
-  number by its first ten significant digits, so a set of close numbers compares every pair,
-  and comparing two numbers costs as much as their decimal digits.
 
 ## Always unknown
 
@@ -68,10 +59,11 @@ types. Converting a number to a string, for example, costs as much as its digits
 | `format` and `formatlist` | checked before the call: the format string, every width and precision, and each verb printing the largest argument escaped six times, multiplied by the row count for `formatlist` |
 | `range` | 1,024 elements (go-cty's own limit; past it the call fails, and the local is unknown) |
 | `contains`, `index` with sets | when the list's elements or the value can hold a set, the sizes of both arguments multiplied, charged to the module work (cty compares sets element by element, and colliding number hashes make that pairwise) |
+| `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract` | charged before the arguments are converted (converting a list to a set builds it), and again when the call's type is decided, since that converts them too (and cty skips the call itself when an argument is unknown): the elements of all arguments times their total comparison weight, or that weight squared when the elements can hold sets. cty hashes a number by its first ten significant digits, so close numbers compare every pair, and `distinct` always does. The comparison weight is the size plus, per number that is not an integer, (fractional bits / 32 + 1)²: cty compares such numbers by their exact decimal text, which math/big builds in time quadratic in the fractional bits (one comparison of `1e-78000` takes about 2s). A set whose elements are lists, tuples, maps or objects is refused when one of its numbers has more than 1,024 fractional bits (`1e-200` is past that; `0.1` has about 515), because cty orders such a set by hashes and so formats its numbers again on every later use. So `toset` of 1,024 close numbers is unknown, and 48 of them are a set. A timing sweep measured at most about 120ns per charged unit for these functions |
 | regular expression patterns | at most 4 KiB, charged 64 units per byte plus one per rune their classes expand to (`\pL` is over a thousand), and parsed once per module for up to 256 patterns (each further one for every call); refused before compiling when a parse-tree estimate (never below Go's program) passes 8,192 instructions, and when the compiled program passes 4,096 |
 | regular expression matching | each search charged program size × (groups + 1) × (input length + 1) before it runs, since finding all matches searches again after each one and each search can scan to the end; `regexall` and `replace` with `/re/` stop at the matches the remaining work affords (and at what a result can hold), else the call is unknown. Long inputs with many matches are therefore unknown |
 | `replace` output | exact for a plain substring; for `/re/`, the unmatched text plus, per match, the replacement with each `$` reference counted as the whole match, checked before the result is built |
-| work across a module | 2^23 units (about 1.5s of evaluation at worst, except for conversions into set types, which are not bounded yet: T-0116): the size of every call's arguments and result |
+| work across a module | 2^23 units (about 1.5s of evaluation at worst, except for conversions into set types outside the set functions, which are not bounded yet: T-0116, and numbers with many fractional bits outside the set functions: T-0117): the size of every call's arguments and result |
 
 A refused call still spends module work: as much as was measured of its arguments, so refused
 calls cannot repeat for free. A call over a bound is unknown, keeps the sensitivity of its

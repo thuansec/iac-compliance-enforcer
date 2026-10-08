@@ -780,3 +780,37 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Note: the newbits limit of 32 follows Terraform's documented behavior; it could not be checked
   against current Terraform source offline. It fails closed either way.
 - Next: T-0105f (distinct and the set functions with a collision-proof cost bound).
+
+## 2026-10-08 · T-0105f · done
+- What: distinct, toset, setunion, setintersection and setsubtract (go-cty stdlib, as Terraform
+  uses them) in the bounded table.
+  - `bounded` takes a `before` cost, checked after measuring the arguments and before converting
+    them: converting a list to a set builds the set. The type pass charges it too, because it
+    converts as well and cty skips the call when an argument is unknown. A refusal there is
+    reported as function_limit.
+  - setBuildCost: elements of all arguments × their total comparison weight, or weight² when
+    elements can hold sets (comparing sets is pairwise in turn).
+  - Comparison weight = size + (fractional bits / 32 + 1)² per non-integer number. Found during the
+    task: cty compares such numbers by exact decimal text, and math/big's expansion is quadratic in
+    the fractional bits (one comparison of 1e-78000 took 1.9s at 78k units).
+  - Sets of compound elements are refused when a number has over 1,024 fractional bits: cty orders
+    them by hash, so every later use formats the numbers again.
+- Files: internal/terraform/{functions.go,functions_internal_test.go},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. The 1,024-colliding-number regression (all five functions)
+  is refused before any work; it took 20s before. A timing sweep over colliding numbers, tuple and
+  object elements, unknown-argument loops and 1e-300…1e-6000 measured at most about 120ns per
+  charged unit (the reviewer measured 67ns), so a full budget is about 1s. Mutation checks each fail a
+  test: no set charge, type pass ignoring the budget, type pass not charged, type refusal free or
+  unreported, no format cost, nested not squared, pre not charged, counting arguments instead
+  of elements, no compound cap.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: the type pass built sets uncharged, and with an unknown argument cty never calls
+      Impl (10 calls: 3.3s for 504 units). Fixed by charging the type pass.
+    - Major: compound sets of tiny numbers re-hash on every later use (58s). Fixed by the cap.
+    - Minor: the calibration was optimistic for setunion (up to 250ns per unit). Fixed with root 32
+      and a re-run sweep.
+  - Round 2: APPROVE. Minor: other functions' type-pass conversions of numbers (`join`) are
+    uncharged when an argument is unknown. This predates the task and was added to T-0117.
+- Next: T-0106 (count, for_each and dynamic blocks).
