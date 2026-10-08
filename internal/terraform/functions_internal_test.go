@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -87,30 +88,35 @@ func TestSupportedFunctions(t *testing.T) {
 		"trimsuffix": {`trimsuffix("a.tf", ".tf")`, `"a"`},
 		"upper":      {`upper("abc")`, `"ABC"`},
 
-		"cidrhost":     {`cidrhost("10.0.0.0/24", 5)`, `"10.0.0.5"`},
-		"cidrnetmask":  {`cidrnetmask("10.0.0.0/8")`, `"255.0.0.0"`},
-		"cidrsubnet":   {`cidrsubnet("10.0.0.0/16", 8, 1)`, `"10.0.1.0/24"`},
-		"chunklist":    {`chunklist([1, 2, 3], 2)`, `[[1, 2], [3]]`},
-		"coalescelist": {`coalescelist([], ["a"])`, `["a"]`},
-		"compact":      {`compact(["a", "", "b"])`, `["a", "b"]`},
-		"concat":       {`concat(["a"], ["b"])`, `["a", "b"]`},
-		"contains":     {`contains(["a", "b"], "b")`, `true`},
-		"element":      {`element(["a", "b"], 3)`, `"b"`},
-		"flatten":      {`flatten([["a"], ["b", ["c"]]])`, `["a", "b", "c"]`},
-		"keys":         {`keys({ b = 1, a = 2 })`, `["a", "b"]`},
-		"merge":        {`merge({ a = 1 }, { b = 2, a = 3 })`, `{ a = 3, b = 2 }`},
-		"range":        {`range(1, 7, 2)`, `[1, 3, 5]`},
-		"reverse":      {`reverse(["a", "b"])`, `["b", "a"]`},
-		"slice":        {`slice(["a", "b", "c"], 1, 2)`, `["b"]`},
-		"sort":         {`sort(["b", "a"])`, `["a", "b"]`},
-		"values":       {`values({ b = 1, a = 2 })`, `[2, 1]`},
-		"zipmap":       {`zipmap(["a", "b"], [1, 2])`, `{ a = 1, b = 2 }`},
+		"cidrhost":        {`cidrhost("10.0.0.0/24", 5)`, `"10.0.0.5"`},
+		"cidrnetmask":     {`cidrnetmask("10.0.0.0/8")`, `"255.0.0.0"`},
+		"cidrsubnet":      {`cidrsubnet("10.0.0.0/16", 8, 1)`, `"10.0.1.0/24"`},
+		"chunklist":       {`chunklist([1, 2, 3], 2)`, `[[1, 2], [3]]`},
+		"coalescelist":    {`coalescelist([], ["a"])`, `["a"]`},
+		"compact":         {`compact(["a", "", "b"])`, `["a", "b"]`},
+		"concat":          {`concat(["a"], ["b"])`, `["a", "b"]`},
+		"contains":        {`contains(["a", "b"], "b")`, `true`},
+		"distinct":        {`distinct(["b", "a", "b", 1])`, `["b", "a", "1"]`},
+		"element":         {`element(["a", "b"], 3)`, `"b"`},
+		"flatten":         {`flatten([["a"], ["b", ["c"]]])`, `["a", "b", "c"]`},
+		"keys":            {`keys({ b = 1, a = 2 })`, `["a", "b"]`},
+		"merge":           {`merge({ a = 1 }, { b = 2, a = 3 })`, `{ a = 3, b = 2 }`},
+		"range":           {`range(1, 7, 2)`, `[1, 3, 5]`},
+		"reverse":         {`reverse(["a", "b"])`, `["b", "a"]`},
+		"setintersection": {`setintersection(["a", "b"], ["b", "c"], ["b"])`, `["b"]`},
+		"setsubtract":     {`setsubtract(["a", "b"], ["b", "c"])`, `["a"]`},
+		"setunion":        {`setunion(["a"], ["b", "a"], [])`, `["a", "b"]`},
+		"slice":           {`slice(["a", "b", "c"], 1, 2)`, `["b"]`},
+		"sort":            {`sort(["b", "a"])`, `["a", "b"]`},
+		"values":          {`values({ b = 1, a = 2 })`, `[2, 1]`},
+		"zipmap":          {`zipmap(["a", "b"], [1, 2])`, `{ a = 1, b = 2 }`},
 
 		"can":      {`can(tonumber("x"))`, `false`},
 		"tobool":   {`tobool("true")`, `true`},
 		"tolist":   {`tolist(["a", "b"])`, `["a", "b"]`},
 		"tomap":    {`tomap({ a = "x" })`, `{ a = "x" }`},
 		"tonumber": {`tonumber("5")`, `5`},
+		"toset":    {`toset(["b", "a", "b"])`, `["a", "b"]`},
 		"tostring": {`tostring(5)`, `"5"`},
 		"try":      {`try(tonumber("x"), 7)`, `7`},
 
@@ -528,7 +534,7 @@ func TestBoundedKeepsSignature(t *testing.T) {
 	t.Parallel()
 	m := &ParsedModule{}
 	for name, f := range supportedFunctions {
-		b := m.bounded(f, nil)
+		b := m.bounded(f, nil, nil)
 		if !slices.EqualFunc(f.Params(), b.Params(), paramsEqual) || (f.VarParam() == nil) != (b.VarParam() == nil) ||
 			(f.VarParam() != nil && !paramsEqual(*f.VarParam(), *b.VarParam())) {
 			t.Errorf("%s: bounded parameters differ", name)
@@ -621,14 +627,224 @@ func TestNumberDigitsCount(t *testing.T) {
 	}
 }
 
-// TestSetFunctionsAreUnknown: cty sets of close numbers compare every pair, so functions that
-// build sets are unsupported; this expression took 20s before.
-func TestSetFunctionsAreUnknown(t *testing.T) {
+// collidingNumbers is a tuple of n numbers that differ past ten significant digits, so they
+// share a cty hash and a set of them compares every pair.
+func collidingNumbers(n int) string {
+	return fmt.Sprintf("[for j in range(%d) : 1 + j / 1e15]", n)
+}
+
+// TestSetFunctionsAreCharged: building a set of close numbers compares every pair, and distinct
+// always does. These calls took 20s before the charge; now they are refused before the work.
+func TestSetFunctionsAreCharged(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"toset", "setunion", "distinct"} {
-		m, got := evalLocal(t, name+`([for j in range(1024) : 1 + j / 1e15])`, nil)
-		if got.IsKnown() || !slices.Contains(diagCodes(m), DiagUnsupportedFunction) {
-			t.Errorf("%s = %#v, diagnostics %v; want unknown and unsupported", name, got, m.Diagnostics)
+	nums := collidingNumbers(1024)
+	for _, expr := range []string{
+		"toset(" + nums + ")",
+		"distinct(" + nums + ")",
+		"setunion(" + nums + ")",
+		"setunion([], " + nums + ")",
+		"setintersection(" + nums + ", " + nums + ")",
+		"setsubtract(" + nums + ", [])",
+	} {
+		// Without the charge the call runs (seconds, more under -race) and is known, so the
+		// limit itself is the assertion; wall-clock checks are flaky.
+		m, got := evalLocal(t, expr, nil)
+		if got.IsKnown() || !slices.Equal(diagCodes(m), []DiagCode{DiagFunctionLimit}) {
+			t.Errorf("%.40s… = %#v, diagnostics %v; want unknown with function_limit", expr, got, m.Diagnostics)
+		}
+	}
+	// A smaller set of colliding numbers is still built, and keeps every number.
+	small := collidingNumbers(24)
+	m, got := evalLocal(t, "[length(toset("+collidingNumbers(48)+")), length(distinct(concat("+small+", "+small+")))]", nil)
+	if len(m.Diagnostics) != 0 || !got.RawEquals(cty.TupleVal([]cty.Value{cty.NumberIntVal(48), cty.NumberIntVal(24)})) {
+		t.Errorf("small colliding sets = %#v, diagnostics %v; want [48, 24]", got, m.Diagnostics)
+	}
+}
+
+// TestNestedSetsAreChargedPairwise: comparing two sets compares their elements pairwise when
+// hashes collide, so a set of sets is charged its size squared.
+func TestNestedSetsAreChargedPairwise(t *testing.T) {
+	t.Parallel()
+	nums := collidingNumbers(40) // each inner set is affordable, the outer one only if not squared
+	for _, expr := range []string{
+		"toset([toset(" + nums + "), toset(concat(" + nums + ", [2]))])",
+		"distinct([toset(" + nums + "), toset(concat(" + nums + ", [2]))])",
+		"setunion([toset(" + nums + ")], [toset(concat(" + nums + ", [2]))])",
+	} {
+		m, got := evalLocal(t, expr, nil)
+		if got.IsKnown() || !slices.Equal(diagCodes(m), []DiagCode{DiagFunctionLimit}) {
+			t.Errorf("%.40s… = %#v, diagnostics %v; want unknown with function_limit", expr, got, m.Diagnostics)
+		}
+	}
+	// Small nested sets are built.
+	if _, got := evalLocal(t, `length(toset([toset([1, 2]), toset([2, 1]), toset([3])]))`, nil); !got.RawEquals(cty.NumberIntVal(2)) {
+		t.Errorf("small nested sets = %#v, want 2", got)
+	}
+}
+
+func TestSetBuildCost(t *testing.T) {
+	t.Parallel()
+	str := cty.StringVal
+	set := func(vs ...cty.Value) cty.Value { return cty.SetVal(vs) }
+	// Sizes: one per value and string byte, and a set's element counts again as its key.
+	cases := []struct {
+		name string
+		args []cty.Value
+		want int
+	}{
+		{"elements times size", []cty.Value{cty.TupleVal([]cty.Value{str("a"), str("bb")})}, 2 * 6},
+		{"over every argument", []cty.Value{cty.ListVal([]cty.Value{str("a")}), set(str("b"), str("c"))}, 3 * (3 + 7)},
+		{"marked argument", []cty.Value{cty.ListVal([]cty.Value{str("a")}).Mark(SensitiveMark)}, 1 * 3},
+		{"unknown and null", []cty.Value{cty.UnknownVal(cty.List(cty.String)), cty.NullVal(cty.Set(cty.String))}, 0},
+		{"nested sets: size squared", []cty.Value{cty.TupleVal([]cty.Value{set(str("a")), set(str("b"))})}, 9 * 9},
+		{"dynamic elements", []cty.Value{cty.ListVal([]cty.Value{cty.DynamicVal})}, 2 * 2},
+		// 10 counts 2 digits; 0.5 counts none, and 1 for formatting its fractional bit.
+		{"numbers weigh their formatting", []cty.Value{cty.TupleVal([]cty.Value{cty.NumberIntVal(10), cty.NumberFloatVal(0.5)})}, 2 * (1 + (1 + 2) + (1 + 0 + 1))},
+	}
+	for _, c := range cases {
+		sizes := make([]int, len(c.args))
+		for i, a := range c.args {
+			sizes[i], _ = valueSize(a, maxFunctionValueSize, maxNesting)
+		}
+		if _, got := setBuildCost(c.args, sizes); got != c.want {
+			t.Errorf("%s: work %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestTinyNumbersAreChargedTheirFormatting: cty compares numbers by their exact decimal text,
+// which math/big builds in time quadratic in the fractional bits; one comparison of 1e-78000
+// took 1.9s, and its digits alone are a fraction of the budget.
+func TestTinyNumbersAreChargedTheirFormatting(t *testing.T) {
+	t.Parallel()
+	for _, expr := range []string{
+		"toset([1e-78000])",
+		"distinct([1e-78000, 0.5])",
+		"setunion([1e-78000], [0.5])",
+		"setsubtract([1e-40000], [0.5])",
+	} {
+		m, got := evalLocal(t, expr, nil)
+		if got.IsKnown() || !slices.Equal(diagCodes(m), []DiagCode{DiagFunctionLimit}) {
+			t.Errorf("%s = %#v, diagnostics %v; want unknown with function_limit", expr, got, m.Diagnostics)
+		}
+	}
+	// Moderately small numbers are still compared.
+	if _, got := evalLocal(t, "length(distinct([1e-1000, 2e-1000, 1e-1000]))", nil); !got.RawEquals(cty.NumberIntVal(2)) {
+		t.Errorf("distinct of small numbers = %#v, want 2", got)
+	}
+}
+
+func TestNumberFormatCost(t *testing.T) {
+	t.Parallel()
+	cases := map[string]int{
+		"0":        0,
+		"1e78000":  0, // integers compare as integers and format in near-linear time
+		"-12":      0,
+		"0.5":      1,                   // 1 fractional bit
+		"0.75":     1,                   // 2
+		"1.5e-19":  324,                 // 511 + 62 fractional bits at 512-bit precision: (573/32 + 1)²
+		"1e-78000": maxFunctionWork + 1, // saturates
+	}
+	for src, want := range cases {
+		if got := numberFormatCost(literal(t, src)); got != want {
+			f := literal(t, src).AsBigFloat()
+			t.Errorf("numberFormatCost(%s) = %d, want %d (min prec %d, exp %d)", src, got, want, f.MinPrec(), f.MantExp(nil))
+		}
+	}
+}
+
+// TestSetBuildWithUnknownArgumentIsCharged: cty does not call a function whose argument is
+// unknown, but decides its type first, and that converts (builds) the other arguments, so the
+// type pass is charged. Uncharged, these loops built 128-element colliding sets for free.
+func TestSetBuildWithUnknownArgumentIsCharged(t *testing.T) {
+	t.Parallel()
+	m := &ParsedModule{}
+	arg := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	got, err := m.functions(nil, nil)["setunion"].Call([]cty.Value{cty.UnknownVal(cty.Set(cty.String)), arg})
+	if err != nil || got.IsKnown() || m.fnWork != 2*(1+5) {
+		t.Fatalf("setunion(unknown, [a, b]) = %#v, %v, work %d; want unknown and 12 charged", got, err, m.fnWork)
+	}
+	vars := map[string]Variable{"u": {Value: cty.UnknownVal(cty.Set(cty.Number))}}
+	nums := collidingNumbers(128)
+	for _, expr := range []string{
+		"[for i in range(1024) : setunion(var.u, " + nums + ")]",
+		"[for i in range(1024) : can(setsubtract(" + nums + ", var.u))]",
+		"[for i in range(1024) : setintersection(var.u, [[1e-10000]])]",
+	} {
+		m, got := evalLocal(t, expr, vars)
+		if got.IsWhollyKnown() || !slices.Contains(diagCodes(m), DiagFunctionLimit) || m.fnWork != maxFunctionWork {
+			t.Errorf("%.50s… = %#v, work %d, diagnostics %v; want the budget spent", expr, got, m.fnWork, m.Diagnostics)
+		}
+	}
+}
+
+// TestCompoundSetsRefuseCostlyNumbers: a set of tuples or objects is ordered by hash, so every
+// later iteration formats its numbers again; a number that is costly to format is refused there.
+func TestCompoundSetsRefuseCostlyNumbers(t *testing.T) {
+	t.Parallel()
+	for _, expr := range []string{`toset([[1e-400]])`, `setunion([{ a = 1e-400 }], [])`, `toset([[1, 2], [1e-400]])`} {
+		m, got := evalLocal(t, expr, nil)
+		if got.IsKnown() || !slices.Equal(diagCodes(m), []DiagCode{DiagFunctionLimit}) {
+			t.Errorf("%s = %#v, diagnostics %v; want unknown with function_limit", expr, got, m.Diagnostics)
+		}
+	}
+	// Ordinary numbers in compound sets, and costly numbers in sets of numbers, are fine.
+	for _, expr := range []string{`length(toset([[0.1], [0.2], [1e-100]]))`, `length(toset([1e-400, 2e-400]))`} {
+		m, got := evalLocal(t, expr, nil)
+		if len(m.Diagnostics) != 0 || !got.IsKnown() {
+			t.Errorf("%s = %#v, diagnostics %v; want known", expr, got, m.Diagnostics)
+		}
+	}
+}
+
+// TestSetBuildBudgetBoundary: toset(["a", "b"]) costs building the set in the type pass
+// (2 elements × 5), then its argument (5), building the set again (10) and its result (7), and
+// is refused with one unit less.
+func TestSetBuildBudgetBoundary(t *testing.T) {
+	t.Parallel()
+	arg := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	m := &ParsedModule{fnWork: maxFunctionWork - 32}
+	if got, limited := boundedCall(t, m, "toset", arg); limited || got.LengthInt() != 2 || m.fnWork != maxFunctionWork {
+		t.Errorf("toset with 32 work left = %#v (limited %v, work %d)", got, limited, m.fnWork)
+	}
+	m = &ParsedModule{fnWork: maxFunctionWork - 31}
+	if got, limited := boundedCall(t, m, "toset", arg); !limited || got.IsKnown() {
+		t.Errorf("toset with 31 work left = %#v (limited %v), want unknown", got, limited)
+	}
+}
+
+// TestSetBuildTypeChecksBudget: the return type is decided before the call, and converting the
+// arguments for it builds the set, so a call the budget refuses is not converted there either.
+func TestSetBuildTypeChecksBudget(t *testing.T) {
+	t.Parallel()
+	m := &ParsedModule{fnWork: maxFunctionWork - 14}
+	arg := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	for _, name := range []string{"setunion", "distinct"} {
+		ty, err := m.functions(nil, nil)[name].ReturnTypeForValues([]cty.Value{arg})
+		if err != nil || ty != cty.DynamicPseudoType {
+			t.Errorf("%s type with 14 work left = %#v, %v; want dynamic", name, ty, err)
+		}
+	}
+	m.fnWork = maxFunctionWork - 15
+	if ty, err := m.functions(nil, nil)["setunion"].ReturnTypeForValues([]cty.Value{arg}); err != nil || !ty.Equals(cty.Set(cty.String)) {
+		t.Errorf("setunion type with 15 work left = %#v, %v; want set of string", ty, err)
+	}
+}
+
+// TestSetFunctionsKeepSensitivity: a set built from a sensitive element is sensitive.
+func TestSetFunctionsKeepSensitivity(t *testing.T) {
+	t.Parallel()
+	vars := map[string]Variable{"s": {Value: cty.StringVal("secret").Mark(SensitiveMark)}}
+	for _, expr := range []string{
+		`toset(["a", var.s])`,
+		`distinct(["a", var.s])`,
+		`setunion(["a"], [var.s])`,
+		`setintersection(["a", var.s], ["a"])`,
+		`setsubtract(["a"], [var.s])`,
+	} {
+		m, got := evalLocal(t, expr, vars)
+		if len(m.Diagnostics) != 0 || !got.IsKnown() || !got.ContainsMarked() {
+			t.Errorf("%s = %#v, diagnostics %v; want known and sensitive", expr, got, m.Diagnostics)
 		}
 	}
 }

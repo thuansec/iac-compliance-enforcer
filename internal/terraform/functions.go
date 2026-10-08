@@ -44,8 +44,7 @@ const (
 // Only functions whose semantics match Terraform's, and whose cost the
 // argument and result sizes bound, are listed; docs/reference/terraform-functions.md documents
 // the table, and every other function evaluates as unknown. Keep both in sync. Functions that
-// build sets are left out: cty hashes numbers with ten significant digits, so a set of close
-// numbers compares every pair at a cost that grows with their precision.
+// build sets are charged by setBuildCosts.
 var supportedFunctions = map[string]function.Function{
 	// Terraform's own semantics, implemented in functions_terraform.go and functions_network.go
 	"base64decode": base64DecodeFunc,
@@ -75,26 +74,31 @@ var supportedFunctions = map[string]function.Function{
 	"trimsuffix": stdlib.TrimSuffixFunc,
 	"upper":      stdlib.UpperFunc,
 	// collection
-	"chunklist":    stdlib.ChunklistFunc,
-	"coalescelist": stdlib.CoalesceListFunc,
-	"compact":      stdlib.CompactFunc,
-	"concat":       stdlib.ConcatFunc,
-	"contains":     stdlib.ContainsFunc,
-	"element":      stdlib.ElementFunc,
-	"flatten":      stdlib.FlattenFunc,
-	"keys":         stdlib.KeysFunc,
-	"merge":        stdlib.MergeFunc,
-	"range":        stdlib.RangeFunc,
-	"reverse":      stdlib.ReverseListFunc,
-	"slice":        stdlib.SliceFunc,
-	"sort":         stdlib.SortFunc,
-	"values":       stdlib.ValuesFunc,
-	"zipmap":       stdlib.ZipmapFunc,
+	"chunklist":       stdlib.ChunklistFunc,
+	"coalescelist":    stdlib.CoalesceListFunc,
+	"compact":         stdlib.CompactFunc,
+	"concat":          stdlib.ConcatFunc,
+	"contains":        stdlib.ContainsFunc,
+	"distinct":        stdlib.DistinctFunc,
+	"element":         stdlib.ElementFunc,
+	"flatten":         stdlib.FlattenFunc,
+	"keys":            stdlib.KeysFunc,
+	"merge":           stdlib.MergeFunc,
+	"range":           stdlib.RangeFunc,
+	"reverse":         stdlib.ReverseListFunc,
+	"setintersection": stdlib.SetIntersectionFunc,
+	"setsubtract":     stdlib.SetSubtractFunc,
+	"setunion":        stdlib.SetUnionFunc,
+	"slice":           stdlib.SliceFunc,
+	"sort":            stdlib.SortFunc,
+	"values":          stdlib.ValuesFunc,
+	"zipmap":          stdlib.ZipmapFunc,
 	// type conversion
 	"tobool":   stdlib.MakeToFunc(cty.Bool),
 	"tolist":   stdlib.MakeToFunc(cty.List(cty.DynamicPseudoType)),
 	"tomap":    stdlib.MakeToFunc(cty.Map(cty.DynamicPseudoType)),
 	"tonumber": stdlib.MakeToFunc(cty.Number),
+	"toset":    stdlib.MakeToFunc(cty.Set(cty.DynamicPseudoType)),
 	"tostring": stdlib.MakeToFunc(cty.String),
 	// encoding
 	"jsondecode": stdlib.JSONDecodeFunc,
@@ -124,6 +128,17 @@ var callCosts = map[string]callCost{
 	"format":     formatCost,
 	"formatlist": formatListCost,
 	"index":      setComparisonCost,
+}
+
+// setBuildCosts lists the functions that build sets or compare every pair of elements, from
+// their arguments or while converting them. Their work is charged before the arguments are
+// converted, both when the call's type is decided and when it runs.
+var setBuildCosts = map[string]callCost{
+	"distinct":        setBuildCost,
+	"setintersection": setBuildCost,
+	"setsubtract":     setBuildCost,
+	"setunion":        setBuildCost,
+	"toset":           setBuildCost,
 }
 
 // unknownFunction stands in for every function iace does not evaluate. Its parameters do not
@@ -169,17 +184,17 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 	if m.fns == nil {
 		m.fns = make(map[string]function.Function, len(supportedFunctions)+len(unboundedFunctions))
 		for name, f := range supportedFunctions {
-			m.fns[name] = m.bounded(f, callCosts[name])
+			m.fns[name] = m.bounded(f, setBuildCosts[name], callCosts[name])
 		}
 		for name, f := range unboundedFunctions {
 			m.fns[name] = f
 		}
 		for name, f := range m.fileFunctions() {
-			m.fns[name] = m.bounded(f, nil)
+			m.fns[name] = m.bounded(f, nil, nil)
 		}
-		m.fns["replace"] = m.bounded(m.replaceFunc(), nil)
-		m.fns["regex"] = m.bounded(m.regexFunc(false), nil)
-		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil)
+		m.fns["replace"] = m.bounded(m.replaceFunc(), nil, nil)
+		m.fns["regex"] = m.bounded(m.regexFunc(false), nil, nil)
+		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil, nil)
 		m.unsupportedSeen = map[string]bool{}
 	}
 	fns := m.fns
@@ -214,12 +229,13 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 }
 
 // bounded wraps f so that a call over the function limits is unknown instead of evaluated, and
-// sets m.fnLimited so evalExpr reports it. cost, if not nil, bounds f's result. The wrapper
-// keeps f's parameters but takes any type: hcl converts arguments to the parameter types
-// before a call, and converting a large number to a string, for example, costs as much as the
-// number's digits, so the wrapper converts them itself once their size is checked. cty then
-// handles unknown, null and marked arguments exactly as for f.
-func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Function {
+// sets m.fnLimited so evalExpr reports it. cost, if not nil, bounds f's result; before, if not
+// nil, bounds work that converting the arguments or calling f can do, and is checked before
+// they are converted. The wrapper keeps f's parameters but takes any type: hcl converts
+// arguments to the parameter types before a call, and converting a large number to a string,
+// for example, costs as much as the number's digits, so the wrapper converts them itself once
+// their size is checked. cty then handles unknown, null and marked arguments exactly as for f.
+func (m *ParsedModule) bounded(f function.Function, before, cost callCost) function.Function {
 	params := slices.Clone(f.Params())
 	for i := range params {
 		params[i].Type = cty.DynamicPseudoType
@@ -230,13 +246,44 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 		p.Type = cty.DynamicPseudoType
 		varParam = &p
 	}
+	// measure returns the arguments' sizes, their total and the work before converting them.
+	// measured is false when the arguments together pass the size limit, and affordable when
+	// the module can also pay for that work; a call is converted only then.
+	measure := func(args []cty.Value) (sizes []int, total, pre int, measured, affordable bool) {
+		sizes, measured = measureArgs(args, m.functionArgsLimit())
+		if !measured {
+			return sizes, 0, 0, false, false
+		}
+		for _, n := range sizes {
+			total += n
+		}
+		if before != nil {
+			_, pre = before(args, sizes)
+		}
+		return sizes, total, pre, true, m.canChargeFunctionWork(total, pre)
+	}
 	return function.New(&function.Spec{
 		Description: f.Description(),
 		Params:      params,
 		VarParam:    varParam,
 		Type: func(args []cty.Value) (cty.Type, error) {
-			conv, _, ok, err := convertArgs(f, args, m.functionArgsLimit())
-			if err != nil || !ok {
+			// cty calls Impl only when every argument is known, so the conversion here,
+			// which can build sets, is charged here: a call with an unknown argument would
+			// otherwise repeat it for free.
+			_, total, pre, measured, affordable := measure(args)
+			if !affordable {
+				m.fnLimited = true // Impl may not run: cty skips it when an argument is unknown
+				if before != nil {
+					m.spendFunctionWork(total)
+					if !measured {
+						m.spendFunctionWork(m.functionArgsLimit())
+					}
+				}
+				return cty.DynamicPseudoType, nil
+			}
+			m.spendFunctionWork(pre)
+			conv, err := convertArgs(f, args)
+			if err != nil {
 				return cty.DynamicPseudoType, err
 			}
 			return f.ReturnTypeForValues(conv)
@@ -251,25 +298,26 @@ func (m *ParsedModule) bounded(f function.Function, cost callCost) function.Func
 				return unknown, nil
 			}
 			argsLimit := m.functionArgsLimit()
-			conv, sizes, ok, err := convertArgs(f, args, argsLimit)
-			if err != nil {
-				return cty.NilVal, err
-			}
-			total := 0
-			for _, n := range sizes {
-				total += n
-			}
-			if !ok {
+			sizes, total, pre, measured, affordable := measure(args)
+			if !measured {
 				// Measuring stopped at argsLimit; a refused call still spends that work, so
 				// refused calls cannot repeat for free.
 				m.spendFunctionWork(argsLimit)
 				return limited()
 			}
+			if !affordable {
+				m.spendFunctionWork(total)
+				return limited()
+			}
+			conv, err := convertArgs(f, args)
+			if err != nil {
+				return cty.NilVal, err
+			}
 			out, work := 0, 0
 			if cost != nil {
 				out, work = cost(conv, sizes)
 			}
-			if out > maxFunctionValueSize || !m.chargeFunctionWork(total, work) {
+			if out > maxFunctionValueSize || !m.chargeFunctionWork(total, pre, work) {
 				m.spendFunctionWork(total)
 				return limited()
 			}
@@ -301,22 +349,27 @@ func (m *ParsedModule) functionArgsLimit() int {
 	return min(maxFunctionValueSize, maxFunctionWork-m.fnWork)
 }
 
-// convertArgs measures args, which together may not pass limit, and then converts each to the
-// type of f's parameter, as hcl would before calling f. ok is false when the arguments are too
-// large; nothing is converted then.
-func convertArgs(f function.Function, args []cty.Value, limit int) (conv []cty.Value, sizes []int, ok bool, err error) {
+// measureArgs returns the size of each of args, which together may not pass limit. ok is false
+// when they do; measuring stops there.
+func measureArgs(args []cty.Value, limit int) (sizes []int, ok bool) {
 	sizes = make([]int, len(args))
 	total := 0
 	for i, a := range args {
 		n, ok := valueSize(a, limit-total, maxNesting)
 		if !ok {
-			return nil, sizes, false, nil
+			return sizes, false
 		}
 		sizes[i] = n
 		total += n
 	}
+	return sizes, true
+}
+
+// convertArgs converts each of args to the type of f's parameter, as hcl would before calling
+// f. Measure the arguments first: converting can cost more than their size.
+func convertArgs(f function.Function, args []cty.Value) ([]cty.Value, error) {
 	params, varParam := f.Params(), f.VarParam()
-	conv = make([]cty.Value, len(args))
+	conv := make([]cty.Value, len(args))
 	for i, a := range args {
 		var ty cty.Type
 		switch {
@@ -325,27 +378,38 @@ func convertArgs(f function.Function, args []cty.Value, limit int) (conv []cty.V
 		case varParam != nil:
 			ty = varParam.Type
 		default:
-			return nil, sizes, false, function.NewArgErrorf(i, "too many arguments")
+			return nil, function.NewArgErrorf(i, "too many arguments")
 		}
+		var err error
 		if conv[i], err = convert.Convert(a, ty); err != nil {
-			return nil, sizes, false, function.NewArgError(i, err)
+			return nil, function.NewArgError(i, err)
 		}
 	}
-	return conv, sizes, true, nil
+	return conv, nil
 }
 
 // chargeFunctionWork adds work to the module's function work, unless that would pass
 // maxFunctionWork. Each amount is at most maxFunctionWork, so the sum cannot overflow.
 func (m *ParsedModule) chargeFunctionWork(amounts ...int) bool {
+	if !m.canChargeFunctionWork(amounts...) {
+		return false
+	}
+	m.fnWork += workSum(amounts)
+	return true
+}
+
+// canChargeFunctionWork reports whether chargeFunctionWork would charge amounts.
+func (m *ParsedModule) canChargeFunctionWork(amounts ...int) bool {
+	return workSum(amounts) <= maxFunctionWork-m.fnWork
+}
+
+// workSum adds amounts, each capped just above maxFunctionWork so the sum cannot overflow.
+func workSum(amounts []int) int {
 	sum := 0
 	for _, n := range amounts {
 		sum += min(n, maxFunctionWork+1)
 	}
-	if sum > maxFunctionWork-m.fnWork {
-		return false
-	}
-	m.fnWork += sum
-	return true
+	return sum
 }
 
 // spendFunctionWork charges n, or whatever work is left if that is less.
@@ -401,6 +465,105 @@ func setComparisonCost(args []cty.Value, sizes []int) (out, work int) {
 		return 0, 0
 	}
 	return 0, saturatingMul(sizes[0], sizes[1])
+}
+
+// setBuildCost charges building a set from the elements of every argument (toset, the set
+// functions) or comparing every pair of them (distinct). cty hashes a number by its first ten
+// significant digits, so close numbers share a hash, and each element added is compared with
+// every element of its hash: the work is bounded by the number of elements times their total
+// comparison weight. When the elements can hold sets, comparing two of them compares their
+// elements pairwise in turn, so the work is bounded by the total weight squared.
+func setBuildCost(args []cty.Value, _ []int) (out, work int) {
+	elems, weight, nested, compound, costliest := 0, 0, false, false, 0
+	for _, a := range args {
+		w, c := comparisonWeight(a)
+		weight, costliest = min(weight+w, maxFunctionWork+1), max(costliest, c)
+		a, _ = a.Unmark()
+		if !a.IsKnown() || a.IsNull() {
+			continue
+		}
+		ty := a.Type()
+		switch {
+		case ty.IsCollectionType():
+			nested = nested || typeHasSet(ty.ElementType())
+			compound = compound || !ty.ElementType().IsPrimitiveType()
+		case ty.IsTupleType():
+			nested = nested || slices.ContainsFunc(ty.TupleElementTypes(), typeHasSet)
+			compound = compound || slices.ContainsFunc(ty.TupleElementTypes(), func(et cty.Type) bool { return !et.IsPrimitiveType() })
+		default:
+			continue // not a collection: converting it fails
+		}
+		elems += a.LengthInt()
+	}
+	if compound && costliest > maxSetNumberFormatCost {
+		// cty orders a set of compound values by their hashes, so every later iteration of the
+		// set hashes its numbers again, at a cost no later size check sees.
+		return 0, maxFunctionWork + 1
+	}
+	if nested {
+		return 0, saturatingMul(weight, weight)
+	}
+	return 0, saturatingMul(elems, weight)
+}
+
+// maxSetNumberFormatCost is the largest numberFormatCost of a number inside a set element
+// that is not a primitive value. Every number with up to 1,024 fractional bits passes (0.1 has
+// about 515 at cty's 512-bit precision).
+const maxSetNumberFormatCost = (1024/fracBitsPerUnitRoot + 1) * (1024/fracBitsPerUnitRoot + 1)
+
+// comparisonWeight bounds the work of comparing or hashing v once: its valueSize, plus the
+// formatting cost of each number in it. costliest is the largest formatting cost of one
+// number. v must have been measured, which bounds the walk.
+func comparisonWeight(v cty.Value) (weight, costliest int) {
+	stack := []cty.Value{v}
+	for len(stack) > 0 && weight <= maxFunctionWork {
+		val, _ := stack[len(stack)-1].Unmark()
+		stack = stack[:len(stack)-1]
+		weight++
+		ty := val.Type()
+		switch {
+		case !val.IsKnown() || val.IsNull():
+		case ty == cty.String:
+			weight += len(val.AsString())
+		case ty == cty.Number:
+			c := numberFormatCost(val)
+			weight += numberDigits(val) + c
+			costliest = max(costliest, c)
+		case ty.IsCollectionType() || ty.IsObjectType() || ty.IsTupleType():
+			for elems := val.ElementIterator(); elems.Next(); {
+				k, ev := elems.Element()
+				if k, _ := k.Unmark(); k.Type() == cty.String && k.IsKnown() && !k.IsNull() {
+					weight += len(k.AsString())
+				}
+				stack = append(stack, ev)
+			}
+		}
+	}
+	return min(weight, maxFunctionWork+1), costliest
+}
+
+// fracBitsPerUnitRoot calibrates numberFormatCost: formatting a number with 2^18 fractional
+// bits (1e-78000) took 1.9s, about 10.6M work units, so one format covers at least 80² squared
+// bits per unit. A set function formats each number several times per charge (the type pass,
+// the conversion, setunion adding every element again, hashing compound elements while
+// sorting), so 32² keeps a timing sweep at or under about 120ns per unit.
+const fracBitsPerUnitRoot = 32
+
+// numberFormatCost bounds the work of writing a number as decimal text beyond its digits. cty
+// compares two numbers that are not integers by their exact decimal text, and hashes them by a
+// rounded one, and math/big builds the exact expansion by shifting it 60 bits at a time, which
+// is quadratic in the number's fractional bits: one comparison of 1e-78000 takes seconds.
+func numberFormatCost(v cty.Value) int {
+	f := v.AsBigFloat()
+	if f.IsInf() || f.Sign() == 0 {
+		return 0
+	}
+	frac := int(f.MinPrec()) - f.MantExp(nil)
+	if frac <= 0 {
+		return 0
+	}
+	q := frac/fracBitsPerUnitRoot + 1
+	return saturatingMul(q, q)
 }
 
 // typeHasSet reports whether a value of type ty can hold a set.

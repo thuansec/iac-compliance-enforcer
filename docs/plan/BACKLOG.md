@@ -196,13 +196,14 @@ locations and without executing anything.
     - IPv4 and IPv6 prefixes with Terraform's documented semantics (negative hostnum counts from the end, newbits limits, cidrnetmask IPv4 only), implemented with net/netip and math/big, with tests for every error case
   - attempts: 1
   - result: cidrsubnet, cidrhost and cidrnetmask with net/netip and math/big from Terraform's docs; strict parsing, newbits ≤ 32, negative hostnum from the end; IPv4-mapped prefixes and results are unknown (Terraform prints them as IPv4 text); errors never quote arguments
-- [ ] T-0105f · Add distinct and the set functions with a collision-proof cost bound
+- [x] T-0105f · Add distinct and the set functions with a collision-proof cost bound
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0105b
   - accept:
     - distinct, toset, setunion, setintersection and setsubtract with a cost bound that holds when cty number hashes collide (a set of close numbers compares every pair, found in the T-0105a review): pairwise comparisons × element size are charged before the work happens
     - a regression test with 1,024 numbers differing past ten significant digits stays within the module budget
-  - attempts: 0
+  - attempts: 1
+  - result: distinct, toset, setunion, setintersection and setsubtract in the bounded table; a `before` cost is checked before arguments are converted and charged in both the type pass and the call; setBuildCost charges elements × comparison weight (weight² for nested sets), where numbers weigh their quadratic decimal formatting; compound sets with costly numbers are refused; follow-up T-0117
 - [ ] T-0106 · Expand count, for_each and dynamic blocks
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0105c
@@ -277,6 +278,14 @@ locations and without executing anything.
   - accept:
     - template interpolation and operators no longer format, convert or compare numbers whose decimal digits pass the value-size limit (T-0105a review: `"${1e2000000}-"` takes 1.6s, and multiplying locals squares the magnitude per local); such an expression is unknown with a limit warning
     - number literals are checked where they are lexed, and tests cover templates, comparisons and a chain of multiplying locals, each finishing within the per-module time budget
+  - attempts: 0
+- [ ] T-0117 · Charge the decimal formatting of numbers with many fractional bits
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0105f
+  - accept:
+    - formatting, comparing or hashing a number that is not an integer costs time quadratic in its fractional bits (math/big's exact decimal expansion; found in the T-0105f work: one comparison or `tostring` of `1e-78000` takes 1.9s while its size is 78k units); tostring, jsonencode, format, formatlist, contains, index, `==`/`!=` and templates charge numberFormatCost as the set functions do, or such a value is unknown with a limit warning
+    - conversions in the type pass are charged before they run, as T-0105f does for the set functions: a bounded function whose parameter types convert numbers (`join`, `formatlist`, `concat` into strings, …) formats them when its type is decided, and cty skips the call when another argument is unknown (T-0105f review: `[for i in range(3) : join(var.u, [1e-40000])]` took 1.37s for 6 work units); tested with an unknown argument in a `for` loop
+    - a test per path with `1e-78000` finishes within the per-module time budget, and the reference's worst-case note drops its T-0117 exception
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
