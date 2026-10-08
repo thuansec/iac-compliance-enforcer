@@ -25,6 +25,7 @@ function.
 | type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `tostring`, `try` |
 | encoding | `base64decode`\*, `base64encode`\*, `jsondecode`, `jsonencode` |
 | numeric | `abs`, `max`, `min`, `signum` |
+| filesystem | `file`\*, `fileexists`\*, `templatefile`\* |
 
 ## Not evaluated yet
 
@@ -37,8 +38,6 @@ These are unknown today. The backlog task that adds each is in brackets.
   [T-0105f]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
   number by its first ten significant digits, so a set of close numbers compares every pair,
   and comparing two numbers costs as much as their decimal digits.
-- Filesystem functions, confined to the module directory [T-0105c]: `file`, `fileexists`,
-  `templatefile`.
 
 ## Always unknown
 
@@ -93,3 +92,36 @@ falling back to its default, and `index` over a list holding a sensitive element
 more than Terraform does: `length`, `lookup`, `coalesce` and the string tests take on every
 sensitive mark anywhere inside their arguments. So `lookup(obj, "b")` is sensitive when only
 `obj.a` is. This errs on the side of hiding values.
+
+## Filesystem functions
+
+`file`, `fileexists` and `templatefile` read only inside the module's directory, through a
+sub-root of the scan root (`os.Root`). Neither `..` nor a symlink can leave that directory, even
+to a file elsewhere in the repository. Relative paths resolve against the module directory,
+which is Terraform's working directory for a root module, and `path.module` is `"."`. Child
+module instances will resolve against the root module (T-0107). `path.root` and `path.cwd` are
+unknown.
+
+| case | result |
+|---|---|
+| absolute, `~`, drive-letter or `..`-escaping path | unknown, `file_outside_module` warning |
+| missing file (`file`, `templatefile`), directory, symlink leaving the module, file over 1 MiB, not UTF-8 | unknown, `file_unreadable` warning |
+| `fileexists` on a missing path | `false` |
+| template syntax error, a variable not in `vars`, `var.*` or `local.*` in the template, `templatefile` inside a template | unknown, `template_error` warning at the template file |
+| `vars` not a map or object, or a key that is not an identifier | unknown, `evaluation` warning (as in Terraform, an argument error) |
+| `vars` or the path not wholly known | unknown |
+
+Each call charges 1 KiB of function work before it touches the filesystem. A read never reads
+more than the work left (a larger file is a `function_limit`), and charges its size. The result
+is bounded like any function result, so a file over 2^18 bytes is read but unknown.
+
+Differences from Terraform, all on the side of unknown:
+- A template whose whole text is one interpolation (`${list}`) returns that value in Terraform.
+  iace converts the result to a string, so a number becomes a string, and a list or object is a
+  `template_error`.
+- A missing file is an error in Terraform, so `try(file("x"), "")` falls back to `""`. In
+  iace it is unknown, and `try` cannot see past an unknown, so the result is unknown too.
+
+Templates pass the same nesting and operator guard as expressions and use the same bounded
+function table. Their own diagnostics, such as `unsupported_function`, point at the template
+file.

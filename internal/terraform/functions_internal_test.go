@@ -184,7 +184,7 @@ func TestFunctionTableMatchesReference(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	if diff := cmp.Diff(tableNames(), names); diff != "" {
+	if diff := cmp.Diff(slices.Sorted(slices.Values(append(tableNames(), fileFunctionNames...))), names); diff != "" {
 		t.Errorf("reference table (-code +doc):\n%s", diff)
 	}
 }

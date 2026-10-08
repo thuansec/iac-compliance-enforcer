@@ -673,3 +673,38 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   sorts it at a cost per comparison. The test now asserts only the outcome (unknown with
   function_limit), which fails without the charge.
 - Next: T-0105c (file functions confined to the module directory).
+
+## 2026-10-08 · T-0105c · done
+- What: file(), fileexists() and templatefile(), confined to the module directory.
+  - fsutil gains Root.OpenRoot. Each call opens a sub-root of the module directory, so neither
+    `..` nor a symlink can leave it, even to a file elsewhere in the repository. Empty,
+    absolute, `\`, `~` and drive-letter paths are refused before any I/O.
+  - Relative paths resolve against the module directory, and path.module is ".". path.root and
+    path.cwd stay unknown. T-0107 will rebase paths for child module instances.
+  - Problems are unknown with a warning, never an error, emitted at the calling expression:
+    - file_outside_module, for a refused path;
+    - file_unreadable: missing, over 1 MiB, not a regular file, not UTF-8, or a symlink escape;
+    - template_error, at the template file: syntax, unknown variable, var.*, or a nested
+      templatefile.
+  - Templates pass the nesting and operator guard and use the module's bounded function table.
+  - Bounds: each call charges 1 KiB before touching the filesystem, reads are capped at the
+    remaining work (a larger file is refused by size, unread), and every byte read is charged.
+- Files: internal/fsutil/{fsutil.go,fsutil_unix_test.go}, internal/terraform/{functions_files.go,
+  functions_files_internal_test.go,functions_files_unix_test.go,functions.go,evalguard.go,
+  parse.go,locals.go,locals_test.go,functions_internal_test.go}, docs/reference/terraform-functions.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.0%. 32 file-function cases plus
+  symlink-escape, sensitivity, size-boundary and budget tests. Mutation checks each fail a
+  test: reading via the scan root instead of the sub-root, no UTF-8 check, nested templatefile
+  allowed, no `..` check, no read charge, no read cap, charging after the UTF-8 check.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED, 1 major and 4 minor.
+    - Major: once the budget was below a file's size, reads kept happening without a charge
+      (about 130k 1 MiB reads per module).
+    - Minor: fileexists was uncharged; T-0109 did not map the new codes; the root lifetime was
+      undocumented; a dead null branch.
+    - All fixed, and the fidelity differences were documented.
+  - Round 2: CHANGES_REQUIRED, 1 major: a non-UTF-8 file was read without being charged. Fixed by
+    charging before the UTF-8 check.
+  - Round 3: APPROVE.
+- Next: T-0105d (replace, regex and regexall with bounded regular expressions).

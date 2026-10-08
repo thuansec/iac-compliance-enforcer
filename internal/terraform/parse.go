@@ -90,15 +90,23 @@ type ParsedModule struct {
 
 	// src holds each file's bytes, so expressions can be checked before evaluation.
 	src map[string][]byte
+	// root is the scan root the module was read from, which the filesystem functions read
+	// through; nil means they read nothing.
+	root *fsutil.Root
 
 	// fns is the bounded function table, built at the first evaluation that calls a function;
 	// unsupportedSeen holds the unsupported function names already reported.
 	fns             map[string]function.Function
 	unsupportedSeen map[string]bool
 	// fnWork is the work charged to function calls so far, at most maxFunctionWork; fnLimited
-	// records that a call during the current evaluation was over a function limit.
+	// records that a call during the current evaluation was over a function limit, and
+	// fnDiags the warnings its calls raised.
 	fnWork    int
 	fnLimited bool
+	fnDiags   []pendingDiag
+	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
+	// they were charged.
+	fileBytesRead int
 }
 
 // HasErrors reports whether any diagnostic is an error.
@@ -131,9 +139,11 @@ var topLevelSchema = &hcl.BodySchema{
 // diagnostics, never errors. A file the parser itself rejects contributes no blocks; structural
 // errors (wrong labels, top-level arguments) keep the file's valid blocks, and the module still
 // HasErrors. Override files are reported, checked for syntax and nesting, and not merged. A file
-// that cannot be read (removed, grown past the limit) or a cancelled context is an error.
+// that cannot be read (removed, grown past the limit) or a cancelled context is an error. The
+// module keeps root for the filesystem functions (file, fileexists, templatefile), so the caller
+// keeps it open until evaluation is done; once it is closed, those calls are unknown.
 func ParseModule(ctx context.Context, root *fsutil.Root, dir Dir, limits Limits) (*ParsedModule, error) {
-	m := &ParsedModule{Dir: dir.Path}
+	m := &ParsedModule{Dir: dir.Path, root: root}
 	parser := hclparse.NewParser()
 	for _, name := range dir.Files {
 		if err := ctx.Err(); err != nil {

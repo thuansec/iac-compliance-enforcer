@@ -293,7 +293,7 @@ locals {
   fn        = timestamp()
   missing   = local.nope
   workspace = "${terraform.workspace}-x"
-  where     = path.module
+  where     = path.cwd
 }
 `,
 	}, terraform.VarOptions{})
