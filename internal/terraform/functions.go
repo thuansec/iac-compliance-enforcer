@@ -47,9 +47,12 @@ const (
 // build sets are left out: cty hashes numbers with ten significant digits, so a set of close
 // numbers compares every pair at a cost that grows with their precision.
 var supportedFunctions = map[string]function.Function{
-	// Terraform's own semantics, implemented in functions_terraform.go
+	// Terraform's own semantics, implemented in functions_terraform.go and functions_network.go
 	"base64decode": base64DecodeFunc,
 	"base64encode": base64EncodeFunc,
+	"cidrhost":     cidrHostFunc,
+	"cidrnetmask":  cidrNetmaskFunc,
+	"cidrsubnet":   cidrSubnetFunc,
 	"coalesce":     coalesceFunc,
 	"endswith":     endsWithFunc,
 	"index":        indexFunc,
