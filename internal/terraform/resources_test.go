@@ -312,12 +312,12 @@ resource "aws_db_instance" "db" {
 	}
 
 	j := resource(t, res, "aws_s3_bucket.j")
-	if j.Value.IsKnown() || len(j.Unknown) != 1 || len(j.Unknown[0]) != 0 || j.File != "json.tf.json" {
-		t.Errorf("JSON resource = %#v, unknown %v; want wholly unknown", j.Value, j.Unknown)
+	// JSON bodies decode too (T-0106d).
+	if !attr(t, j.Value, "bucket").RawEquals(cty.StringVal("x")) || len(j.Unknown) != 0 || j.File != "json.tf.json" {
+		t.Errorf("JSON resource = %#v, unknown %v", j.Value, j.Unknown)
 	}
 
 	want := []string{
-		"json_body_not_decoded@json.tf.json:1",
 		"evaluation@main.tf:30",
 		"evaluation@main.tf:31",
 	}

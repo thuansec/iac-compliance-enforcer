@@ -104,7 +104,8 @@ type Resource struct {
 	Provider string `json:"provider"`
 	// ProviderConfig is "aws.eu" when aliased and "" for the default configuration.
 	ProviderConfig string `json:"provider_config"`
-	// Values holds attribute values. Nested blocks are arrays of objects; unknown values are nil.
+	// Values holds attribute values. Nested blocks are arrays of objects, except that in .tf.json
+	// input a block written as one object stays an object (ADR 0006); unknown values are nil.
 	Values Values `json:"values"`
 	// Unknown lists the paths of unknown values; an unknown path covers all its descendants.
 	Unknown []Path `json:"unknown"`

@@ -228,16 +228,24 @@ locations and without executing anything.
     - an unknown for_each produces one entry evaluated with an unknown iterator and marks the block path unknown; expansion counts toward the instance cap and the size limits
   - attempts: 1
   - result: dynamic blocks expand as hcl's dynblock does (iterator key/value per collection kind, iterator shadowing every root, sensitive for_each marking the entries, nested dynamics), merged with static blocks in source order; unknown for_each gives one entry with the type path unknown; invalid forms make the type unknown (invalid_expansion); entries share the per-block (10,000) and module structure/work limits (expansion_limit)
-- [ ] T-0106d · Decode .tf.json resource bodies
+- [x] T-0106d · Decode .tf.json resource bodies
   - skills: iace-terraform-parsing, iace-architecture, iace-testing
   - depends: T-0106c
   - accept:
     - resource and data bodies in `.tf.json` files decode like HCL bodies; without a schema an object or array of objects may be a nested block or a map attribute, so the heuristic is chosen and recorded in an ADR (with the input-document consequence for policies) and tested both ways
-    - meta-arguments in JSON (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`, `dynamic`) are handled as in HCL
+    - meta-arguments in JSON (`count`, `for_each`, `provider`, `depends_on`, `lifecycle`) are handled as in HCL; JSON `dynamic` blocks are unknown with a warning until T-0106e
+  - attempts: 1
+  - result: JSON resource bodies decode through a shared resourceBody interface: lifecycle/provisioner/connection/dynamic as blocks, every other property as an attribute kept in its written shape (ADR 0006, amending ADR 0004 rule 1, with path helpers and JSON fixtures required in T-0201/T-0205); meta-arguments as in HCL; JSON dynamic blocks, top-level or nested, are unknown with json_dynamic_not_expanded until T-0106e; duplicate or malformed lifecycle blocks are ignored with a warning
+- [ ] T-0106e · Expand dynamic blocks written in JSON
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0106d
+  - accept:
+    - `"dynamic": {"x": {"for_each": …, "iterator": …, "content": {…}}}` in a JSON resource body, a JSON content body, or inside a nested block object (today unknown with json_dynamic_not_expanded) expands as in HCL, through hcl's schema-based block decoding of JSON bodies: iterator scope, sensitive for_each, unknown for_each (one entry, type path unknown), invalid forms (invalid_expansion) and the shared limits; json_dynamic_not_expanded is removed
+    - tests mirror the HCL dynamic tests on JSON input, including an iterator shadowing local
   - attempts: 0
 - [ ] T-0107 · Resolve local and pre-downloaded modules
   - skills: iace-terraform-parsing, iace-security
-  - depends: T-0106c, T-0106d
+  - depends: T-0106c, T-0106e
   - accept:
     - local sources resolve only inside the scan root (an escape leaves the module unresolved with a warning); inputs and outputs flow; depth limit 32; cycles detected
     - remote modules resolve only via .terraform/modules/modules.json; unresolved modules are reported as coverage gaps
@@ -257,7 +265,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error and json_body_not_decoded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error and json_dynamic_not_expanded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -319,11 +327,12 @@ locations and without executing anything.
     - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
     - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
   - attempts: 0
-- [!] T-0110 · Sync the input-document reference with ADR 0004
+- [!] T-0110 · Sync the input-document reference with ADR 0004 and ADR 0006
   - skills: iace-architecture
   - depends: T-0101
   - accept:
     - .claude/skills/iace-architecture/references/input-document.md states the clarifications in ADR 0004 (backend null, `{file, range}` source ranges, `ignore_changes` "*", plan_file only in plan mode, nil inside values is null, gap file ""/line 0)
+    - it states ADR 0006's amendment of rule 1: in .tf.json input a nested block written as one object stays an object (values and unknown/sensitive paths), and rules read nested blocks through the iace.lib.tf path helpers
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 
@@ -337,6 +346,8 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
     - policies/ is seeded from iace-rego-policies `assets/policies/` (package-mirroring layout); policies/embed.go exposes it via go:embed
     - `make capabilities` generates policies/capabilities.json from the pinned OPA, minus the denylist, and a test asserts the denylisted builtins are absent
     - .regal/config.yaml copied from `assets/regal-config.yaml`; `regal lint policies` is clean; `make policy-check policy-test` passes with at least 90% coverage
+    - the path helpers (`value_or`, `is_unknown`, `is_sensitive`, `blocks`) resolve an integer step 0 against an object as the object, and rewrite queried paths against values before matching unknown/sensitive paths (ADR 0006); `blocks(values, name)` returns an array, a one-element array for an object, or an empty array; tests cover both shapes
+    - the rule-writing guide requires `tf.blocks` for every iteration over a nested block's entries; a lint (Regal custom rule or Go test over policies/) rejects rule files that index `values` with a literal `[0]`, or iterate it with `[_]` or `some … in`, instead of the helpers
   - attempts: 0
 - [ ] T-0202 · Load modules and validate rule metadata (fail closed)
   - skills: iace-opa-engine, iace-rego-policies
@@ -366,6 +377,7 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
   - accept:
     - IACE-AWS-EC2-001 (from the asset), IACE-AWS-S3-001 and IACE-AZURE-STORAGE-001, each with Rego tests and pass/fail Terraform fixtures
     - the fixture harness fails if any rule lacks a pass or a fail fixture
+    - every rule has a `.tf.json` fail fixture that writes its nested blocks as single objects, and one with an unknown nested value (ADR 0006); the harness fails any rule, including future ones, that lacks them
   - attempts: 0
 - [ ] T-0206 · Implement `iace scan` with text output and exit codes
   - skills: iace-architecture, iace-reporting, iace-testing, iace-security

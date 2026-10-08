@@ -16,9 +16,9 @@ import (
 
 // Diagnostic codes for resource decoding.
 const (
-	// DiagJSONBodyNotDecoded: a resource written in JSON syntax is not decoded yet (T-0106d),
-	// so its whole value is unknown.
-	DiagJSONBodyNotDecoded DiagCode = "json_body_not_decoded"
+	// DiagJSONDynamicNotExpanded: a dynamic block in JSON syntax is not expanded yet (T-0106e),
+	// so the nested blocks of its type are unknown.
+	DiagJSONDynamicNotExpanded DiagCode = "json_dynamic_not_expanded"
 	// DiagUnknownExpansion: count or for_each is not known statically, so the resource is one
 	// placeholder instance ("type.name[*]") evaluated with an unknown count.index or each.
 	DiagUnknownExpansion DiagCode = "unknown_expansion"
@@ -160,18 +160,21 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 		} else {
 			base.Mode, base.BaseAddress = model.ModeData, "data."+base.Type+"."+base.Name
 		}
-		body, ok := b.Body.(*hclsyntax.Body)
-		if !ok {
-			m.diag(SeverityWarning, DiagJSONBodyNotDecoded, "Resource in JSON syntax not decoded",
-				"iace does not decode resources written in JSON syntax yet, so this resource's values are unknown.",
-				b.File, b.DefRange.Start.Line, b.DefRange.Start.Column)
-			base.Address, base.Value, base.Unknown = base.BaseAddress, cty.DynamicVal, []cty.Path{{}}
-			base.Attributes = map[string]hcl.Range{}
-			out = append(out, base)
-			continue
+		var body resourceBody
+		if syntax, ok := b.Body.(*hclsyntax.Body); ok {
+			body = hclResourceBody{syntax}
+		} else {
+			jb, ok := d.jsonResourceBody(b)
+			if !ok {
+				base.Address, base.Value, base.Unknown = base.BaseAddress, cty.DynamicVal, []cty.Path{{}}
+				base.Attributes = map[string]hcl.Range{}
+				out = append(out, base)
+				continue
+			}
+			body = jb
 		}
-		d.metaArguments(body, &base)
-		cost, structure := instanceCost(body), instanceStructure(body)
+		body.metaArguments(d, &base)
+		cost, structure := body.cost(), body.structure()
 		for i, spec := range d.expand(&base) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -191,7 +194,7 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 			r.Attributes = map[string]hcl.Range{}
 			d.setInstance(spec.vars)
 			d.extraUnknown = nil
-			r.Value = d.body(body, "", nil, &r, true)
+			r.Value = body.decode(d, &r)
 			r.Unknown = mergeUnknown(unknownPaths(r.Value), d.extraUnknown)
 			out = append(out, r)
 		}
@@ -289,41 +292,86 @@ func isMetaArgument(name string) bool {
 	return false
 }
 
-// metaArguments records the meta-arguments of a resource body in r, once for all its instances.
-func (d *resourceDecoder) metaArguments(body *hclsyntax.Body, r *Resource) {
-	for _, a := range sortedSyntaxAttributes(body.Attributes) {
-		d.meta(a, r)
+// resourceBody is a resource body in HCL or JSON syntax.
+type resourceBody interface {
+	// metaArguments records the meta-arguments in r, once for all its instances.
+	metaArguments(d *resourceDecoder, r *Resource)
+	// cost and structure are instanceCost and instanceStructure.
+	cost() int
+	structure() int
+	// decode returns the value of one instance.
+	decode(d *resourceDecoder, r *Resource) cty.Value
+}
+
+// hclResourceBody is a resource body in HCL syntax.
+type hclResourceBody struct{ *hclsyntax.Body }
+
+func (b hclResourceBody) metaArguments(d *resourceDecoder, r *Resource) {
+	for _, a := range sortedSyntaxAttributes(b.Attributes) {
+		d.meta(a.Name, a.Expr, r)
 	}
-	for _, b := range body.Blocks {
-		if b.Type == "lifecycle" {
-			d.lifecycle(b, r)
+	var lifecycles []*hcl.Block
+	for _, blk := range b.Blocks {
+		if blk.Type == "lifecycle" {
+			lifecycles = append(lifecycles, blk.AsHCLBlock())
 		}
+	}
+	d.lifecycles(lifecycles, r)
+}
+
+func (b hclResourceBody) cost() int      { return instanceCost(b.Body) }
+func (b hclResourceBody) structure() int { return instanceStructure(b.Body) }
+func (b hclResourceBody) decode(d *resourceDecoder, r *Resource) cty.Value {
+	return d.body(b.Body, "", nil, r, true)
+}
+
+// lifecycles records the resource's lifecycle block. Terraform allows one; with more, all are
+// ignored with a warning.
+func (d *resourceDecoder) lifecycles(blocks []*hcl.Block, r *Resource) {
+	switch {
+	case len(blocks) > 1:
+		rng := blocks[1].DefRange
+		d.m.diag(SeverityWarning, DiagEvaluation, "Duplicate lifecycle block",
+			"Terraform would reject a second lifecycle block, so iace ignores the lifecycle settings.",
+			rng.Filename, rng.Start.Line, rng.Start.Column)
+	case len(blocks) == 1:
+		// In HCL, nested blocks (preconditions) make JustAttributes report errors and are not
+		// settings. A JSON body has no blocks here, so an error means it is not an object.
+		attrs, diags := blocks[0].Body.JustAttributes()
+		if _, isHCL := blocks[0].Body.(*hclsyntax.Body); diags.HasErrors() && !isHCL {
+			rng := blocks[0].DefRange
+			d.m.diag(SeverityWarning, DiagEvaluation, "Invalid lifecycle block",
+				"Terraform would reject this lifecycle block, so iace ignores the lifecycle settings.",
+				rng.Filename, rng.Start.Line, rng.Start.Column)
+			return
+		}
+		d.lifecycle(sortedAttributes(attrs), r)
 	}
 }
 
-// meta records a in r if it is a meta-argument of the resource body, and reports whether it was.
-func (d *resourceDecoder) meta(a *hclsyntax.Attribute, r *Resource) bool {
-	switch a.Name {
+// meta records the attribute name = expr in r if it is a meta-argument of the resource body.
+func (d *resourceDecoder) meta(name string, expr hcl.Expression, r *Resource) {
+	switch name {
 	case "count":
-		r.Count = a.Expr
+		r.Count = expr
 	case "for_each":
-		r.ForEach = a.Expr
+		r.ForEach = expr
 	case "provider":
-		tr, diags := hcl.AbsTraversalForExpr(a.Expr)
+		tr, diags := hcl.AbsTraversalForExpr(expr)
 		name, ok := traversalAttr(tr, 1)
 		switch {
 		case diags.HasErrors() || len(tr) == 0 || len(tr) > 2 || len(tr) == 2 && !ok:
-			d.invalid(a.Expr, "Invalid provider reference")
+			d.invalid(expr, "Invalid provider reference")
 		case ok:
 			r.ProviderConfig = tr.RootName() + "." + name
 		default:
 			r.ProviderConfig = tr.RootName()
 		}
 	case "depends_on":
-		exprs, diags := hcl.ExprList(a.Expr)
+		exprs, diags := hcl.ExprList(expr)
 		if diags.HasErrors() {
-			d.invalid(a.Expr, "Invalid depends_on")
-			return true
+			d.invalid(expr, "Invalid depends_on")
+			return
 		}
 		for _, e := range exprs {
 			tr, diags := hcl.AbsTraversalForExpr(e)
@@ -340,16 +388,13 @@ func (d *resourceDecoder) meta(a *hclsyntax.Attribute, r *Resource) bool {
 		}
 		slices.Sort(r.DependsOn)
 		r.DependsOn = slices.Compact(r.DependsOn)
-	default:
-		return false
 	}
-	return true
 }
 
 // lifecycle records the lifecycle settings policies inspect. Terraform requires literal
 // values here, so they are evaluated without variables or functions.
-func (d *resourceDecoder) lifecycle(b *hclsyntax.Block, r *Resource) {
-	for _, a := range sortedSyntaxAttributes(b.Body.Attributes) {
+func (d *resourceDecoder) lifecycle(attrs []*hcl.Attribute, r *Resource) {
+	for _, a := range attrs {
 		switch a.Name {
 		case "prevent_destroy":
 			v, diags := d.m.evalExpr(a.Expr, &hcl.EvalContext{})

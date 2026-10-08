@@ -94,7 +94,7 @@
     },
     "paths": {"type": "array", "items": {"$ref": "#/$defs/path"}},
     "values": {
-      "description": "Attribute values. Nested blocks are arrays of objects; unknown values are null and listed in unknown.",
+      "description": "Attribute values. Nested blocks are arrays of objects, except that in .tf.json input a block written as one object stays an object (ADR 0006); unknown values are null and listed in unknown.",
       "type": "object"
     },
     "addresses": {"type": "array", "items": {"type": "string", "minLength": 1}},
