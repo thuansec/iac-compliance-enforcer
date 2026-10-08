@@ -35,6 +35,7 @@ func FuzzParseFile(f *testing.F) {
 		{`{"locals": {"a": "${local.b}", "b": "${module.m.o}", "c": {"k": "${local.a}"}}}`, true},
 		{"locals {\n  a = formatlist(\"%5s\", distinct(concat(split(\",\", \"a,b\"), [jsonencode({ k = 1 })])))\n  b = try(provider::aws::f(local.a), timestamp(), core::upper(\"x\"))\n}\n", false},
 		{`{"locals": {"a": "${format(\"%d\", max(1, 2))}", "b": "${uuid()}"}}`, true},
+		{"resource \"x\" \"d\" {\n  dynamic \"a\" {\n    for_each = { k = [1, 2] }\n    iterator = it\n    content {\n      dynamic \"b\" {\n        for_each = it.value\n        content { v = b.value }\n      }\n    }\n  }\n  dynamic \"c\" {\n    for_each = x.y\n    content {}\n  }\n  dynamic {}\n}\n", false},
 		{"resource \"x\" \"c\" {\n  count = 3\n  a = count.index\n}\nresource \"x\" \"f\" {\n  for_each = { k = [1] }\n  b = each.value[0]\n}\nresource \"x\" \"u\" {\n  for_each = toset([x.c[0].id])\n  count = -1\n}\n", false},
 		{"resource \"x\" \"y\" {\n  provider = a.b.c\n  depends_on = [\"s\", var.x, x.y[0]]\n  dup = 1\n  dup {}\n  lifecycle {\n    ignore_changes = [a[\"b\"][0], all]\n    prevent_destroy = 1\n  }\n  n { m { k = path.module } }\n}\n", false},
 	}

@@ -295,8 +295,9 @@ resource "aws_db_instance" "db" {
 		"json.tf.json": `{"resource": {"aws_s3_bucket": {"j": {"bucket": "x"}}}}`,
 	})
 	sg := resource(t, res, "aws_security_group.sg")
-	if diff := cmp.Diff([]string{"egress", "ingress"}, paths(sg.Unknown)); diff != "" {
-		t.Errorf("dynamic blocks unknown (-want +got):\n%s", diff)
+	// Dynamic blocks merge with static ones in source order (T-0106c).
+	if len(sg.Unknown) != 0 || attr(t, sg.Value, "ingress").LengthInt() != 2 || attr(t, sg.Value, "egress").LengthInt() != 1 {
+		t.Errorf("sg = %#v, unknown %v; want two ingress entries and one egress", sg.Value, paths(sg.Unknown))
 	}
 	if got := attr(t, sg.Value, "name"); !got.RawEquals(cty.StringVal("sg")) {
 		t.Errorf("name = %#v", got)
@@ -317,8 +318,6 @@ resource "aws_db_instance" "db" {
 
 	want := []string{
 		"json_body_not_decoded@json.tf.json:1",
-		"dynamic_block_not_expanded@main.tf:13",
-		"dynamic_block_not_expanded@main.tf:20",
 		"evaluation@main.tf:30",
 		"evaluation@main.tf:31",
 	}

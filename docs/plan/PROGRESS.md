@@ -909,3 +909,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       instanceStructure.
   - T-0113 now names resource instances as an amplifier.
 - Next: T-0106c (dynamic blocks).
+
+## 2026-10-08 · T-0106c · done
+- What: dynamic blocks expand during resource decoding, following hcl's ext/dynblock (which
+  Terraform uses).
+  - Entries merge with static blocks of the same type in source order.
+  - The iterator, named by `iterator` or else the label, is {key, value}: an index for a list
+    or tuple, a key for a map or object, the element for a set.
+  - The iterator shadows any root of its name, `var`/`local`/`path` included. Nested dynamics
+    see outer iterators, which are restored afterwards.
+  - A sensitive for_each marks the entries. Content attribute ranges are recorded under the
+    entry paths.
+  - Unknown for_each, or a set that is not wholly known: one entry with an unknown iterator,
+    and the type path is added to Unknown (mergeUnknown keeps only outermost paths, in value
+    order); unknown_expansion.
+  - Invalid forms make the type unknown (invalid_expansion): no single label, a dynamic
+    lifecycle/provisioner/connection, no for_each, a stray argument or block, not exactly one
+    unlabelled content block, a bad iterator, or a for_each that is null or not a collection.
+  - Limits: 10,000 entries per block. Every entry charges the module structure budget, and
+    each after the first charges the re-evaluation work. A block cut short is expansion_limit,
+    with its type unknown. No entries leave the type absent.
+  - DiagDynamicBlockNotExpanded is removed.
+- Files: internal/terraform/{resources_dynamic.go,resources_dynamic_test.go,
+  resources_dynamic_internal_test.go,resources.go,resources_test.go,fuzz_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. FuzzParseFile with a dynamic seed, 45s, clean.
+  - Mutation checks each fail a test: no per-block cap, no structure check, no work check,
+    unknown path not marked, marks dropped, iterator not restored, a partial set treated as
+    known, iterators not shadowing var/local/path.
+  - Reviewer probes: 100 instances × 1000 × 1000 nested entries stopped at the structure limit
+    in 1.1s with 126 MB live; 16 levels deep took 0.65s with 60 MB.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major (fail-open): an iterator named local/var/path did not shadow those roots, so iace
+      checked a value Terraform does not apply. Fixed; the regression test reproduces it when
+      the fix is reverted.
+    - Minors, both fixed: no at-the-limit entry test; dynamic forms that hcl rejects were
+      accepted.
+  - Round 2: APPROVE, no findings.
+- Next: T-0106d (.tf.json resource bodies, with an ADR on the block-vs-map heuristic).

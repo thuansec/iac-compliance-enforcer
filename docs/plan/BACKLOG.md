@@ -220,13 +220,14 @@ locations and without executing anything.
     - unknown count/for_each yields one placeholder instance (`type.name[*]`, index null) marked count_unknown/for_each_unknown, evaluated with unknown `count.index`/`each.*`; the expansion cap (10,000 instances per resource by default) keeps the first instances and produces a warning
   - attempts: 1
   - result: count and for_each expand into `type.name[0]` / `type.name["key"]` instances (HCL-quoted keys, sorted) with count.index/each bound; sensitive count expands as in Terraform; unknown or invalid expansions are one `[*]` placeholder with unknown_expansion / invalid_expansion; caps of 10,000 instances per resource, 100,000 per module, 2^27 estimated bytes of instance structure and 2^21 bytes of re-evaluated source, each truncated resource reported (expansion_limit); follow-up T-0118
-- [ ] T-0106c · Expand dynamic blocks
+- [x] T-0106c · Expand dynamic blocks
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0106b
   - accept:
     - `dynamic "x" { for_each, iterator, labels, content }` expands into `x` list entries after any static `x` blocks are merged in source order, with the iterator (default: the label) as `x.key`/`x.value`, nested dynamics included; attribute ranges point at the `content` attributes
     - an unknown for_each produces one entry evaluated with an unknown iterator and marks the block path unknown; expansion counts toward the instance cap and the size limits
-  - attempts: 0
+  - attempts: 1
+  - result: dynamic blocks expand as hcl's dynblock does (iterator key/value per collection kind, iterator shadowing every root, sensitive for_each marking the entries, nested dynamics), merged with static blocks in source order; unknown for_each gives one entry with the type path unknown; invalid forms make the type unknown (invalid_expansion); entries share the per-block (10,000) and module structure/work limits (expansion_limit)
 - [ ] T-0106d · Decode .tf.json resource bodies
   - skills: iace-terraform-parsing, iace-architecture, iace-testing
   - depends: T-0106c
@@ -256,7 +257,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error, dynamic_block_not_expanded and json_body_not_decoded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error and json_body_not_decoded → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -317,7 +318,6 @@ locations and without executing anything.
   - accept:
     - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
     - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
-    - when T-0106c expands dynamic blocks, instanceStructure counts each expanded entry, not the dynamic block once
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture

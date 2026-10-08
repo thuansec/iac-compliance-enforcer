@@ -16,9 +16,6 @@ import (
 
 // Diagnostic codes for resource decoding.
 const (
-	// DiagDynamicBlockNotExpanded: a dynamic block is not expanded yet (T-0106c), so the nested
-	// blocks of its type are unknown.
-	DiagDynamicBlockNotExpanded DiagCode = "dynamic_block_not_expanded"
 	// DiagJSONBodyNotDecoded: a resource written in JSON syntax is not decoded yet (T-0106d),
 	// so its whole value is unknown.
 	DiagJSONBodyNotDecoded DiagCode = "json_body_not_decoded"
@@ -123,6 +120,10 @@ type resourceDecoder struct {
 	// maxInstanceStructure.
 	expansionWork int
 	structure     int
+	// iters are the dynamic block iterators in scope; extraUnknown lists paths of the instance
+	// being decoded whose number of entries is unknown (an unknown or truncated dynamic block).
+	iters        map[string]iterator
+	extraUnknown []cty.Path
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.
@@ -189,8 +190,9 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 			r.Address, r.Index = base.BaseAddress+spec.suffix, spec.key
 			r.Attributes = map[string]hcl.Range{}
 			d.setInstance(spec.vars)
-			r.Value = d.body(body, "", &r, true)
-			r.Unknown = unknownPaths(r.Value)
+			d.extraUnknown = nil
+			r.Value = d.body(body, "", nil, &r, true)
+			r.Unknown = mergeUnknown(unknownPaths(r.Value), d.extraUnknown)
 			out = append(out, r)
 		}
 		d.setInstance(nil)
@@ -199,10 +201,11 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 	return out, nil
 }
 
-// body decodes a block body into an object. prefix is the body's dot-joined path, ending in a
-// dot unless empty; top is true for the resource's own body, the only place meta-arguments are.
-// Recursion follows block nesting, which the nesting guard bounds.
-func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource, top bool) cty.Value {
+// body decodes a block body into an object. prefix and path are the body's dot-joined path
+// (ending in a dot unless empty) and its cty path; top is true for the resource's own body, the
+// only place meta-arguments are. Static and dynamic blocks of a type are merged in source
+// order. Recursion follows block nesting, which the nesting guard bounds.
+func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, path cty.Path, r *Resource, top bool) cty.Value {
 	attrs := map[string]cty.Value{}
 	for _, a := range sortedSyntaxAttributes(body.Attributes) {
 		if top && isMetaArgument(a.Name) {
@@ -212,22 +215,16 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource,
 		attrs[a.Name] = d.attribute(a)
 	}
 	blocks := map[string][]cty.Value{}
-	dynamic := map[string]bool{}
+	unknown := map[string]bool{}
 	for _, b := range body.Blocks {
 		switch {
 		case top && (b.Type == "lifecycle" || b.Type == "provisioner" || b.Type == "connection"):
 			continue // lifecycle is recorded by metaArguments; the others run at apply time
 		case b.Type == "dynamic":
-			if len(b.Labels) > 0 {
-				dynamic[b.Labels[0]] = true
-			}
-			d.m.diag(SeverityWarning, DiagDynamicBlockNotExpanded, "Dynamic block not expanded",
-				"iace does not expand dynamic blocks yet, so the nested blocks of this type are unknown.",
-				r.File, b.TypeRange.Start.Line, b.TypeRange.Start.Column)
+			d.dynamic(b, prefix, path, r, blocks, unknown, top)
 			continue
 		}
-		path := fmt.Sprintf("%s%s.%d.", prefix, b.Type, len(blocks[b.Type]))
-		blocks[b.Type] = append(blocks[b.Type], d.body(b.Body, path, r, false))
+		blocks[b.Type] = append(blocks[b.Type], d.nested(b.Type, b.Body, prefix, path, len(blocks[b.Type]), r))
 	}
 	for name, list := range blocks {
 		if _, clash := attrs[name]; clash {
@@ -236,10 +233,18 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, r *Resource,
 		}
 		attrs[name] = cty.TupleVal(list)
 	}
-	for name := range dynamic {
+	for name := range unknown {
 		attrs[name] = cty.DynamicVal
 	}
 	return cty.ObjectVal(attrs)
+}
+
+// nested decodes entry i of the nested blocks of type name.
+func (d *resourceDecoder) nested(name string, body *hclsyntax.Body, prefix string, path cty.Path, i int, r *Resource) cty.Value {
+	p := make(cty.Path, len(path), len(path)+2)
+	copy(p, path)
+	p = append(p, cty.GetAttrStep{Name: name}, cty.IndexStep{Key: cty.NumberIntVal(int64(i))})
+	return d.body(body, fmt.Sprintf("%s%s.%d.", prefix, name, i), p, r, false)
 }
 
 // instanceCost is the source an instance of a resource body evaluates: one, plus the bytes of
@@ -444,9 +449,19 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	locals := map[string]cty.Value{}
 	est := r.End.Byte - r.Start.Byte
 	sensitive := false
-	// Each reference costs map lookups only: sizes and sensitivity are cached per value.
+	// Each reference costs map lookups only: sizes and sensitivity are cached per value. A
+	// dynamic block iterator shadows any root of its name, var and local included, as hcl's
+	// child evaluation context does for Terraform.
+	shadowed := map[string]bool{}
 	for _, tr := range expr.Variables() {
 		root := tr.RootName()
+		if it, ok := d.iters[root]; ok {
+			ectx.Variables[root] = it.val
+			shadowed[root] = true
+			est += it.size
+			sensitive = sensitive || it.sensitive
+			continue
+		}
 		attr, _ := traversalAttr(tr, 1)
 		switch root {
 		case "var":
@@ -479,7 +494,9 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 			est++
 		}
 	}
-	ectx.Variables["local"] = cty.ObjectVal(locals)
+	if !shadowed["local"] {
+		ectx.Variables["local"] = cty.ObjectVal(locals)
+	}
 	ectx.Functions = d.m.functions(expr, calls)
 	unknown := cty.DynamicVal
 	if sensitive {
