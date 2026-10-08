@@ -543,3 +543,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   memory, untested path checks). All fixed, then APPROVE with 2 minor (a --var-file naming a
   module file dropped its source; a test at exactly the file limit), both fixed.
 - Next: T-0104c (evaluate locals in dependency order).
+
+## 2026-10-08 · T-0104c · done
+- What: (*ParsedModule).EvaluateLocals evaluates a module's locals in dependency order.
+  - The order comes from an iterative Tarjan SCC (no recursion; a 20k-local chain is fine). A
+    local in a cycle (self-loops too) is unknown, with a local_cycle warning at its name.
+  - Resources, data sources, ephemeral resources, modules, path and terraform evaluate as
+    unknown, so known parts stay known. Their addresses become References (no instance keys),
+    carried transitively through other locals.
+  - Unknown lists the outermost unknown paths. Failed evaluation is unknown with an evaluation
+    warning that quotes only hcl's summary. Duplicates keep the first (duplicate_local error).
+  - Traversals are read only after safeToEvaluate. Diagnostics stay sorted and deduplicated.
+  - Sensitivity fails closed: an unknown result, cycles included, keeps SensitiveMark when an
+    input is sensitive.
+  - Untrusted locals could double their values per local, so values are bounded:
+    - Each local is checked before evaluation (source plus every use of a local or variable at
+      full size) and after (size and nesting), against 2^18 units each and 2^22 in total.
+      Over budget means unknown plus value_too_large.
+    - References are capped at 2^17 entries in total. Past that, a local keeps only its own
+      references and is ReferencesIncomplete; unanalysed and cyclic locals are too.
+    - Unknown is capped at 1,024 paths and 4,096 steps, falling back to the whole value.
+- Files: internal/terraform/{locals.go,locals_test.go,locals_internal_test.go,fuzz_test.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.8%; FuzzParseFile now runs
+  EvaluateLocals, and a 30s run did about 400k execs with no failure. Limit tests run just below,
+  at and just above every bound. Reviewer probes after the fix: tuple doubling over 60 locals in
+  0.22s; a 20k-local reference chain uses 59 MiB of heap (it used 3.2 GiB before the fix).
+  Mutation: dropping the cyclic sensitivity mark fails 3 assertions. A 20k-deep nested chain
+  (670 KB) takes about 2s, linearly.
+- Review: iace-reviewer CHANGES_REQUIRED (2 blockers: values doubling per local hung or OOMed
+  the scan, and transitive references used quadratic memory; 3 minor: the error summary,
+  unrecorded missing references, cancellation inside walks). All fixed, then APPROVE with 3
+  minor:
+  - the cyclic sensitive mark: fixed;
+  - the per-use estimate charges whole values for attribute reads: T-0114;
+  - for-expression cost in evalExpr, which predates this task and is not reachable from the CLI
+    yet: T-0113, now a dependency of T-0109.
+- Note: this iteration resumed work an interrupted session left uncommitted on the branch
+  without marking the task [~].
+- Next: T-0105 (curated function set).

@@ -1,16 +1,18 @@
 package terraform
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // FuzzParseFile feeds arbitrary bytes to the parser as HCL or JSON. Parsing, the nesting guard,
-// module-source extraction and guarded evaluation must never panic or crash, and every diagnostic and block must
-// name the file it came from. Seeds are below and in testdata/fuzz/FuzzParseFile.
+// module-source extraction, guarded evaluation and locals evaluation must never panic or crash,
+// and every diagnostic and block must name the file it came from. Seeds are below and in testdata/fuzz/FuzzParseFile.
 func FuzzParseFile(f *testing.F) {
 	seeds := []struct {
 		src    string
@@ -28,6 +30,8 @@ func FuzzParseFile(f *testing.F) {
 		{`{"module": {"net": {"source": "./net"}}, "variable": {"v": [{"default": 1}]}}`, true},
 		{`{"a": ` + strings.Repeat("[", 600) + strings.Repeat("]", 600) + `}`, true},
 		{`{"unterminated": `, true},
+		{"locals {\n  a = local.b\n  b = [local.a, aws_s3_bucket.x.id]\n  c = \"${local.a}-${data.d.e.f}\"\n}\n", false},
+		{`{"locals": {"a": "${local.b}", "b": "${module.m.o}", "c": {"k": "${local.a}"}}}`, true},
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s.src), s.isJSON)
@@ -57,6 +61,15 @@ func FuzzParseFile(f *testing.F) {
 			attrs, _ := b.Body.JustAttributes()
 			for _, a := range attrs {
 				_, _ = m.evalExpr(a.Expr, ctx)
+			}
+		}
+		locals, err := m.EvaluateLocals(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("EvaluateLocals: %v", err)
+		}
+		for name, l := range locals {
+			if l.Value.Type() == cty.NilType {
+				t.Errorf("local.%s has no value", name)
 			}
 		}
 	})

@@ -147,14 +147,15 @@ locations and without executing anything.
     - a variable without a value is unknown, not an error; a value that does not convert to the declared type is kept with a warning
   - attempts: 1
   - result: (*ParsedModule).EvaluateVariables applies default, tfvars, auto tfvars, --var-file and --var with Terraform precedence and parsing rules, optional() defaults and nullable; sensitivity fails closed; everything evaluated through evalExpr
-- [ ] T-0104c · Evaluate locals in dependency order
+- [x] T-0104c · Evaluate locals in dependency order
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0104b
   - accept:
     - locals are evaluated in dependency order; a cycle yields unknown plus a warning; unknown paths are recorded
     - locals that reference resources or data sources are unknown but keep their references
     - every Variables() or traversal call on an expression passes safeToEvaluate first (hcl parses .tf.json templates there too); evaluation diagnostics stay sorted and deduplicated
-  - attempts: 0
+  - attempts: 1
+  - result: (*ParsedModule).EvaluateLocals evaluates locals in dependency order (iterative Tarjan; cycles unknown + local_cycle), resources/data/modules unknown with transitive References, bounded by per-local and total value budgets, a reference cap (ReferencesIncomplete) and Unknown path caps; follow-ups T-0113, T-0114
 - [ ] T-0105 · Evaluate expressions with a curated function set
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0104c
@@ -186,7 +187,7 @@ locations and without executing anything.
   - attempts: 0
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108
+  - depends: T-0108, T-0113
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
@@ -207,6 +208,20 @@ locations and without executing anything.
   - accept:
     - override.tf, *_override.tf and their .tf.json forms are merged into the blocks they name with Terraform's rules (attributes replace, nested blocks replace by type, locals/terraform/required_providers merge by key); an override for a block that does not exist is an error, as in Terraform
     - fixtures show that a weakening override (`acl = "public-read"`) reaches the input document; the override_not_merged diagnostic and ADR 0005's accepted risk are retired (threat model T14)
+  - attempts: 0
+- [ ] T-0113 · Bound for-expression cost in evalExpr
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0104c
+  - accept:
+    - evaluation work inside one expression is bounded: nested for expressions over collections cannot multiply into a hang or OOM (T-0104c review: three nested fors over a 200-element list built 8M elements in 3.1s; 1,000 elements would be about 1e9). An expression over the bound is unknown with a limit diagnostic that T-0109 maps to a limit_exceeded gap
+    - applies to every evalExpr caller (variables, locals, later attributes); tests just below, at and just above the bound
+  - attempts: 0
+- [ ] T-0114 · Charge only the used part of a value in the locals size estimate
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0104c
+  - accept:
+    - when a traversal's later steps are static attribute or index steps (`local.cfg.env`), the estimate resolves them against the evaluated value and charges that sub-value's size, not the whole value's (T-0104c review: 6+ field reads of a ~45 KB map are a false value_too_large today)
+    - the estimate stays an upper bound: tests with dynamic index steps and splats still charge the whole value
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004
   - skills: iace-architecture
