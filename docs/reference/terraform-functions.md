@@ -10,31 +10,31 @@ disagree, and `TestSupportedFunctions` has a case for every function.
 
 ## Supported functions
 
-Each function in this table uses the go-cty stdlib implementation, because it behaves as
+Most functions in this table use the go-cty stdlib implementation, because it behaves as
 Terraform's function does. Terraform uses most of these stdlib functions directly. The `to*`
-conversions are Terraform's own wrappers around the same cty conversions. A name in
-Terraform's `core::` namespace (`core::upper`) is the same function.
+conversions are Terraform's own wrappers around the same cty conversions. Functions marked *
+have no matching stdlib function. iace implements them in
+`internal/terraform/functions_terraform.go` from Terraform's documentation, never from its
+source (BUSL-1.1). A name in Terraform's `core::` namespace (`core::upper`) is the same
+function.
 
 | group | functions |
 |---|---|
-| string | `chomp`, `format`, `formatlist`, `join`, `lower`, `split`, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
-| collection | `chunklist`, `coalescelist`, `compact`, `concat`, `contains`, `element`, `flatten`, `keys`, `merge`, `range`, `reverse`, `slice`, `sort`, `values`, `zipmap` |
+| string | `chomp`, `endswith`\*, `format`, `formatlist`, `join`, `lower`, `split`, `startswith`\*, `strcontains`\*, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
+| collection | `chunklist`, `coalesce`\*, `coalescelist`, `compact`, `concat`, `contains`, `element`, `flatten`, `index`\*, `keys`, `length`\*, `lookup`\*, `merge`, `range`, `reverse`, `slice`, `sort`, `values`, `zipmap` |
 | type conversion | `can`, `tobool`, `tolist`, `tomap`, `tonumber`, `tostring`, `try` |
-| encoding | `jsondecode`, `jsonencode` |
+| encoding | `base64decode`\*, `base64encode`\*, `jsondecode`, `jsonencode` |
 | numeric | `abs`, `max`, `min`, `signum` |
 
 ## Not evaluated yet
 
 These are unknown today. The backlog task that adds each is in brackets.
 
-- Terraform's own implementations, which differ from go-cty's [T-0105b]: `length` (it accepts
-  strings), `coalesce` (it skips empty strings), `index` (go-cty's looks up a key; Terraform's
-  finds a value), `replace` (`/regex/` patterns), `regex`, `regexall`, `startswith`,
-  `endswith`, `strcontains`, `base64encode`, `base64decode`, `cidrsubnet`, `cidrhost`,
-  `cidrnetmask`, and `lookup` (go-cty's needs a non-null default; Terraform's default is
-  optional and may be null).
+- Regular expressions, whose cost depends on the pattern [T-0105d]: `replace` (plain and
+  `/regex/`), `regex`, `regexall`.
+- Network functions [T-0105e]: `cidrsubnet`, `cidrhost`, `cidrnetmask`.
 - Functions that build sets or compare all pairs, which need a bounded implementation
-  [T-0105b]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
+  [T-0105f]: `distinct`, `toset`, `setunion`, `setintersection`, `setsubtract`. cty hashes a
   number by its first ten significant digits, so a set of close numbers compares every pair,
   and comparing two numbers costs as much as their decimal digits.
 - Filesystem functions, confined to the module directory [T-0105c]: `file`, `fileexists`,
@@ -70,8 +70,26 @@ types. Converting a number to a string, for example, costs as much as its digits
 | result of one call | 2^18 units, nested at most as deep as the parse nesting limit |
 | `format` and `formatlist` | checked before the call: the format string, every width and precision, and each verb printing the largest argument escaped six times, multiplied by the row count for `formatlist` |
 | `range` | 1,024 elements (go-cty's own limit; past it the call fails, and the local is unknown) |
-| work across a module | 2^23 units (about 1.5s of evaluation at worst): the size of every call's arguments and result |
+| `contains`, `index` with sets | when the list's elements or the value can hold a set, the sizes of both arguments multiplied, charged to the module work (cty compares sets element by element, and colliding number hashes make that pairwise) |
+| work across a module | 2^23 units (about 1.5s of evaluation at worst, except for conversions into set types, which are not bounded yet: T-0116): the size of every call's arguments and result |
 
 A call over a bound is unknown, keeps the sensitivity of its arguments, and adds a
 `function_limit` warning at the expression. The input document reports it as a
 `limit_exceeded` coverage gap.
+
+## Semantics of iace's own functions
+
+| function | behavior |
+|---|---|
+| `length(v)` | Grapheme clusters of a string; elements of a list, set or map; elements or attributes of a tuple or object, known from its type even when its value is unknown. Any other type is an error. |
+| `coalesce(vals...)` | The first argument that is neither null nor `""`, converted to the arguments' common type. An unknown argument before it makes the result unknown. Mixed types that do not unify, or no such argument, are errors. |
+| `index(list, value)` | The position of the first equal element of a list or tuple. An unknown list or value, or an unknown comparison before a match, makes the result unknown. An empty list or a missing value is an error. |
+| `lookup(map, key, default?)` | A map's element or an object's attribute. A missing key returns the default (it may be null; for a map it is converted to the element type), and is an error without one. A map or key that is not wholly known makes the result unknown, as in Terraform. |
+| `startswith`, `endswith`, `strcontains` | String prefix, suffix and substring tests. |
+| `base64encode(s)`, `base64decode(s)` | Standard Base64 of a string's UTF-8 bytes. Decoding fails on invalid Base64 or a result that is not UTF-8. |
+
+A result computed from a sensitive argument stays sensitive. That includes `lookup`
+falling back to its default, and `index` over a list holding a sensitive element. iace marks
+more than Terraform does: `length`, `lookup`, `coalesce` and the string tests take on every
+sensitive mark anywhere inside their arguments. So `lookup(obj, "b")` is sensitive when only
+`obj.a` is. This errs on the side of hiding values.

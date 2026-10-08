@@ -630,3 +630,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   sit in T-0105b/c or stay unknown, and a 1 MiB string cap where the code uses 2^18 units. The
   repo doc is authoritative for what is implemented. The owner may want to sync the skill text.
 - Next: T-0105b (Terraform-specific pure functions).
+
+## 2026-10-08 · T-0105b · done
+- What: Terraform's linear pure functions, implemented in iace.
+  - T-0105b was split first. This slice holds the linear functions; replace, regex and
+    regexall moved to T-0105d, cidr* to T-0105e, and distinct and the set functions to T-0105f.
+  - New in internal/terraform/functions_terraform.go, each written from Terraform's docs (never
+    its BUSL-1.1 source):
+    - length: graphemes; tuple and object length known from the type.
+    - coalesce: skips null and "", unifies the argument types.
+    - index: unknown before a match makes the result unknown.
+    - lookup: optional, nullable default; objects and maps; unknown unless the map is wholly
+      known, as in Terraform.
+    - startswith, endswith, strcontains.
+    - base64encode and base64decode: decoding checks UTF-8.
+  - All are in the bounded table.
+  - contains and index charge the product of their argument sizes when a set can be involved,
+    because cty compares sets pairwise when number hashes collide.
+  - valueSize no longer panics on unknown or marked set elements.
+  - The reference doc gains a semantics table. It states that iace marks results more broadly
+    than Terraform (nested marks included), which fails closed.
+- Files: internal/terraform/{functions_terraform.go,functions_terraform_internal_test.go,
+  functions.go,functions_internal_test.go,locals.go}, docs/reference/terraform-functions.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass; terraform coverage 97.4%. Every function has a
+  case, and the 49 error, unknown and edge cases pass. Mutation checks each fail a test:
+  coalesce keeping "", lookup ignoring partially known maps, index dropping marks or skipping
+  unknown comparisons, no UTF-8 check, length counting bytes, no set comparison charge. A
+  colliding-set index/contains call is limited in well under 2s.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - 1 major: index and contains over sets with colliding hashes cost seconds per call.
+    - 4 minor: index lost sensitivity on unknown arguments; index on a dynamic list gave a
+      dynamic value; over-marking was undocumented; no length-on-set test.
+    - Also flagged: valueSize panicked on sets with unknown elements (pre-existing).
+    - All fixed.
+  - Round 2: APPROVE, with 2 minor doc findings, both fixed. T-0116 was widened to all
+    unification and conversion into set types (HCL conditionals included), and the reference's
+    worst-case note now names that exception.
+- Next: T-0105c (file functions confined to the module directory).

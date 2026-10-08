@@ -385,7 +385,8 @@ func valueSize(v cty.Value, limit, depth int) (int, bool) {
 		case ty.IsCollectionType() || ty.IsObjectType() || ty.IsTupleType():
 			for elems := val.ElementIterator(); elems.Next(); {
 				k, ev := elems.Element()
-				if k.Type() == cty.String {
+				// A set's keys are its elements, which may be unknown or marked.
+				if k, _ := k.Unmark(); k.Type() == cty.String && k.IsKnown() && !k.IsNull() {
 					size += len(k.AsString())
 				}
 				stack = append(stack, item{val: ev, depth: it.depth + 1})
