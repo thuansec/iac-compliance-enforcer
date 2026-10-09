@@ -1791,3 +1791,40 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   includes the overshoot, the test charges call expansion as the tree does, and a behaviour
   and time test for the expansion budget.
 - Next: T-0113b, T-0113e or the next ready M1 task.
+
+## 2026-10-09 · T-0113e · done
+- What: `lookup` no longer walks its map, so `{ for k in keys(local.m) : k => lookup(local.m, k,
+  null).x }` stays within a module's work (ADR 0023).
+  - Measured: one bounded lookup call costs about 124 ns per unit of its map, because cty's
+    ContainsMarked and UnmarkDeep, the wrapper's two measurements, and IsWhollyKnown each walk
+    the whole map. A walk alone is about 15 ns per unit, and building values about 43. The
+    charges were accurate, so charging less was unsafe. A size cache was not possible: cty
+    values have no identity, and cty walks every argument anyway.
+  - So rewriteForExprs renames every 2- or 3-argument lookup to `__iace_lookup`. It takes
+    expression closures (cty sees capsules), evaluates them itself, reads the element in
+    constant time and charges 1 + the result's size.
+  - Errors match Terraform's, checked in its order, and never quote the key.
+  - ADR 0020's reference charge treats lookup's map like an indexed reference.
+  - Semantics now as in Terraform for marks: the result keeps the map's, the key's and the
+    element's own marks, where the old bounded lookup took on every mark in the map. A known
+    element of a partly unknown map is returned (Terraform resolves to it).
+- Files: internal/terraform/{lookup.go,lookup_internal_test.go,forexpr.go,forexpr_internal_test.go,
+  functions.go,parse.go,functions_terraform_internal_test.go,realistic_internal_test.go,
+  testdata/realistic/nested-maps/main.tf}, docs/adr/{0023-evaluate-lookup-without-walking-its-map.md,
+  0020 (header)}, docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - nested-maps with the idiom over 300 entries: 878K work, about 10% of a module. Before, it
+    was limited and all 300 desired_count values were unknown.
+  - A body copying a 1,000-entry map on every iteration is still limited.
+  - The lookup charge is tested below, at and above the limit; marks (map, element, key,
+    default) and error parity are tested.
+  - The zero-argument rewrite crash is a regression test (mutation-checked).
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: a for body with a zero-argument call panicked during parsing.
+    - Minors: error parity, mark tests.
+    - The reviewer accepted the sensitivity and unknown semantics.
+  - Round 2: APPROVE. Its minors are fixed: the key is no longer quoted in an error, and the
+    ADR lists the error order.
+- Next: T-0113b or the next ready M1 task.

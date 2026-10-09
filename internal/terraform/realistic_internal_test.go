@@ -17,8 +17,7 @@ var limitCodes = []DiagCode{DiagExpressionTooComplex, DiagFunctionLimit, DiagMod
 // %{ for } directives over 50 instances) evaluate fully, with at least half of the tree's
 // function work, and of each module's, and of its expansion work to spare (T-0113c, ADR 0021;
 // T-0113d, ADR 0022). The work each uses is
-// logged for PROGRESS. A for body passing a whole large map to a function each iteration
-// reaches a module's work (T-0113e).
+// logged for PROGRESS. nested-maps includes the lookup idiom over its 300 entries (ADR 0023).
 func TestRealisticTreesStayUnderTheWorkLimit(t *testing.T) {
 	t.Parallel()
 	for name, want := range map[string]struct{ instances, resources int }{

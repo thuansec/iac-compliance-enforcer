@@ -20,6 +20,7 @@ func TestTerraformFunctions(t *testing.T) {
 		"pm":   {Value: cty.MapVal(map[string]cty.Value{"a": cty.StringVal("x"), "b": cty.UnknownVal(cty.String)})},
 		"tu":   {Value: cty.UnknownVal(cty.Tuple([]cty.Type{cty.String, cty.Number}))},
 		"null": {Value: cty.NullVal(cty.String)},
+		"uo":   {Value: cty.UnknownVal(cty.Object(map[string]cty.Type{"a": cty.String}))},
 	}
 	for _, c := range []struct {
 		expr string
@@ -65,7 +66,16 @@ func TestTerraformFunctions(t *testing.T) {
 		{`lookup(tomap({ a = "x" }), "z", ["l"])`, `error`},
 		{`lookup(["x"], "0", "d")`, `error`},
 		{`lookup(var.um, "a", "d")`, `unknown`},
-		{`lookup(var.pm, "a", "d")`, `unknown`}, // as in Terraform: the map is not wholly known
+		// Terraform returns unknown while any element is unknown; iace returns the known element,
+		// which is what Terraform resolves to (ADR 0023), and stays unknown for an unknown one.
+		{`lookup(var.pm, "a", "d")`, `"x"`},
+		{`lookup(var.pm, "b", "d")`, `unknown`},
+		// Errors come before unknowns, as in Terraform (ADR 0023).
+		{`lookup(null, "a", "d")`, `error`},
+		{`lookup(var.uo, "missing")`, `error`},
+		{`lookup(var.um, var.null)`, `error`},
+		{`lookup(var.uo, "missing", "d")`, `unknown`},
+		{`lookup({ a = "x" }, local.nope)`, `error`}, // an argument's own error is reported
 		{`lookup({ a = "x" }, var.u, "d")`, `unknown`},
 		// startswith, endswith, strcontains
 		{`startswith("abc", "")`, `true`},

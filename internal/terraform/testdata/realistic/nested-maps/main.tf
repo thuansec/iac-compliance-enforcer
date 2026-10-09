@@ -356,6 +356,7 @@ locals {
     ]
   ])
   by_key = { for d in local.deployments : d.key => d }
+  replicas = { for k in keys(local.by_key) : k => lookup(local.by_key, k, null).replicas }
   summary = {
     for k in keys(local.by_key) : k => "${local.by_key[k].env}/${local.by_key[k].name}:${local.by_key[k].cpu}"
   }
@@ -364,7 +365,7 @@ locals {
 resource "aws_ecs_service" "this" {
   for_each      = local.by_key
   name          = each.key
-  desired_count = each.value.replicas
+  desired_count = local.replicas[each.key]
   tags = {
     for k, v in { env = each.value.env, service = each.value.name, image = each.value.image } : k => v
   }

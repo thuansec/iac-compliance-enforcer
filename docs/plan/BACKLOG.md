@@ -431,12 +431,13 @@ locations and without executing anything.
     - testdata/realistic/fanout at 200 module instances (it is at 150) evaluates in full: today each instance re-evaluates about 11,700 bytes of source (a dynamic block of 100 rules), so 200 reach the tree's expansion work (2^21, ADR 0009/0010) and the tree is truncated (T-0113c); measure the time per byte at that size and raise the tree's expansion budget, or charge dynamic-block content more precisely, with an ADR; TestRealisticTreesStayUnderTheWorkLimit covers 200
   - attempts: 1
   - result: a tree's expansion work is four modules' worth (ADR 0022); the realistic fan-out at 200 instances evaluates in full (400 of 400 resources, expansion 28% of the tree's, about 1 s, at most 431 ns per byte); worst case about 12.6 MB with overshoot, 5 to 8 s, bounded by a new expansion case in TestEvaluateTreeBoundsTheWholeTree (4.2 s)
-- [ ] T-0113e · Charge large function arguments once per for expression
+- [x] T-0113e · Charge large function arguments once per for expression
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0113c
   - accept:
     - the idiom `{ for k in keys(local.m) : k => lookup(local.m, k, null).x }` over a map of a few hundred entries evaluates within one module's function work: today, from about 140 entries, it reaches maxFunctionWork (each lookup call measures and charges the whole map, and ADR 0020 charges the reference again per iteration), so every value that uses it is unknown (T-0113c review); for example measure a referenced value once per evaluation of the for expression (a size cache) instead of on every call, with an ADR 0020 amendment; testdata/realistic gains this idiom over 300 entries, and the test keeps it under half a module's work while a body that copies the whole map on every iteration stays limited
-  - attempts: 0
+  - attempts: 1
+  - result: a size cache was not possible (cty values have no identity, and cty walks every argument), so lookup calls are rewritten to __iace_lookup, which takes expression closures, reads the element in constant time and charges only what it returns; ADR 0020 charges a reference passed to lookup per element; the idiom over 300 entries uses about 10% of a module's work, and copying a 1,000-entry map per iteration stays limited; lookup now marks as Terraform does and returns a known element of a partly unknown map (ADR 0023)
 - [ ] T-0113b · Bound for expressions in nested .tf.json template strings
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0113

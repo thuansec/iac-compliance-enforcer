@@ -49,11 +49,13 @@ const (
 // evaluated by iace instead (jsonStringTemplate), so its for expressions are charged.
 var errForInJSONTemplate = errors.New("for expression in a JSON template string, which iace cannot bound")
 
-// rewriteForExprs makes every for expression in node iterate over forFunctionName. It is
-// idempotent, so a tree parsed once and rewritten twice is unchanged.
+// rewriteForExprs makes every for expression in node iterate over forFunctionName, and every
+// lookup call call lookupFunctionName (ADR 0023). It is idempotent, so a tree parsed once and
+// rewritten twice is unchanged.
 func rewriteForExprs(node hclsyntax.Node) {
 	directives := map[*hclsyntax.ForExpr]bool{}
 	_ = hclsyntax.VisitAll(node, func(n hclsyntax.Node) hcl.Diagnostics {
+		renameLookup(n) // ADR 0023
 		if j, ok := n.(*hclsyntax.TemplateJoinExpr); ok {
 			if f, ok := j.Tuple.(*hclsyntax.ForExpr); ok {
 				directives[f] = true // visited before its for expression
@@ -114,6 +116,13 @@ func bodyReferences(e hclsyntax.Expression, key, value string) (whole, indexed [
 		case *hclsyntax.IndexExpr:
 			if t, ok := n.Collection.(*hclsyntax.ScopeTraversalExpr); ok {
 				elements[t] = true
+			}
+		case *hclsyntax.FunctionCallExpr:
+			// lookup reads one element of its map (ADR 0023).
+			if isLookupCall(n) { // it has two or three arguments
+				if t, ok := n.Args[0].(*hclsyntax.ScopeTraversalExpr); ok {
+					elements[t] = true
+				}
 			}
 		case *hclsyntax.RelativeTraversalExpr:
 			if t, ok := n.Source.(*hclsyntax.ScopeTraversalExpr); ok && len(n.Traversal) > 0 {
