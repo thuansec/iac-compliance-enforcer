@@ -1641,3 +1641,18 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       set) and follow-up T-0112c (report duplicate resource declarations).
   - Round 2: APPROVE. Its comment-wrap minor is fixed.
 - Next: T-0112c or the next ready M1 task.
+
+## 2026-10-09 · T-0112c · done
+- What: a resource or data source declared twice in a module is an error (duplicate_resource)
+  at the second header, as in Terraform. The second copy is not decoded, as for duplicate
+  variables, outputs, locals and module calls. The first copy, into which overrides merge, is the
+  one decoded. A managed resource and a data source may share a type and name.
+- Files: internal/terraform/{resources.go,resources_override_internal_test.go,
+  resources_override_test.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. TestDuplicateResourcesAreErrors failed before the change.
+  It checks positions, HasErrors, the decoded copy with an override applied, and that resource
+  and data are distinct. TestDuplicateResourceInExpandedChild checks that a duplicate in a
+  count = 2 child is reported once on each of its 2 instances.
+- Review: iace-reviewer, 1 round: APPROVE. Its three minors are done: the DecodeResources doc
+  comment, the override case, and the expanded-child test.
+- Next: the next ready M1 task.

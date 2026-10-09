@@ -25,6 +25,9 @@ const (
 	// DiagExpansionLimit: a resource has more instances than maxInstancesPerResource, or the
 	// module more than maxInstancesPerModule; the instances past the limit are not decoded.
 	DiagExpansionLimit DiagCode = "expansion_limit"
+	// DiagDuplicateResource: a resource or data source is declared twice. Terraform rejects the
+	// module; the second copy is not decoded.
+	DiagDuplicateResource DiagCode = "duplicate_resource"
 )
 
 // Limits on count and for_each expansion. Each instance evaluates the whole block again, so
@@ -164,7 +167,9 @@ type instanceSpec struct {
 
 // DecodeResources decodes the module's resource and data blocks, in block order, evaluating
 // their attributes with vars as var.* and locals as local.*. What cannot be evaluated is
-// unknown with a warning, never an error; only a cancelled context is an error. Ephemeral
+// unknown with a warning, never an error; only a cancelled context is an error. A resource or
+// data source declared twice is an error diagnostic, as in Terraform: the first declaration,
+// into which overrides merge, is decoded, and the later one is not. Ephemeral
 // resources are not decoded: their values are never stored, so no policy inspects them.
 func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Variable, locals map[string]Local) ([]Resource, error) {
 	return m.decodeResources(ctx, vars, locals, nil)
@@ -176,6 +181,7 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 	d := m.newResourceDecoder(vars, locals)
 	d.modules = modules
 	var out []Resource
+	declared := map[string]bool{}
 	for _, b := range m.Blocks {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -183,6 +189,18 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 		if (b.Type != "resource" && b.Type != "data") || len(b.Labels) != 2 {
 			continue
 		}
+		key := b.Type + "\x00" + b.Labels[0] + "\x00" + b.Labels[1]
+		if declared[key] {
+			kind := "resource"
+			if b.Type == "data" {
+				kind = "data source"
+			}
+			m.diag(SeverityError, DiagDuplicateResource, "Duplicate "+kind+" declaration",
+				fmt.Sprintf("A %s %q was already declared in this module.", kind, b.Labels[0]+"."+b.Labels[1]),
+				b.File, b.DefRange.Start.Line, b.DefRange.Start.Column)
+			continue
+		}
+		declared[key] = true
 		base := Resource{Type: b.Labels[0], Name: b.Labels[1], File: b.File, Range: b.Range, DefRange: b.DefRange}
 		if b.Type == "resource" {
 			base.Mode, base.BaseAddress = model.ModeManaged, base.Type+"."+base.Name

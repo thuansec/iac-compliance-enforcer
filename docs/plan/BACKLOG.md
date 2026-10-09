@@ -394,12 +394,13 @@ locations and without executing anything.
     - fixtures show that a weakening override (`acl = "public-read"`) reaches the input document; the override_not_merged diagnostic and ADR 0005's accepted risk are retired (threat model T14)
   - attempts: 1
   - result: resource and data overrides layer over their block (overriddenBody): a layer skips the top-level attributes and block types, static or dynamic, that a later layer sets, so replaced values are never evaluated, recorded or referenced; count/for_each/provider and lifecycle arguments replace (Terraform's ignore_changes rules); depends_on, moved/import/removed and a missing base are errors; override_not_merged and ADR 0005's accepted risk are retired (threat model T14 mitigated)
-- [ ] T-0112c · Report duplicate resource and data declarations
+- [x] T-0112c · Report duplicate resource and data declarations
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0112b
   - accept:
     - a resource or data source declared twice in a module's own files is an error, as in Terraform (today neither copy is reported, and an override merges only into the first copy; T-0112b review); a test shows the duplicate is reported where the second copy is and the module has errors
-  - attempts: 0
+  - attempts: 1
+  - result: decodeResources reports a second resource or data declaration of the same mode, type and name as duplicate_resource (error) at its header and skips it; the first copy, into which overrides merge, is decoded; reported once per child module however many instances
 - [ ] T-0113 · Bound for-expression cost in evalExpr
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0104c
