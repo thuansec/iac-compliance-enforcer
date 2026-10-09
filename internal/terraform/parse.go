@@ -120,9 +120,11 @@ type ParsedModule struct {
 	// forFn is forFunctionName (forFunction); forLimited records that a for expression during
 	// the current evaluation would have iterated past the function work limit.
 	forFn      *function.Function
+	lookupFn   *function.Function // lookupFunction
 	forLimited bool
-	// forDiags are the diagnostics of the for-expression collections forFunction evaluated
-	// itself during the current evaluation, which evalExpr returns with hcl's.
+	// forDiags are the diagnostics of the expressions the internal functions evaluated
+	// themselves (for-expression collections, lookup arguments) during the current evaluation,
+	// which evalExpr returns with hcl's.
 	forDiags hcl.Diagnostics
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.

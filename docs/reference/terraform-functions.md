@@ -77,7 +77,7 @@ arguments, and adds a `function_limit` warning at the expression. The input docu
 | `length(v)` | Grapheme clusters of a string; elements of a list, set or map; elements or attributes of a tuple or object, known from its type even when its value is unknown. Any other type is an error. |
 | `coalesce(vals...)` | The first argument that is neither null nor `""`, converted to the arguments' common type. An unknown argument before it makes the result unknown. Mixed types that do not unify, or no such argument, are errors. |
 | `index(list, value)` | The position of the first equal element of a list or tuple. An unknown list or value, or an unknown comparison before a match, makes the result unknown. An empty list or a missing value is an error. |
-| `lookup(map, key, default?)` | A map's element or an object's attribute. A missing key returns the default (it may be null; for a map it is converted to the element type), and is an error without one. A map or key that is not wholly known makes the result unknown, as in Terraform. |
+| `lookup(map, key, default?)` | A map's element or an object's attribute. A missing key returns the default (it may be null; for a map it is converted to the element type), and is an error without one. An unknown map, key or element makes the result unknown; unlike Terraform, a known element of a map whose other elements are unknown is returned, since it is what Terraform resolves to ([ADR 0023](../adr/0023-evaluate-lookup-without-walking-its-map.md)). The map is not walked: a call costs only what it returns. |
 | `startswith`, `endswith`, `strcontains` | String prefix, suffix and substring tests. |
 | `replace(str, substr, rep)` | A `substr` wrapped in slashes (`"/\\d+/"`) is an RE2 regular expression whose matches are replaced with Go's `$1`, `${name}` expansion. Any other `substr` is replaced literally, and `""` inserts `rep` between every character. An invalid expression is an error. |
 | `cidrsubnet(prefix, newbits, netnum)` | The subnet numbered `netnum` (0 to 2^newbits − 1) after extending the prefix by `newbits` bits, which must fit the address. IPv4 and IPv6. Host bits in `prefix` are dropped. |
@@ -88,9 +88,10 @@ arguments, and adds a `function_limit` warning at the expression. The input docu
 
 A result computed from a sensitive argument stays sensitive. That includes `lookup`
 falling back to its default, and `index` over a list holding a sensitive element. iace marks
-more than Terraform does: `length`, `lookup`, `coalesce` and the string tests take on every
-sensitive mark anywhere inside their arguments. So `lookup(obj, "b")` is sensitive when only
-`obj.a` is. This errs on the side of hiding values.
+more than Terraform does: `length`, `coalesce` and the string tests take on every sensitive mark
+anywhere inside their arguments. This errs on the side of hiding values. `lookup` marks as
+Terraform does: its result keeps the map's own and the key's marks and the element's own, so
+`lookup(obj, "b")` is not sensitive when only `obj.a` is (ADR 0023).
 
 ## Filesystem functions
 

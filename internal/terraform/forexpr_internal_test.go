@@ -386,3 +386,21 @@ func TestForResultFunctionChargesItsSize(t *testing.T) {
 		})
 	}
 }
+
+// A loop body that copies a whole large map on every iteration stays limited: indexing it
+// through lookup is cheap, copying it is not (T-0113e).
+func TestCopyingAWholeMapPerIterationStaysLimited(t *testing.T) {
+	t.Parallel()
+	m, expr := parseOne(t, "x.tf", hclVar(`{ for k in keys(local.m) : k => local.m }`))
+	elems := map[string]cty.Value{}
+	for i := range 1000 {
+		elems[fmt.Sprintf("k%d", i)] = cty.ObjectVal(map[string]cty.Value{"image": cty.StringVal(strings.Repeat("x", 60))})
+	}
+	ctx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{"local": cty.ObjectVal(map[string]cty.Value{"m": cty.ObjectVal(elems)})},
+		Functions: m.functions(expr, syntaxCalls(expr.(hclsyntax.Expression))),
+	}
+	if v, _ := m.evalExpr(expr, ctx); v.IsWhollyKnown() || !forLimitedIn(m) {
+		t.Errorf("a body copying a 1,000-entry map 1,000 times was not limited: %v", m.Diagnostics)
+	}
+}

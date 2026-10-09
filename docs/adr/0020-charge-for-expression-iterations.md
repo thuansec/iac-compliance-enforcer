@@ -2,7 +2,8 @@
 
 - Status: accepted
 - Date: 2026-10-09
-- Amended by: ADR 0021 (the tree's function work is four modules' worth)
+- Amended by: ADR 0021 (the tree's function work is four modules' worth), ADR 0023 (references
+  passed to lookup)
 - Tasks: T-0113; T-0113a (the iteration weight and directive strings, listed below as a follow-up)
 
 ## Context
