@@ -1601,3 +1601,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its note: if a slow runner trips the linear test's 20 s bound, raise it
     (the old cost would take hours).
 - Next: T-0112b (resource and data overrides).
+
+## 2026-10-09 · T-0112b · done
+- What: resource and data overrides are merged with Terraform's semantics (ADR 0019).
+  - applyOverrides attaches each override to the resource or data block it names.
+    - A missing base is override_without_base.
+    - depends_on is override_unsupported, as for module calls and outputs.
+    - moved, import and removed blocks in override files are errors. ephemeral, check and
+      action overrides change nothing iace checks.
+  - The resource decoder layers the bodies (overriddenBody, resources_override.go), for HCL and
+    JSON alike.
+    - A layer skips the top-level attributes and nested block types, static or dynamic, that a
+      later layer sets. So replaced values are never evaluated, recorded in Attributes,
+      referenced, or counted as unknown.
+    - The last layer per name is indexed once, so decoding stays linear.
+    - count, for_each, provider and lifecycle arguments replace layer by layer. As in
+      Terraform, an ignore_changes list replaces only when it is non-empty, and `all` stays.
+    - Cost and structure are summed over the layers.
+  - override_not_merged and ADR 0005's accepted risk are retired. Threat model T14 is
+    mitigated.
+- Files: internal/terraform/{resources_override.go,resources.go,resources_json.go,override.go,
+  parse.go,resources_override_internal_test.go,resources_override_test.go,
+  override_internal_test.go,parse_test.go}, docs/adr/{0019,0005}, docs/security/threat-model.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - TestWeakeningOverrideReachesTheScan: `acl = "public-read"` from an override reaches the
+    evaluated resource in the root and in a child module.
+  - Mutations fail tests: ignoring overrides fails all five decoder tests; always appending
+    JSON base dynamics, or dropping JSON dynamic labels from topNames, each fails a subtest.
+  - 1 MiB of overrides of one resource decodes in about 0.3 s.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: depends_on in a resource override must be an error, as in Terraform. The
+      acceptance wording was wrong too and has been corrected.
+    - Minors: lifecycle edge cases, JSON dynamic tests that let mutations survive, a doc
+      comment, and input-document proof.
+    - All fixed. Added a T-0109 acceptance bullet (weakening override fixture in the golden
+      set) and follow-up T-0112c (report duplicate resource declarations).
+  - Round 2: APPROVE. Its comment-wrap minor is fixed.
+- Next: T-0112c or the next ready M1 task.

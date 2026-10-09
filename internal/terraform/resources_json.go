@@ -150,8 +150,9 @@ func (d *resourceDecoder) jsonValue(jb jsonBody, prefix string, path cty.Path, r
 		dyn    *hcl.Block
 	}
 	var items []blockItem
+	skip := func(name string) bool { return top && d.overridden != nil && d.overridden(name) }
 	for _, a := range jb.attrs {
-		if top && isMetaArgument(a.Name) {
+		if top && isMetaArgument(a.Name) || skip(a.Name) {
 			continue
 		}
 		if dynamicTypes[a.Name] || d.holdsDynamicSource(a.Expr) {
@@ -163,7 +164,9 @@ func (d *resourceDecoder) jsonValue(jb jsonBody, prefix string, path cty.Path, r
 		attrs[a.Name], _ = d.evalBounded(a.Expr, a.Name, a.NameRange)
 	}
 	for _, blk := range jb.dynamic {
-		items = append(items, blockItem{offset: blk.DefRange.Start.Byte, dyn: blk})
+		if !skip(blk.Labels[0]) {
+			items = append(items, blockItem{offset: blk.DefRange.Start.Byte, dyn: blk})
+		}
 	}
 	slices.SortStableFunc(items, func(x, y blockItem) int { return x.offset - y.offset })
 	for _, it := range items {
