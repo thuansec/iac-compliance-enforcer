@@ -19,6 +19,9 @@ func TestHoldsDynamicSource(t *testing.T) {
 		`{"dynamic": [{"x": {}}]}`:                       true,
 		`[1, {"b": {"dynamic": {"x": {}}}}]`:             true,
 		deep:                                             true,
+		`{"dynamic": {}}`:                                true,
+		`{"dynamic": []}`:                                true,
+		`{"dynamic": null}`:                              false,
 		`{"dynamic": "a string is data"}`:                false,
 		`{"dynamic": 1}`:                                 false,
 		`{"${var.k}": {"x": 1}}`:                         false,
@@ -78,5 +81,34 @@ func TestJSONDynamicDetectionIsLinear(t *testing.T) {
 	shallow, deep := alloc(1), alloc(100)
 	if deep > 3*shallow+(4<<20) {
 		t.Errorf("depth 100 allocated %d bytes, depth 1 %d; want about the same", deep, shallow)
+	}
+}
+
+// TestHoldsDynamicSourceScalarsAreCheap: only objects and arrays are walked into and memoized;
+// a scalar is data at once. A flat 2.4 MB array allocated about 2.4 GB and kept a memo entry
+// per element when every scalar was tried as a map and a list (T-0106e review).
+func TestHoldsDynamicSourceScalarsAreCheap(t *testing.T) {
+	src := "[" + strings.Repeat("0,", 1_200_000) + "0]"
+	f, diags := json.Parse([]byte(`{"v": `+src+`}`), "t.json")
+	if diags.HasErrors() {
+		t.Fatal(diags)
+	}
+	attrs, _ := f.Body.JustAttributes()
+	d := &resourceDecoder{}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	found := d.holdsDynamicSource(attrs["v"].Expr)
+	runtime.ReadMemStats(&after)
+	if found {
+		t.Error("a flat array holds no dynamic block")
+	}
+	// Listing the elements costs about 16 bytes per source byte; trying each as a map and a
+	// list cost about 1,000.
+	if got, limit := after.TotalAlloc-before.TotalAlloc, uint64(32*len(src)); got > limit {
+		t.Errorf("allocated %d bytes, want at most %d", got, limit)
+	}
+	if len(d.dynamicSource) != 1 {
+		t.Errorf("%d memo entries, want 1 (the array)", len(d.dynamicSource))
 	}
 }

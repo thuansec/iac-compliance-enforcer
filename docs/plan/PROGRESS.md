@@ -1524,3 +1524,17 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     tree during the iteration. It was left out of this commit, stashed as "owner edit: ignore
     /materials/", and restored on main afterwards.
 - Next: T-0111d (memoize only containers in holdsDynamicSource).
+
+## 2026-10-09 · T-0111d · done
+- What: holdsDynamicSource walks and memoizes only JSON objects and arrays.
+  - jsonContainer unwraps the expression and calls its own ExprMap/ExprList. These return nil
+    for anything else, where hcl.ExprMap/hcl.ExprList built an error diagnostic for every scalar.
+  - A scalar is data at once, before the memo lookup.
+- Measurements: a flat 2.4 MB array of 1.2M numbers allocated 643 MB and kept 1,200,002 memo
+  entries. It now stays under the test's 32 B per source byte (77 MB) with one entry.
+- Files: internal/terraform/{resources_json.go,resources_json_internal_test.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. TestHoldsDynamicSourceScalarsAreCheap fails without the
+  change (reviewer confirmed on a scratch copy of HEAD).
+- Review: iace-reviewer, 1 round: APPROVE. Its minor (pin `{"dynamic": {}}` and `[]` as true,
+  `null` as false) was added to TestHoldsDynamicSource.
+- Next: T-0111e (lex an evaluated expression once).
