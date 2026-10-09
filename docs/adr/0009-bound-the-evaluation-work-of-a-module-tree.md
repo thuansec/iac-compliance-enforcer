@@ -4,6 +4,7 @@
 - Date: 2026-10-09
 - Task: T-0107g
 - Extends: ADR 0008
+- Amended by: ADR 0021 (the tree's function work is four modules' worth)
 
 ## Context
 Each module instance is evaluated within per-module budgets: function work (2^23), locals and

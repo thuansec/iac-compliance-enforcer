@@ -1,0 +1,16 @@
+#cloud-config
+hostname: ${hostname}
+users:
+%{ for u in users ~}
+  - name: ${u.name}
+    ssh_authorized_keys:
+      - ${u.key}
+%{ endfor ~}
+packages:
+%{ for p in packages ~}
+  - ${p}
+%{ endfor ~}
+mounts:
+%{ for dir, dev in mounts ~}
+  - [ ${dev}, ${dir} ]
+%{ endfor ~}

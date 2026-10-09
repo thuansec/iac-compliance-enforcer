@@ -1731,3 +1731,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - All fixed. T-0113c added (measure realistic trees against the limit).
   - Round 2: APPROVE.
 - Next: T-0113b, T-0113c or the next ready M1 task.
+
+## 2026-10-09 · T-0113c · done
+- What: for-expression work was measured on realistic module trees, and the tree's function
+  budget was sized from the measurements (ADR 0021).
+  - Fixtures in internal/terraform/testdata/realistic:
+    - fanout: for_each over 150 subnets, each a module instance with nested for expressions
+      over 10 ports × 10 peers, cidrsubnet, replace, flatten, and a dynamic block of 100 rules;
+    - nested-maps: 10 environments × 30 services, flattened to 300 entries and looked up by key;
+    - templates: count = 50, templatefile with three %{ for } directives.
+  - TestRealisticTreesStayUnderTheWorkLimit requires each tree to have:
+    - no limit diagnostic and no unknown resource value;
+    - the expected instance and resource counts;
+    - at most half the tree's function work, and each instance at most half of maxFunctionWork.
+- Measurements (maxFunctionWork = 8,388,608 per module):
+  - templates: 1,146,915 (13.7% of one module).
+  - nested-maps: 723,126 (8.6%).
+  - fanout: about 67,800 per instance, of which about 51,600 are for-expression charges (16,200
+    with them disabled; weight 0 alone did not help). At 200 instances, about 13.6M against the
+    tree's former 8.4M: the tree was truncated and 242 of 400 resources were decoded.
+  - After the change (tree function work 4 × maxFunctionWork = 33,554,432), fanout at 150
+    instances uses 10,337,515 (30.8%).
+  - Not fixed here:
+    - fanout at 200 also reaches the tree's expansion work (about 11,700 per instance against
+      2^21; ceiling about 179 instances, T-0113d).
+    - `lookup(local.m, k, null)` in a for body over a map reaches one module's work from about
+      140 entries (T-0113e).
+- Files: internal/terraform/{realistic_internal_test.go,modules_eval.go,testdata/realistic/**},
+  docs/adr/0021-give-a-module-tree-four-modules-of-function-work.md, docs/adr/{0009,0020} (header
+  "Amended by" lines), docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Reverting the budget makes the new test fail: 242 resources, module_work_limit.
+  - The existing tree-budget tests still reach truncation.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the whole-map lookup idiom was missing; it is recorded as T-0113e.
+    - Minors: test strength, comments, the ADR immutability of 0020, ADR 0021 wording. All
+      fixed.
+  - Round 2: APPROVE. Its minor (ADR 0021 now lists the test's checks) is fixed.
+- Next: T-0113b, T-0113d, T-0113e or the next ready M1 task.

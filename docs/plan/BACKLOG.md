@@ -417,11 +417,24 @@ locations and without executing anything.
     - nested `%{ for }` template directives charge the size of the strings they build, not only their iterations (ADR 0020): today the iteration limit stops three nested directives over 1,000 elements, but only after building strings that grow per level (about 2.5 s, 10 s under -race); a test bounds the time or allocation of that template
   - attempts: 1
   - result: %{ for } directive bodies are wrapped in __iace_val, which charges each iteration's string up to the work left (300 levels around 200 KB: 290 MB evaluated in full before, now limited); profiling showed hcl's per-iteration overhead (about 1.3 KB, short-lived) dominated, so forIterationWork is 64 (three nested directives over 1,000: 0.3 s / 220 MB, was 0.7 s / 583 MB); the weight bounds time, about 125k iterations per tree (ADR 0020; follow-up T-0113c)
-- [ ] T-0113c · Measure for-expression work on real configurations
+- [x] T-0113c · Measure for-expression work on real configurations
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0113a
   - accept:
     - a set of realistic module trees (large for_each fan-out, nested for expressions over maps of a few hundred entries, templatefile-heavy modules) is scanned and the function work each uses is recorded in PROGRESS against maxFunctionWork; if a realistic tree reaches the limit, forIterationWork or the budget is adjusted with an ADR 0020 amendment, and a test keeps the realistic tree under the limit (T-0113a review: at 64, 5,000 instances each running a 20-element for expression reach it)
+  - attempts: 1
+  - result: testdata/realistic (fanout 150 instances, nested-maps 300 entries, templates 50 instances) is a regression test; fanout at 200 needed about 13.6M function work against the tree's 8.4M (for-expression charges about 76% of it), so the tree's function work is four modules' worth (ADR 0021); now fanout 10.3M of 33.5M, nested-maps 0.72M and templates 1.15M (each module under half of maxFunctionWork); follow-ups T-0113d (expansion budget at 200) and T-0113e (whole-map function arguments, about 140 entries)
+- [ ] T-0113d · Size the tree expansion budget for realistic fan-out
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0113c
+  - accept:
+    - testdata/realistic/fanout at 200 module instances (it is at 150) evaluates in full: today each instance re-evaluates about 11,700 bytes of source (a dynamic block of 100 rules), so 200 reach the tree's expansion work (2^21, ADR 0009/0010) and the tree is truncated (T-0113c); measure the time per byte at that size and raise the tree's expansion budget, or charge dynamic-block content more precisely, with an ADR; TestRealisticTreesStayUnderTheWorkLimit covers 200
+  - attempts: 0
+- [ ] T-0113e · Charge large function arguments once per for expression
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0113c
+  - accept:
+    - the idiom `{ for k in keys(local.m) : k => lookup(local.m, k, null).x }` over a map of a few hundred entries evaluates within one module's function work: today, from about 140 entries, it reaches maxFunctionWork (each lookup call measures and charges the whole map, and ADR 0020 charges the reference again per iteration), so every value that uses it is unknown (T-0113c review); for example measure a referenced value once per evaluation of the for expression (a size cache) instead of on every call, with an ADR 0020 amendment; testdata/realistic gains this idiom over 300 entries, and the test keeps it under half a module's work while a body that copies the whole map on every iteration stays limited
   - attempts: 0
 - [ ] T-0113b · Bound for expressions in nested .tf.json template strings
   - skills: iace-terraform-parsing, iace-testing
