@@ -1219,3 +1219,35 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - the truncation warning and the root's locals are asserted;
   - a cycle of two calls is tested.
 - Next: T-0107c (count and for_each on module calls).
+
+## 2026-10-09 · T-0107c · done
+- What: module calls expand by count and for_each.
+  - evaluateCall evaluates a call's count and for_each in the caller (callDecoder, sharing the
+    caller's input budget) and reuses resourceDecoder.expand: sorted keys, a `[*]` placeholder
+    with unknown_expansion or invalid_expansion, and at most 10,000 instances per call
+    (instancesLimited).
+  - Each instance is evaluated with count or each bound in its inputs (moduleInputs with the
+    instance's values). Its address is `module.a[0].module.b["k"]`, which also prefixes its
+    resources. ModuleInstance gains Key and ExpansionUnknown.
+  - The caller sees a tuple (count), an object by key (for_each), or one object. Placeholders
+    and cut expansions are unknown, never partial.
+  - A tree has at most 10,000 module instances, checked before each instance starts.
+  - Argument source evaluated again per instance is charged to the caller's call expansion work
+    (maxExpansionWork). That counts toward the tree's expansion budget (ADR 0012).
+- Files: internal/terraform/{modules_eval.go,modules_inputs.go,resources.go,resources_expand.go,
+  modules_expand_test.go,modules_eval_internal_test.go},
+  docs/adr/0012-expand-module-calls-by-count-and-for-each.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test:
+    - no instance values in inputs, placeholder value known, no key suffix;
+    - no tree cap, no per-call limit flag;
+    - no argument-source charge, no fold into tree expansion.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: call arguments were evaluated again per instance with nothing charged. A 250 KB
+      argument took 124 ms per instance, so `count = 10000` would take about 20 minutes. Fixed
+      with a regression test.
+    - Minors: tree-cap tests at 9,999 and 10,000 leaves were added, and the invalid_expansion
+      wording is now neutral.
+  - Round 2: APPROVE, no findings. The probe now runs in 8.9 s at its worst nesting.
+- Next: T-0107d (modules.json), then T-0107e.

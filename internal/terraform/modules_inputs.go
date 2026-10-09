@@ -47,18 +47,29 @@ func (m *ParsedModule) NewInstance() *ParsedModule {
 // unknown. Meta-arguments are not inputs. A nested block is an error, as in Terraform. What
 // cannot be evaluated is unknown with a warning; only a cancelled context is an error.
 func (m *ParsedModule) ModuleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local) (map[string]Input, error) {
-	return m.moduleInputs(ctx, call, vars, locals, nil)
+	return m.moduleInputs(ctx, call, vars, locals, nil, nil)
 }
 
-// moduleInputs is ModuleInputs with modules as module.* (resourceDecoder.modules).
-func (m *ParsedModule) moduleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local, modules map[string]cty.Value) (map[string]Input, error) {
+// callDecoder returns a decoder for a module call's arguments in m, the caller, which draws on
+// the value budget all of m's calls share; done returns what it used to that budget.
+func (m *ParsedModule) callDecoder(vars map[string]Variable, locals map[string]Local, modules map[string]cty.Value) (d *resourceDecoder, done func()) {
+	d = m.newResourceDecoder(vars, locals)
+	d.modules = modules
+	d.remaining = maxResourcesSize - m.usage.inputs
+	return d, func() { m.usage.inputs = maxResourcesSize - d.remaining }
+}
+
+// moduleInputs is ModuleInputs with modules as module.* (resourceDecoder.modules) and inst as
+// the count or each of the module instance (nil without count or for_each).
+func (m *ParsedModule) moduleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local, modules, inst map[string]cty.Value) (map[string]Input, error) {
 	attrs, diags := call.Body.JustAttributes()
 	m.addHCLDiags(call.File, diags)
 	// The inputs of all of m's calls share one size budget, as its resources do.
-	d := m.newResourceDecoder(vars, locals)
-	d.modules = modules
-	d.remaining = maxResourcesSize - m.usage.inputs
-	defer func() { m.usage.inputs = maxResourcesSize - d.remaining }()
+	d, done := m.callDecoder(vars, locals, modules)
+	defer done()
+	if inst != nil {
+		d.setInstance(inst)
+	}
 	out := map[string]Input{}
 	for _, a := range sortedAttributes(attrs) {
 		if err := ctx.Err(); err != nil {

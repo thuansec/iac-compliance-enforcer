@@ -438,3 +438,13 @@ func TestEvaluateTreeNeverStopsTheRootsLocals(t *testing.T) {
 		t.Errorf("root locals x = %#v, y = %#v; want both evaluated", x, y)
 	}
 }
+
+// The source of module call arguments evaluated again per instance counts toward the tree's
+// expansion budget.
+func TestUsageOfFoldsCallExpansion(t *testing.T) {
+	t.Parallel()
+	m := &ParsedModule{usage: moduleUsage{expansion: 3, callExpansion: 4}}
+	if got := usageOf(m); got.expansion != 7 || got.callExpansion != 0 {
+		t.Errorf("usageOf = %+v, want expansion 7", got)
+	}
+}
