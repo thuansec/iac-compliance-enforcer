@@ -137,14 +137,7 @@ type instanceSpec struct {
 // unknown with a warning, never an error; only a cancelled context is an error. Ephemeral
 // resources are not decoded: their values are never stored, so no policy inspects them.
 func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Variable, locals map[string]Local) ([]Resource, error) {
-	d := &resourceDecoder{
-		m:         m,
-		vars:      variablesObject(vars),
-		locals:    locals,
-		sizes:     map[string]int{},
-		sensitive: map[string]bool{},
-		remaining: maxResourcesSize,
-	}
+	d := m.newResourceDecoder(vars, locals)
 	var out []Resource
 	for _, b := range m.Blocks {
 		if err := ctx.Err(); err != nil {
@@ -477,6 +470,19 @@ func (d *resourceDecoder) invalid(e hcl.Expression, summary string) {
 func (d *resourceDecoder) attribute(a *hclsyntax.Attribute) cty.Value {
 	v, _ := d.evalBounded(a.Expr, a.Name, a.NameRange)
 	return v
+}
+
+// newResourceDecoder returns a decoder that evaluates with vars as var.* and locals as local.*,
+// within maxResourcesSize.
+func (m *ParsedModule) newResourceDecoder(vars map[string]Variable, locals map[string]Local) *resourceDecoder {
+	return &resourceDecoder{
+		m:         m,
+		vars:      variablesObject(vars),
+		locals:    locals,
+		sizes:     map[string]int{},
+		sensitive: map[string]bool{},
+		remaining: maxResourcesSize,
+	}
 }
 
 // evalBounded evaluates expr, the value of the attribute name at nameRange, as attribute does.

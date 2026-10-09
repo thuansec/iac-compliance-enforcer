@@ -87,24 +87,7 @@ type varState struct {
 // context. Problems in the repository's files are diagnostics; problems with opts, or a file
 // that cannot be read, are errors.
 func (m *ParsedModule) EvaluateVariables(ctx context.Context, root *fsutil.Root, opts VarOptions, limits Limits) (map[string]Variable, error) {
-	vars := map[string]*varState{}
-	for _, b := range m.Blocks {
-		if b.Type != "variable" || len(b.Labels) != 1 {
-			continue
-		}
-		v := m.declareVariable(b)
-		first, dup := vars[v.Name]
-		if !dup {
-			vars[v.Name] = v
-			continue
-		}
-		// Terraform rejects the module. Keep the first declaration, but a second one can
-		// never make a sensitive variable non-sensitive.
-		first.Sensitive = first.Sensitive || v.Sensitive
-		m.diag(SeverityError, DiagDuplicateVariable, "Duplicate variable declaration",
-			fmt.Sprintf("A variable named %q was already declared; this declaration is ignored.", v.Name),
-			b.File, b.DefRange.Start.Line, b.DefRange.Start.Column)
-	}
+	vars := m.declareVariables()
 
 	files, err := m.tfvarsFiles(root)
 	if err != nil {
@@ -141,6 +124,29 @@ func (m *ParsedModule) EvaluateVariables(ctx context.Context, root *fsutil.Root,
 	}
 	m.sortDiagnostics()
 	return out, nil
+}
+
+// declareVariables reads the module's variable blocks, keeping the first of duplicates.
+func (m *ParsedModule) declareVariables() map[string]*varState {
+	vars := map[string]*varState{}
+	for _, b := range m.Blocks {
+		if b.Type != "variable" || len(b.Labels) != 1 {
+			continue
+		}
+		v := m.declareVariable(b)
+		first, dup := vars[v.Name]
+		if !dup {
+			vars[v.Name] = v
+			continue
+		}
+		// Terraform rejects the module. Keep the first declaration, but a second one can
+		// never make a sensitive variable non-sensitive.
+		first.Sensitive = first.Sensitive || v.Sensitive
+		m.diag(SeverityError, DiagDuplicateVariable, "Duplicate variable declaration",
+			fmt.Sprintf("A variable named %q was already declared; this declaration is ignored.", v.Name),
+			b.File, b.DefRange.Start.Line, b.DefRange.Start.Column)
+	}
+	return vars
 }
 
 // declareVariable reads a variable block's type, default and sensitivity.
@@ -351,7 +357,13 @@ func (m *ParsedModule) finishVariable(v *varState) Variable {
 	case !v.isSet:
 		out.Value = cty.UnknownVal(v.ty)
 	case v.ty != cty.DynamicPseudoType && out.Value.IsWhollyKnown():
-		converted, err := v.convert(out.Value)
+		// A module input can hold sensitive values. Conversion can change the value's shape,
+		// so marks are taken off and, failing closed, put back on the whole value.
+		val, marks := out.Value.UnmarkDeep()
+		converted, err := v.convert(val)
+		if len(marks) > 0 {
+			converted = converted.WithMarks(marks)
+		}
 		if err != nil {
 			m.diag(SeverityWarning, DiagVariableType, "Value does not match the variable type",
 				fmt.Sprintf("The value of variable %q is not a valid %s, so it is used unconverted.", v.Name, out.Type),

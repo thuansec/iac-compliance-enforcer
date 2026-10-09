@@ -253,16 +253,31 @@ locations and without executing anything.
     - tests cover nesting, an escape, a self-call and an A→B→A cycle, depth 32 and 33, a fan-out tree at the call limit and above it, and a child in a hidden directory
   - attempts: 1
   - result: terraform.LoadModuleTree builds the call tree of one root depth first (addresses, literal source/version, ranges); local sources resolve inside the scan root without following any symlink (Lstat per component), each directory parsed and analyzed once, hidden directories listed within discovery's file budget (Discovery.Entries); unresolved calls stay in the tree with a reason and a module_unresolved warning; depth 32, cycles by directory, and at most 1,000 calls per tree, resolved or not, then Truncated (ADR 0008); duplicate/invalid names are errors; T-0107 split into a–f; go toolchain 1.27.2 for GO-2026-6604
-- [ ] T-0107b · Flow module inputs and outputs
+- [x] T-0107b · Evaluate module inputs into a child's variables
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107a
   - accept:
-    - module inputs are evaluated in the caller's context and become the child's variables (type conversion, defaults, sensitivity as in EvaluateVariables); outputs are evaluated in the child's context and exposed to the caller as `module.<name>.<output>`, in locals, resources and other module inputs, ordered by dependencies with cycles reported; unresolved modules' outputs are unknown
-    - each call evaluates in its own state (diagnostics, function work, budgets) over the shared parse; the work of the whole tree is bounded so a fan-out of calls cannot multiply the per-module budgets into a hang; resources carry their module address
+    - a module call's arguments (not source, version, count, for_each, providers or depends_on) are evaluated in the caller's context with var and local, within the size limits that bound resource attributes; module, resource and other references are unknown until T-0107h
+    - they become the child's variables as in EvaluateVariables: type conversion with optional defaults, nullable, declared defaults for absent inputs, and sensitivity from either side; a missing required input or an argument the child does not declare is an error as in Terraform
+    - each module instance evaluates in its own state (diagnostics, function work, regex cache) over the shared parse; tests show two instances of one parse do not share budgets or diagnostics
+  - attempts: 1
+  - result: ParsedModule.ModuleInputs evaluates a call's arguments (meta-arguments skipped, nested blocks an error) through evalBounded with var/local in the caller; EvaluateModuleVariables applies them to the child's declared variables (conversion, optional defaults, nullable, defaults, sensitivity re-marked over the whole converted value), with missing_module_input and undeclared_module_input errors; NewInstance gives each call its own diagnostics, function state, regex cache and source map; T-0107b split into b, g, h; follow-up T-0119
+- [ ] T-0107g · Evaluate the module tree
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107b
+  - accept:
+    - every resolved call of a ModuleTree is evaluated as an instance (inputs, variables, locals, resources), depth first; resources carry their module address (`module.a.module.b`) and the call's source range
+    - the evaluation work of the whole tree is bounded: up to 1,000 instances cannot multiply the per-module budgets (values, expansion work, function work, file reads) into a hang or OOM; past the tree budget, instances are unknown with a limit diagnostic; tests with a fan-out of large modules finish within the time budget
+  - attempts: 0
+- [ ] T-0107h · Expose module outputs to callers
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107g
+  - accept:
+    - outputs are evaluated in the child's context (sensitive outputs marked) and exposed to the caller as `module.<name>.<output>` in locals, resources and other module inputs, ordered by dependencies with cycles reported; outputs of unresolved modules are unknown
   - attempts: 0
 - [ ] T-0107c · Expand count and for_each on module calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0107b
+  - depends: T-0107h
   - accept:
     - module calls with count or for_each produce `module.x[0]` / `module.x["k"]` instance prefixes with count.index/each.* in the inputs; unknown or invalid expansions are one `module.x[*]` placeholder with unknown inputs, as T-0106b does for resources; instances count toward the tree's limits
   - attempts: 0
@@ -280,7 +295,7 @@ locations and without executing anything.
   - attempts: 0
 - [ ] T-0107f · Resolve paths inside child module instances as Terraform does
   - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0107b
+  - depends: T-0107g
   - accept:
     - inside a child module instance, path.module is the child's path relative to the root module, path.root is ".", and file/fileexists/templatefile resolve relative paths against the root module directory as Terraform does (T-0105c resolves them against the module's own directory, which is right only for root modules)
   - attempts: 0
@@ -297,7 +312,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008)
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -359,6 +374,13 @@ locations and without executing anything.
   - accept:
     - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
     - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
+  - attempts: 0
+- [ ] T-0119 · Reject null for a non-nullable variable without a default
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0107b
+  - accept:
+    - a `null` module input, tfvars value or --var value for a variable with `nullable = false` and no default is an error as in Terraform ("required variable may not be set to null"), and the variable is unknown (T-0107b review: today it stays null without a diagnostic)
+    - tests cover a module input, a tfvars value and a --var flag
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
   - skills: iace-architecture
