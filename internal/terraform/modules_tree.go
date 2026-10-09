@@ -26,6 +26,17 @@ const (
 	// DiagInvalidModuleName: a module call's name is not an identifier. Terraform rejects the
 	// module.
 	DiagInvalidModuleName DiagCode = "invalid_module_name"
+	// DiagModuleManifestInvalid: the root module's .terraform/modules/modules.json cannot be
+	// used (malformed, too large, duplicate keys), so no remote module is resolved through it.
+	DiagModuleManifestInvalid DiagCode = "module_manifest_invalid"
+)
+
+// The module manifest that `terraform init` writes in a trusted context: remote modules resolve
+// only through it, and only to directories inside the scan root (T-0107d).
+const (
+	manifestFile       = ".terraform/modules/modules.json"
+	maxManifestSize    = 1 << 20
+	maxManifestEntries = 10_000
 )
 
 // Limits on the module call tree of one root module (ADR 0008). Terraform has no depth limit,
@@ -41,9 +52,12 @@ type UnresolvedReason string
 
 // Unresolved reasons.
 const (
-	// UnresolvedRemote: a registry, git, http or other non-local source. T-0107d resolves these
-	// through .terraform/modules/modules.json.
+	// UnresolvedRemote: a registry, git, http or other non-local source that no trusted module
+	// manifest resolves (TreeOptions.TrustModuleManifest).
 	UnresolvedRemote UnresolvedReason = "remote_source"
+	// UnresolvedStaleManifest: the manifest entry for the call records another source, so its
+	// directory may hold other code than the call names.
+	UnresolvedStaleManifest UnresolvedReason = "stale_manifest"
 	// UnresolvedSourceNotLiteral: source is not a literal string, which Terraform rejects too.
 	UnresolvedSourceNotLiteral UnresolvedReason = "source_not_literal"
 	// UnresolvedMissingSource: the call has no source, which Terraform rejects too.
@@ -68,7 +82,8 @@ const (
 
 // unresolvedDetail explains each reason in a diagnostic.
 var unresolvedDetail = map[UnresolvedReason]string{
-	UnresolvedRemote:           "The module source is not local; iace does not download modules, so this module is not checked.",
+	UnresolvedRemote:           "The module source is not local and no trusted .terraform/modules/modules.json resolves it; iace does not download modules, so this module is not checked.",
+	UnresolvedStaleManifest:    "The .terraform/modules/modules.json entry for this call records another source, or a form of it iace does not normalize (such as github.com shorthand), so this module is not checked.",
 	UnresolvedSourceNotLiteral: "The module source is not a literal string, so this module is not checked.",
 	UnresolvedMissingSource:    "The module call has no source, so no module is checked.",
 	UnresolvedOutsideRoot:      "The module source leaves the scan root, so this module is not checked.",
@@ -104,6 +119,8 @@ type ModuleNode struct {
 	Module *ParsedModule
 	// Calls are the module's module blocks in block order, without duplicates.
 	Calls []*ModuleCall
+	// key is the module's key in the manifest: the call names from the root, dot-joined.
+	key string
 }
 
 // ModuleCall is one module block.
@@ -137,9 +154,14 @@ type treeLoader struct {
 	lister *walker
 	// listFull records that listing reached the file limit: later directories list nothing.
 	listFull bool
-	calls    int
-	full     bool
-	loading  []string // the directories from the root to the node being loaded
+	// rootDir is the root module's directory; manifest maps its manifest's keys to entries,
+	// nil without a usable manifest, and manifestErr says why one was not usable.
+	rootDir     string
+	manifest    map[string]manifestEntry
+	manifestErr string
+	calls       int
+	full        bool
+	loading     []string // the directories from the root to the node being loaded
 }
 
 // parsedDir is one directory's parse with its module calls, analyzed once for all its nodes.
@@ -159,16 +181,27 @@ type callSpec struct {
 	where hcl.Range
 }
 
-// LoadModuleTree parses the root module in dir, a directory of d, and the local modules it
-// calls, recursively, depth first in block order. Each call's literal source is resolved against
+// TreeOptions are trusted settings for loading a module tree. They come from the pipeline (CLI
+// flags or environment), never from the scanned repository or its .iace.yaml.
+type TreeOptions struct {
+	// TrustModuleManifest resolves remote module sources through the root module's
+	// .terraform/modules/modules.json. Only a pipeline that removed any committed .terraform and
+	// ran `terraform init` in a trusted step may set it: the scanned repository can commit a
+	// manifest and module copies of its own (ADR 0013).
+	TrustModuleManifest bool
+}
+
+// LoadModuleTree parses the root module in dir, a directory of d, and the modules it calls,
+// recursively, depth first in block order. Each call's literal source is resolved against
 // the calling directory and must stay inside the scan root without passing through a symlink; a
 // directory discovery did not walk (a hidden one) is listed with discovery's rules and within its
 // file budget. Every call up to MaxModuleCalls stays in the tree: one that cannot be loaded is
 // unresolved, with a module_unresolved warning on its caller. Each directory is parsed and its
-// module blocks analyzed once, however many calls load it. Nothing is evaluated. Problems in the
+// module blocks analyzed once, however many calls load it. Remote sources resolve only through
+// the module manifest, and only when opts trusts it (ADR 0013). Nothing is evaluated. Problems in the
 // files are diagnostics on the modules; a file or directory that can no longer be read, a root
 // that d does not list, or a cancelled context is an error.
-func LoadModuleTree(ctx context.Context, root *fsutil.Root, d *Discovery, dir string, limits Limits) (*ModuleTree, error) {
+func LoadModuleTree(ctx context.Context, root *fsutil.Root, d *Discovery, dir string, limits Limits, opts TreeOptions) (*ModuleTree, error) {
 	l := &treeLoader{
 		root:   root,
 		limits: limits,
@@ -183,6 +216,10 @@ func LoadModuleTree(ctx context.Context, root *fsutil.Root, d *Discovery, dir st
 	}
 	if _, ok := l.dirs[dir]; !ok {
 		return nil, fmt.Errorf("load module tree: %q is not a discovered directory", dir)
+	}
+	l.rootDir = dir
+	if opts.TrustModuleManifest {
+		l.manifest, l.manifestErr = readManifest(root, path.Join(dir, manifestFile))
 	}
 	node := &ModuleNode{Dir: dir}
 	if err := l.load(ctx, node); err != nil {
@@ -202,6 +239,10 @@ func (l *treeLoader) load(ctx context.Context, node *ModuleNode) error {
 		return err
 	}
 	node.Module = p.m
+	if node.Depth == 0 && l.manifestErr != "" {
+		p.m.diag(SeverityWarning, DiagModuleManifestInvalid, "Module manifest not used",
+			l.manifestErr+", so no remote module is resolved through it.", path.Join(l.rootDir, manifestFile), 0, 0)
+	}
 	l.loading = append(l.loading, node.Dir)
 	defer func() { l.loading = l.loading[:len(l.loading)-1] }()
 
@@ -228,12 +269,23 @@ func (l *treeLoader) load(ctx context.Context, node *ModuleNode) error {
 			return nil
 		}
 		l.calls++
-		call.Unresolved = s.reason
-		if s.reason != "" {
-			continue // reported by analyze
+		key := call.Name
+		if node.key != "" {
+			key = node.key + "." + call.Name
+		}
+		target, reason := s.target, s.reason
+		if reason == UnresolvedRemote {
+			target, reason = l.remote(key, s.source)
+		}
+		call.Unresolved = reason
+		if reason != "" {
+			if s.reason == UnresolvedRemote {
+				unresolved(p.m, s, reason) // analyze reports the reasons that hold everywhere
+			}
+			continue
 		}
 		switch {
-		case slices.Contains(l.loading, s.target):
+		case slices.Contains(l.loading, target):
 			call.Unresolved = UnresolvedCycle
 		case node.Depth+1 > MaxModuleDepth:
 			call.Unresolved = UnresolvedDepthLimit
@@ -242,7 +294,7 @@ func (l *treeLoader) load(ctx context.Context, node *ModuleNode) error {
 			unresolved(p.m, s, call.Unresolved)
 			continue
 		}
-		call.Child = &ModuleNode{Address: call.Address, Dir: s.target, Depth: node.Depth + 1}
+		call.Child = &ModuleNode{Address: call.Address, Dir: target, Depth: node.Depth + 1, key: key}
 		if err := l.load(ctx, call.Child); err != nil {
 			return err
 		}
@@ -321,8 +373,8 @@ func (l *treeLoader) analyze(m *ParsedModule) []callSpec {
 			}
 			s.target, s.reason = localSource(l.root, m.Dir, s.source)
 		}
-		if s.reason != "" {
-			unresolved(m, &s, s.reason)
+		if s.reason != "" && s.reason != UnresolvedRemote {
+			unresolved(m, &s, s.reason) // a remote source may resolve through the manifest
 		}
 		specs = append(specs, s)
 	}
@@ -377,17 +429,22 @@ func (w *walker) list(ctx context.Context, dir string) (files []string, full boo
 }
 
 // localSource resolves a local module source ("./" or "../", either slash) against the calling
-// directory. It returns the reason when src is not local, leaves the scan root, passes through a
-// symlink, or is not a directory inside it. Each component is checked without following it, so
-// no symlink is followed at all; os.Root's escape error is not exported, so any error other than
-// a missing path counts as leaving the root.
+// directory. It returns the reason when src is not local, or when the directory is not usable
+// (confinedDir).
 func localSource(root *fsutil.Root, dir, src string) (string, UnresolvedReason) {
 	src = strings.ReplaceAll(src, `\`, "/")
 	if !strings.HasPrefix(src, "./") && !strings.HasPrefix(src, "../") {
 		return "", UnresolvedRemote
 	}
-	target := path.Join(dir, src)
-	if target == ".." || strings.HasPrefix(target, "../") {
+	return confinedDir(root, path.Join(dir, src))
+}
+
+// confinedDir checks a cleaned, root-relative target directory: it returns the reason when the
+// target leaves the scan root, passes through a symlink, or is not a directory inside it. Each
+// component is checked without following it, so no symlink is followed at all; os.Root's escape
+// error is not exported, so any error other than a missing path counts as leaving the root.
+func confinedDir(root *fsutil.Root, target string) (string, UnresolvedReason) {
+	if target == ".." || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/") {
 		return "", UnresolvedOutsideRoot
 	}
 	if target == "." {

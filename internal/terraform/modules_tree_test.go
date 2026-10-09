@@ -35,7 +35,7 @@ func loadTreeErr(ctx context.Context, t *testing.T, dir, rootDir string) (*terra
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	return terraform.LoadModuleTree(ctx, r, d, rootDir, limits)
+	return terraform.LoadModuleTree(ctx, r, d, rootDir, limits, terraform.TreeOptions{})
 }
 
 // flatten lists every call of the tree depth first as "address dir" or "address !reason".
@@ -385,7 +385,7 @@ func TestLoadModuleTreeSharesTheFileBudget(t *testing.T) {
 	if d.Entries != 2 { // main.tf and the skipped big/x.tf
 		t.Fatalf("discovery counted %d entries, want 2", d.Entries)
 	}
-	tree, err := terraform.LoadModuleTree(context.Background(), r, d, ".", limits)
+	tree, err := terraform.LoadModuleTree(context.Background(), r, d, ".", limits, terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

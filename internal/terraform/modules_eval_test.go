@@ -30,7 +30,7 @@ func evaluateTree(ctx context.Context, t *testing.T, dir string) ([]*terraform.M
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := terraform.LoadModuleTree(load, r, d, ".", limits)
+	tree, err := terraform.LoadModuleTree(load, r, d, ".", limits, terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

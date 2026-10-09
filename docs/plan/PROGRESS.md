@@ -1251,3 +1251,35 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       wording is now neutral.
   - Round 2: APPROVE, no findings. The probe now runs in 8.9 s at its worst nesting.
 - Next: T-0107d (modules.json), then T-0107e.
+
+## 2026-10-09 · T-0107d · done
+- What: remote modules resolve through a trusted module manifest.
+  - LoadModuleTree takes TreeOptions (trusted pipeline input). With TrustModuleManifest set
+    (off by default), it reads the root module's .terraform/modules/modules.json (readManifest).
+    The manifest is capped at 1 MiB and 10,000 entries, and must be one JSON value with no
+    duplicate keys. Otherwise it is ignored, with module_manifest_invalid.
+  - Remote calls resolve per call by their key (ModuleNode.key, the dot-joined call names). The
+    entry must record the call's source, or the source prefixed with `registry.terraform.io/`;
+    otherwise the call is stale_manifest. Its Dir must not be empty, absolute or a Windows
+    volume, and must pass confinedDir (split out of localSource).
+  - Remote warnings are reported per call, in load. ADR 0013 records the trust model. Threat
+    model T2 and T4 are updated, and T-0109 gains the flag and gap mappings.
+- Files: internal/terraform/{modules_manifest.go,modules_tree.go,modules_manifest_test.go,
+  modules_tree_unix_test.go, and the LoadModuleTree callers in tests},
+  docs/adr/0013-resolve-remote-modules-through-the-module-manifest.md,
+  docs/security/threat-model.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test:
+    - the trust gate, the source check, the duplicate check, the trailing-data check;
+    - flat keys, the absolute/volume check, the entry cap, the empty-Dir check.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: a manifest committed in a pull request was trusted by default. A pull request
+      could replace an unresolved_module gap with a benign module copy and pass
+      `--fail-on-gaps` (T4), and the ADR's `terraform init` mitigation was wrong.
+    - Fixed: resolution is off by default and needs trusted input, and the ADR and threat
+      model are corrected.
+    - Minors: the shorthand-source limitation is recorded and tested, T-0109 gap mappings were
+      added, and entry-limit and empty-Dir tests were added.
+  - Round 2: APPROVE, no findings.
+- Next: T-0107e (local children that no root instantiates).

@@ -65,3 +65,19 @@ func TestLoadModuleTreeRecordsSkipsInUndiscoveredDirs(t *testing.T) {
 		t.Errorf("tree = %v", got)
 	}
 }
+
+func TestManifestEntriesNeverFollowSymlinks(t *testing.T) {
+	t.Parallel()
+	dir := files(t, map[string]string{
+		"main.tf":                         module("m", "acme/m/aws"),
+		"real/main.tf":                    "",
+		".terraform/modules/modules.json": `{"Modules":[{"Key":"m","Source":"registry.terraform.io/acme/m/aws","Dir":".terraform/modules/link"}]}`,
+	})
+	if err := os.Symlink(filepath.Join("..", "..", "real"), filepath.Join(dir, ".terraform", "modules", "link")); err != nil {
+		t.Fatal(err)
+	}
+	tree := loadTrusted(t, dir, ".")
+	if diff := cmp.Diff([]string{"module.m !symlinked_directory"}, flatten(tree.Root)); diff != "" {
+		t.Errorf("tree (-want +got):\n%s", diff)
+	}
+}

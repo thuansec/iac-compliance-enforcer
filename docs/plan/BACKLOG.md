@@ -292,12 +292,13 @@ locations and without executing anything.
     - module calls with count or for_each produce `module.x[0]` / `module.x["k"]` instance prefixes with count.index/each.* in the inputs; unknown or invalid expansions are one `module.x[*]` placeholder with unknown inputs, as T-0106b does for resources; instances count toward the tree's limits
   - attempts: 1
   - result: module calls expand by count and for_each through the resource expand() in the caller (sorted keys, [*] placeholder, 10,000 per call); instances are addressed module.a[0].module.b["k"] with Key/ExpansionUnknown and count/each in their inputs; callers see a tuple, an object by key, or unknown for placeholders and cut expansions; the tree is capped at 10,000 module instances, and argument source re-evaluated per instance is charged as expansion work (ADR 0012)
-- [ ] T-0107d · Resolve remote modules through .terraform/modules/modules.json
+- [x] T-0107d · Resolve remote modules through .terraform/modules/modules.json
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107a
   - accept:
     - remote modules resolve only via an existing .terraform/modules/modules.json (strict JSON with a size cap, keyed by module path), and only to directories inside the scan root; anything else stays unresolved and is reported as a coverage gap
-  - attempts: 0
+  - attempts: 1
+  - result: remote sources resolve per call key through the root's .terraform/modules/modules.json only when the pipeline trusts it (TreeOptions.TrustModuleManifest, off by default; flag in T-0109); the manifest is capped (1 MiB, 10,000 entries, no trailing data or duplicate keys; module_manifest_invalid otherwise), entries must record the call's source (stale_manifest otherwise) and a confined, symlink-free Dir (ADR 0013, threat model T4)
 - [ ] T-0107e · Never skip a local child that no root instantiates
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107c
@@ -323,8 +324,9 @@ locations and without executing anything.
   - depends: T-0108, T-0113, T-0115, T-0116
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
+    - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
