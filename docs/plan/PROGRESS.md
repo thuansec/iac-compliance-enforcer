@@ -1078,3 +1078,36 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   Terraform decodes module sources without a context, so they are literal strings
   (TestModuleSourcesNeverEvaluates).
 - Next: T-0107b (flow module inputs and outputs).
+
+## 2026-10-09 · T-0107b · done
+- What: module inputs become a child module's variables.
+  - The old T-0107b was split into T-0107b (inputs), T-0107g (evaluate the tree within a
+    tree-wide budget) and T-0107h (outputs as `module.x.y`). T-0107c and T-0107f were re-pointed.
+  - ParsedModule.ModuleInputs evaluates a call's arguments in the caller with var and local,
+    through the resource decoder's evalBounded (per-value and per-call size limits).
+    newResourceDecoder was factored out of DecodeResources.
+    - source, version, count, for_each, providers and depends_on are skipped.
+    - A nested block is an HCL error.
+    - Module, resource and other references are unknown.
+  - EvaluateModuleVariables shares declareVariables with EvaluateVariables.
+    - Inputs replace defaults.
+    - An undeclared input is an error (undeclared_module_input), and a missing required input
+      is an error and unknown (missing_module_input). Both are reported in the caller's file.
+  - finishVariable unmarks deeply before conversion and marks the whole converted value when
+    anything was sensitive (fail closed).
+  - NewInstance shares the parse's blocks and gives each instance its own diagnostics, function
+    table and work, file reads, regex cache and source map.
+- Files: internal/terraform/{modules_inputs.go,modules_inputs_test.go,
+  modules_inputs_internal_test.go,variables.go,resources.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test: no meta-argument filter, NewInstance returning the parse,
+    no missing-input check, no re-marking after conversion.
+  - The first size test used a 1024×1024 nested `for` and took 15.5s, which is the known
+    T-0113 gap. It was replaced by a large variable default.
+- Review: iace-reviewer, APPROVE with three minors.
+  - The shared src map was written by EvaluateVariables: fixed with maps.Clone per instance,
+    and tested.
+  - Size edges, the per-call total and cancellation were untested: tests added.
+  - A null value for a non-nullable variable without a default is accepted silently (also in
+    EvaluateVariables): follow-up T-0119.
+- Next: T-0107g (evaluate the module tree).
