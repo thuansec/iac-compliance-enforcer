@@ -233,7 +233,7 @@ func (m *ParsedModule) renderTemplate(p string, vars map[string]cty.Value) cty.V
 	tokens, _ := hclsyntax.LexTemplate(src, name, hcl.InitialPos)
 	if scanTokens(tokens, maxOperators) != nil {
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
-			"The template is nested too deeply or has too many operators to evaluate safely, so its value is unknown.",
+			"The template is nested too deeply, or has too many operators or chained steps, to evaluate safely, so its value is unknown.",
 			name, 0, 0)
 		return unknown
 	}

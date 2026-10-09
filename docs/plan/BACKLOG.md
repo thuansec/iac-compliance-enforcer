@@ -355,17 +355,24 @@ locations and without executing anything.
     - the parsed syntax trees a scan keeps (all files of all modules of all roots, a directory parsed once per tree) are bounded by a scan-wide budget counted in lexer tokens (about 90 bytes of live heap each, T-0111a); past it a file is not parsed and is reported (a limit diagnostic that T-0109 maps to a limit_exceeded gap); tests at, below and above the budget; the budget leaves room for one file's transient parse peak, about 450 MB in the worst case (ADR 0016)
   - attempts: 1
   - result: one ParseBudget per scan (Limits pointer; EvaluateRoots creates one when absent) of 3,000,000 budget tokens: HCL costs its lexer tokens plus one per 30 bytes, JSON its bytes; files past the budget are not parsed, keep no source and get parse_limit; kept heap measured at ≤ 128 B per budget token (≈ 384 MB) for eight shapes (ADR 0017)
-- [ ] T-0111c · Bound index chains
+- [x] T-0111c · Bound index chains
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0111a
   - accept:
     - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded: in a 5 MiB file they evaluated but used about 2.4 GB (measured in the T-0104a review); re-measure at the T-0111a limit and bound the chain length or its evaluation work, with tests at, below and above the bound
-  - attempts: 0
+  - attempts: 1
+  - result: checkChains (scanTokens, every evaluated expression) refuses more than 1,024 nested postfix steps, counted through parentheses, index keys, call arguments and splats, as expression_too_complex; a refused 1 MiB chain uses no measurable stack (128 MB before) but still allocates about 1.1 GB from lexing twice (T-0111e) (ADR 0018)
 - [ ] T-0111d · Memoize only containers in holdsDynamicSource
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0111a
   - accept:
     - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: a flat 2.4 MB array allocated about 2.4 GB in total and kept one memo entry per element (T-0106e review); a test bounds the allocation
+  - attempts: 0
+- [ ] T-0111e · Lex an evaluated expression once
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0111c
+  - accept:
+    - an expression's source is lexed and checked (scanTokens) at most once per evaluation: refusing a 1 MiB postfix chain allocated about 1.1 GB in total because evaluateLocals (inspectExpr) and evalExpr (safeToEvaluate) each lex it (T-0111c review); a test bounds the allocation of a refused 1 MiB expression
   - attempts: 0
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing

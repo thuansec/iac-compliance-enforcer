@@ -1498,3 +1498,29 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its minors (a fallback test, nested blocks and JSON shapes, stale
     comments, RSS versus live heap noted for T-0109's benchmark) are done.
 - Next: T-0111c (index chains).
+
+## 2026-10-09 · T-0111c · done
+- What: postfix chains in evaluated expressions are bounded.
+  - checkChains runs inside scanTokens whenever maxOps is set: inspectExpr, JSON templates,
+    --var expressions and templatefile templates. It refuses more than maxChain = 1,024 nested
+    postfix steps, so the expression is unknown with expression_too_complex (T-0109 maps it to
+    limit_exceeded). Parsing is not limited.
+  - The count follows the syntax tree's depth. It carries through parentheses, index keys, call
+    arguments and `.*`/`[*]` splats. It resets at operators, commas and any open bracket other
+    than an index `[`. `[local.k]` counts two per step, a conservative overcount. ADR 0018 records
+    the decision.
+- Measurements: before the fix, a 1 MiB chain (about 350,000 steps) allocated about 600 MB and
+  used about 128 MB of stack. After the fix it is refused with no measurable stack, but still
+  allocates about 1.1 GB because it is lexed twice (follow-up T-0111e).
+- Files: internal/terraform/{nesting.go,evalguard.go,functions_files.go,chains_internal_test.go},
+  docs/adr/0018-bound-postfix-chains-in-evaluated-expressions.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. The new bypass tests fail under round 1's per-level count.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: parentheses, `.*` splats and index keys bypassed the per-level count.
+    - Minors: no measurement after the fix; evalExpr's message wording.
+    - All fixed. T-0111e added.
+  - Round 2: APPROVE. Its minor: an owner edit to .gitignore (`/materials/`) appeared in the
+    tree during the iteration. It was left out of this commit, stashed as "owner edit: ignore
+    /materials/", and restored on main afterwards.
+- Next: T-0111d (memoize only containers in holdsDynamicSource).
