@@ -114,6 +114,7 @@ type callEvaluator func(c *ModuleCall, locals map[string]Local, modules map[stri
 // asked before each local: once it reports true, the remaining locals are unknown (the tree
 // budget is used up, ADR 0011). It returns the locals and module.<name> of every call.
 func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Variable, calls []*ModuleCall, evalCall callEvaluator, stop func() bool) (map[string]Local, map[string]cty.Value, error) {
+	defer m.forgetInspections()
 	states, order := m.declareLocals()
 	byName := make(map[string]*ModuleCall, len(calls))
 	for _, c := range calls {

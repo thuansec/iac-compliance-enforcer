@@ -92,6 +92,7 @@ type varState struct {
 // context. Problems in the repository's files are diagnostics; problems with opts, or a file
 // that cannot be read, are errors.
 func (m *ParsedModule) EvaluateVariables(ctx context.Context, root *fsutil.Root, opts VarOptions, limits Limits) (map[string]Variable, error) {
+	defer m.forgetInspections()
 	vars := m.declareVariables()
 
 	files, err := m.tfvarsFiles(root)
@@ -241,14 +242,11 @@ func (m *ParsedModule) applyVarsFile(root *fsutil.Root, name string, limits Limi
 	if err != nil {
 		return err
 	}
-	if m.src == nil {
-		m.src = map[string][]byte{}
-	}
 	// Values are evaluated here, so the tfvars source is dropped afterwards, unless the file is
 	// one of the module's own (a --var-file may name one), whose source later stages need.
 	if _, own := m.src[name]; !own {
-		m.src[name] = data
-		defer delete(m.src, name)
+		m.setSource(name, data)
+		defer m.dropSource(name)
 	}
 	if err := checkNesting(name, data); err != nil {
 		line := 0
@@ -319,12 +317,9 @@ func (m *ParsedModule) applyVarFlag(i int, kv string, vars map[string]*varState)
 	if diags.HasErrors() {
 		return fmt.Errorf("--var %q: not a valid expression: %s", name, diags[0].Summary)
 	}
-	if m.src == nil {
-		m.src = map[string][]byte{}
-	}
-	m.src[file] = src
+	m.setSource(file, src)
 	val, diags := m.evalExpr(expr, nil)
-	delete(m.src, file)
+	m.dropSource(file)
 	if diags.HasErrors() {
 		return fmt.Errorf("--var %q: %s", name, diags[0].Summary)
 	}

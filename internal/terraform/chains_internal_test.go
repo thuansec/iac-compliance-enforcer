@@ -2,9 +2,13 @@ package terraform
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
 
 // tooComplex evaluates local "x" = expr and reports whether it was refused as too complex.
@@ -76,5 +80,70 @@ func TestLongestChainIsRefused(t *testing.T) {
 	expr := "aws_x.y" + strings.Repeat("[0]", (int(DefaultLimits().MaxFileSize)-64)/3)
 	if !tooComplex(t, expr) {
 		t.Error("a 1 MiB chain was evaluated")
+	}
+}
+
+// An expression is lexed and checked once per module: evaluateLocals inspects a local and
+// evalExpr checks it again before evaluating. Refusing a 1 MiB chain allocated about 1.1 GB when
+// each check lexed it (T-0111c review); it costs about one inspection now.
+func TestRefusedExpressionIsLexedOnce(t *testing.T) {
+	expr := "aws_x.y" + strings.Repeat("[0]", (int(DefaultLimits().MaxFileSize)-64)/3)
+	src := "locals {\n  x = " + expr + "\n}\n"
+	measure := func(f func(m *ParsedModule)) uint64 {
+		m := parseLocalsModule(t, src)
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		f(m)
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	once := measure(func(m *ParsedModule) {
+		states, _ := m.declareLocals()
+		m.inspectExpr(states["x"].attr.Expr)
+	})
+	all := measure(func(m *ParsedModule) {
+		if _, err := m.EvaluateLocals(context.Background(), map[string]Variable{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if all > once+once/4 {
+		t.Errorf("evaluating the locals allocated %d bytes, one inspection %d; want about one", all, once)
+	}
+}
+
+// A file's inspections are forgotten when its source is set again or dropped, so a name reused
+// with other bytes (a --var, a tfvars file) is never judged by its earlier bytes; and an
+// evaluation stage does not keep them.
+func TestInspectionsFollowTheSource(t *testing.T) {
+	t.Parallel()
+	unsafe := "a" + strings.Repeat("[0]", maxChain+1)
+	safe := `"` + strings.Repeat("x", len(unsafe)-2) + `"` // the same range
+	expr, diags := hclsyntax.ParseExpression([]byte(safe), "v", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatal(diags)
+	}
+	m := &ParsedModule{}
+	m.setSource("v", []byte(safe))
+	if _, ok := m.inspectExpr(expr); !ok {
+		t.Fatal("the safe source was refused")
+	}
+	m.setSource("v", []byte(unsafe))
+	if _, ok := m.inspectExpr(expr); ok {
+		t.Error("new bytes under the same name were judged by the old ones")
+	}
+	m.setSource("v", []byte(safe))
+	m.inspectExpr(expr)
+	m.dropSource("v")
+	if _, ok := m.inspectExpr(expr); ok {
+		t.Error("a dropped source was still safe")
+	}
+
+	l := parseLocalsModule(t, "locals {\n  x = 1\n}\n")
+	if _, err := l.EvaluateLocals(context.Background(), map[string]Variable{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.inspected) != 0 {
+		t.Errorf("%d files of inspections kept after the locals were evaluated", len(l.inspected))
 	}
 }
