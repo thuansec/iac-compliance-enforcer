@@ -1538,3 +1538,29 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: iace-reviewer, 1 round: APPROVE. Its minor (pin `{"dynamic": {}}` and `[]` as true,
   `null` as false) was added to TestHoldsDynamicSource.
 - Next: T-0111e (lex an evaluated expression once).
+
+## 2026-10-09 · T-0111e · done
+- What: an evaluated expression is lexed and checked once per evaluation stage.
+  - inspectExpr is memoized on ParsedModule by file and source range. It replaces the resource
+    decoder's own memo, so locals, module inputs, variables, type expressions and resources
+    share it.
+  - setSource/dropSource replace the direct m.src writes (file parse, temporary tfvars and
+    --var sources) and forget that file's inspections, so a reused name is never judged by
+    earlier bytes.
+  - forgetInspections clears the memo when a stage ends (EvaluateVariables, evaluateLocals,
+    ModuleInputs, EvaluateModuleVariables, decodeResources). The memo is about 11 times the
+    source it covers, so it is not kept for the whole scan.
+- Measurements: EvaluateLocals on a refused 1 MiB chain allocated 1.23 GB, twice one inspection
+  (613 MB). It now stays within 1.25 times one inspection.
+- Files: internal/terraform/{evalguard.go,parse.go,variables.go,locals.go,modules_inputs.go,
+  resources.go,references.go,chains_internal_test.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - TestRefusedExpressionIsLexedOnce fails without the memo (2 times one inspection).
+  - TestInspectionsFollowTheSource fails when the invalidation and the stage clearing are
+    removed (mutation run).
+- Review: iace-reviewer, 1 round: APPROVE. Its two minors are done: a test for memo invalidation,
+  and clearing the memo per stage (it would otherwise keep about 11 times the source per module
+  instance for the whole scan). Its note: --var values are still lexed twice (a scanTokens
+  before parsing protects the parser), which is accepted because the CLI input is trusted and
+  small.
+- Next: the next ready M1 task.

@@ -56,15 +56,62 @@ func (m *ParsedModule) safeToEvaluate(expr hcl.Expression) bool {
 	return ok
 }
 
+// inspection is inspectExpr's result for one expression.
+type inspection struct {
+	calls []functionCall
+	safe  bool
+}
+
+// setSource records a file's bytes for the expression checks, forgetting any inspection of
+// earlier bytes under the same name.
+func (m *ParsedModule) setSource(name string, data []byte) {
+	if m.src == nil {
+		m.src = map[string][]byte{}
+	}
+	m.src[name] = data
+	delete(m.inspected, name)
+}
+
+// dropSource forgets a file's bytes and its inspections.
+func (m *ParsedModule) dropSource(name string) {
+	delete(m.src, name)
+	delete(m.inspected, name)
+}
+
+// forgetInspections drops the memo when a stage of evaluation ends (variables, locals, module
+// inputs, resources): within a stage each expression is lexed once, and the memo, about 11 times
+// the source it covers, is not kept for the rest of the scan.
+func (m *ParsedModule) forgetInspections() {
+	m.inspected = nil
+}
+
 // inspectExpr reports whether expr is safe to evaluate, as safeToEvaluate, and if so lists the
-// functions it calls.
+// functions it calls. Results are memoized by source range (inspected): evaluating an expression
+// checks it again, and so does each instance of a count or for_each resource.
 func (m *ParsedModule) inspectExpr(expr hcl.Expression) ([]functionCall, bool) {
 	r := expr.Range()
 	src, ok := m.src[r.Filename]
 	if !ok || r.Start.Byte < 0 || r.Start.Byte > r.End.Byte || r.End.Byte > len(src) {
 		return nil, false
 	}
-	text := src[r.Start.Byte:r.End.Byte]
+	key := [2]int{r.Start.Byte, r.End.Byte}
+	if in, ok := m.inspected[r.Filename][key]; ok {
+		return in.calls, in.safe
+	}
+	calls, safe := m.inspectSource(expr, src[r.Start.Byte:r.End.Byte])
+	if m.inspected == nil {
+		m.inspected = map[string]map[[2]int]inspection{}
+	}
+	if m.inspected[r.Filename] == nil {
+		m.inspected[r.Filename] = map[[2]int]inspection{}
+	}
+	m.inspected[r.Filename][key] = inspection{calls, safe}
+	return calls, safe
+}
+
+// inspectSource is inspectExpr without the memo: text is expr's source.
+func (m *ParsedModule) inspectSource(expr hcl.Expression, text []byte) ([]functionCall, bool) {
+	r := expr.Range()
 	if isJSON(expr) {
 		calls, err := jsonTemplateCalls(r.Filename, text)
 		return calls, err == nil

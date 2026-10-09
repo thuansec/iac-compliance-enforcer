@@ -369,12 +369,13 @@ locations and without executing anything.
     - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: a flat 2.4 MB array allocated about 2.4 GB in total and kept one memo entry per element (T-0106e review); a test bounds the allocation
   - attempts: 1
   - result: jsonContainer calls the JSON expression's own ExprMap/ExprList (no error diagnostic per scalar); holdsDynamicSource returns false for scalars before the memo, so only objects and arrays are memoized; a flat 2.4 MB array stays under 32 B per source byte with one memo entry (was 643 MB and 1,200,002 entries)
-- [ ] T-0111e · Lex an evaluated expression once
+- [x] T-0111e · Lex an evaluated expression once
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0111c
   - accept:
     - an expression's source is lexed and checked (scanTokens) at most once per evaluation: refusing a 1 MiB postfix chain allocated about 1.1 GB in total because evaluateLocals (inspectExpr) and evalExpr (safeToEvaluate) each lex it (T-0111c review); a test bounds the allocation of a refused 1 MiB expression
-  - attempts: 0
+  - attempts: 1
+  - result: inspectExpr is memoized on the module per file and source range (setSource/dropSource invalidate a file, forgetInspections clears the memo at the end of each evaluation stage); EvaluateLocals on a refused 1 MiB chain allocates within 1.25× one inspection (was 2×, 1.23 GB)
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0107e

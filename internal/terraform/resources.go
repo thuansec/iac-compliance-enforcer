@@ -150,8 +150,6 @@ type resourceDecoder struct {
 	refEntries    *int
 	// refMemo memoizes references by source range.
 	refMemo map[sourceKey]refResult
-	// inspected memoizes inspectExpr by source range (inspect).
-	inspected map[sourceKey]inspection
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.
@@ -171,6 +169,7 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 
 // decodeResources is DecodeResources with modules as module.* (resourceDecoder.modules).
 func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Variable, locals map[string]Local, modules map[string]cty.Value) ([]Resource, error) {
+	defer m.forgetInspections()
 	d := m.newResourceDecoder(vars, locals)
 	d.modules = modules
 	var out []Resource
@@ -540,7 +539,7 @@ func (m *ParsedModule) newResourceDecoder(vars map[string]Variable, locals map[s
 // ok is false when it was not evaluated or failed, which has been reported; the value is then
 // unknown.
 func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRange hcl.Range) (val cty.Value, ok bool) {
-	calls, safe := d.inspect(expr)
+	calls, safe := d.m.inspectExpr(expr)
 	if !safe {
 		v, _ := d.m.evalExpr(expr, nil) // reports the expression as too complex
 		return v, false

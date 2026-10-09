@@ -51,6 +51,7 @@ func (m *ParsedModule) NewInstance() *ParsedModule {
 // unknown. Meta-arguments are not inputs. A nested block is an error, as in Terraform. What
 // cannot be evaluated is unknown with a warning; only a cancelled context is an error.
 func (m *ParsedModule) ModuleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local) (map[string]Input, error) {
+	defer m.forgetInspections()
 	return m.moduleInputs(ctx, call, vars, locals, nil, nil)
 }
 
@@ -98,6 +99,7 @@ func (m *ParsedModule) moduleInputs(ctx context.Context, call *ModuleCall, vars 
 // reported at the call in the caller's file. tfvars files and command-line values apply only to
 // root modules. Only a cancelled context is an error.
 func (m *ParsedModule) EvaluateModuleVariables(ctx context.Context, call *ModuleCall, inputs map[string]Input) (map[string]Variable, error) {
+	defer m.forgetInspections()
 	vars := m.declareVariables()
 	for _, name := range slices.Sorted(maps.Keys(inputs)) {
 		if err := ctx.Err(); err != nil {

@@ -88,8 +88,12 @@ type ParsedModule struct {
 	// Diagnostics are sorted by file, line, column, code and summary, without duplicates.
 	Diagnostics []Diagnostic
 
-	// src holds each file's bytes, so expressions can be checked before evaluation.
+	// src holds each file's bytes, so expressions can be checked before evaluation. Set and
+	// remove entries with setSource and dropSource, which keep inspected in step.
 	src map[string][]byte
+	// inspected memoizes inspectExpr per file by source range, so each expression is lexed and
+	// checked once however often it is evaluated or inspected.
+	inspected map[string]map[[2]int]inspection
 	// root is the scan root the module was read from, which the filesystem functions read
 	// through; nil means they read nothing.
 	root *fsutil.Root
@@ -229,10 +233,7 @@ func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []by
 		return
 	}
 	// Only a file whose syntax is kept keeps its source, for the expression checks.
-	if m.src == nil {
-		m.src = map[string][]byte{}
-	}
-	m.src[name] = data
+	m.setSource(name, data)
 	var file *hcl.File
 	var diags hcl.Diagnostics
 	if strings.HasSuffix(name, ".json") {

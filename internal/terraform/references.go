@@ -76,7 +76,7 @@ func (d *resourceDecoder) references(expr hcl.Expression) (refs []string, incomp
 		d.chargeReferences(1, expr) // warns
 		return nil, true
 	}
-	if _, safe := d.inspect(expr); !safe {
+	if _, safe := d.m.inspectExpr(expr); !safe {
 		return nil, true
 	}
 	traversals := expr.Variables()
@@ -167,29 +167,7 @@ func (d *resourceDecoder) dynamicReferences(r *Resource, forEach hcl.Expression,
 		r.ReferencesIncomplete = true
 		return
 	}
-	if _, safe := d.inspect(forEach); !safe || len(forEach.Variables()) > 0 {
+	if _, safe := d.m.inspectExpr(forEach); !safe || len(forEach.Variables()) > 0 {
 		r.ReferencesIncomplete = true
 	}
-}
-
-// inspection is inspectExpr's result for one expression.
-type inspection struct {
-	calls []functionCall
-	safe  bool
-}
-
-// inspect is inspectExpr, memoized by source range: evaluation and reference recording inspect
-// each expression once, and so do the instances of a count or for_each resource.
-func (d *resourceDecoder) inspect(expr hcl.Expression) ([]functionCall, bool) {
-	r := expr.Range()
-	key := sourceKey{r.Filename, r.Start.Byte, r.End.Byte}
-	if in, ok := d.inspected[key]; ok {
-		return in.calls, in.safe
-	}
-	calls, safe := d.m.inspectExpr(expr)
-	if d.inspected == nil {
-		d.inspected = map[sourceKey]inspection{}
-	}
-	d.inspected[key] = inspection{calls, safe}
-	return calls, safe
 }
