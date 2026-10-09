@@ -43,13 +43,16 @@ func (m *ParsedModule) NewInstance() *ParsedModule {
 
 // ModuleInputs evaluates the arguments of a module call of m, which is the caller, with vars as
 // var.* and locals as local.*, within the size limits of resource attributes (maxLocalValueSize
-// each, maxResourcesSize together). Module outputs, resources and every other reference are
+// each, and maxResourcesSize for the inputs of all of m's calls together). Module outputs, resources and every other reference are
 // unknown. Meta-arguments are not inputs. A nested block is an error, as in Terraform. What
 // cannot be evaluated is unknown with a warning; only a cancelled context is an error.
 func (m *ParsedModule) ModuleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local) (map[string]Input, error) {
 	attrs, diags := call.Body.JustAttributes()
 	m.addHCLDiags(call.File, diags)
+	// The inputs of all of m's calls share one size budget, as its resources do.
 	d := m.newResourceDecoder(vars, locals)
+	d.remaining = maxResourcesSize - m.usage.inputs
+	defer func() { m.usage.inputs = maxResourcesSize - d.remaining }()
 	out := map[string]Input{}
 	for _, a := range sortedAttributes(attrs) {
 		if err := ctx.Err(); err != nil {

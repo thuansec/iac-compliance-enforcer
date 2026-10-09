@@ -164,10 +164,12 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 			l.Value = m.evalLocal(s, b, out, sensitive)
 		}
 		l.Unknown = unknownPaths(l.Value)
+		m.usage.unknown += pathSteps(l.Unknown)
 		b.sensitive["local."+name] = l.Value.ContainsMarked()
 		out[name] = l
 	}
 	m.sortDiagnostics()
+	m.usage.locals, m.usage.refs = b.total, refEntries
 	return out, nil
 }
 

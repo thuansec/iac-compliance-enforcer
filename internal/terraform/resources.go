@@ -65,8 +65,15 @@ type Resource struct {
 	// Address is the instance address: BaseAddress followed by "[0]", `["key"]`, or "[*]" for
 	// the placeholder of an unknown or invalid expansion.
 	Address string
-	// BaseAddress is "type.name" or "data.type.name".
+	// BaseAddress is "type.name" or "data.type.name". Inside a module instance (EvaluateTree),
+	// both addresses start with Module and a dot.
 	BaseAddress string
+	// Module is the module instance's address ("module.a.module.b"), "" in the root module.
+	// CallFile and CallRange locate that instance's module call header; they are empty in the
+	// root module.
+	Module    string
+	CallFile  string
+	CallRange hcl.Range
 	// Index is the instance key; NoKey without count or for_each and for a placeholder.
 	Index model.InstanceKey
 	// CountUnknown and ForEachUnknown mark a placeholder: count or for_each was unknown or
@@ -188,10 +195,13 @@ func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Vari
 			d.extraUnknown = nil
 			r.Value = body.decode(d, &r)
 			r.Unknown = mergeUnknown(unknownPaths(r.Value), d.extraUnknown)
+			m.usage.unknown += pathSteps(r.Unknown)
 			out = append(out, r)
 		}
 		d.setInstance(nil)
 	}
+	m.usage.resources = maxResourcesSize - d.remaining
+	m.usage.expansion, m.usage.structure, m.usage.instances = d.expansionWork, d.structure, d.instances
 	m.sortDiagnostics()
 	return out, nil
 }

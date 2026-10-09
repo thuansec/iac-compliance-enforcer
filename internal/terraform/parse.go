@@ -107,6 +107,11 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// usage records what the last evaluation of locals and of resources used of their budgets,
+	// what all module inputs used together, and the unknown path steps of every evaluation
+	// (which accumulate, so a repeated evaluation over-counts and fails closed). EvaluateTree
+	// charges it to the tree.
+	usage moduleUsage
 	// regexes caches the module's regular expressions by pattern.
 	regexes map[string]*regexEntry
 	// lastRegex is the last pattern parsed past the cache, with its pattern.

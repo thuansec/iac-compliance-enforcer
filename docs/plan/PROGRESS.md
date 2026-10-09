@@ -1111,3 +1111,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - A null value for a non-nullable variable without a default is accepted silently (also in
     EvaluateVariables): follow-up T-0119.
 - Next: T-0107g (evaluate the module tree).
+
+## 2026-10-09 · T-0107g · done
+- What: a module tree is evaluated, within tree-wide budgets.
+  - EvaluateTree evaluates the root (EvaluateVariables) and every resolved call depth first,
+    each in its own NewInstance: ModuleInputs in the caller, then EvaluateModuleVariables,
+    EvaluateLocals and DecodeResources.
+  - Resources get Module, CallFile and CallRange, and module-prefixed Address and BaseAddress.
+  - Tree budgets (ADR 0009) are charged after each instance, and after each call's inputs on
+    the caller. An instance runs only while every budget has some left, so each kind stays
+    within two modules' worth.
+    - 8 MiB of child source; the root is not charged.
+    - One module's function work, locals, resources, inputs, local reference entries,
+      expansion work, structure and instances.
+    - 2^20 steps of unknown paths.
+  - Instances past a budget are Skipped, with module_work_limit at the call. The inputs of one
+    caller's calls share one value budget.
+  - T-0108 gains a bullet for qualifying references and depends_on inside modules. T-0109 maps
+    module_work_limit. T-0118 gains the per-module unknown-path weight. Threat model T3
+    references ADR 0009.
+- Files: internal/terraform/{modules_eval.go,modules_eval_test.go,modules_eval_internal_test.go,
+  modules_inputs.go,locals.go,resources.go,parse.go},
+  docs/adr/0009-bound-the-evaluation-work-of-a-module-tree.md, docs/security/threat-model.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - A fan-out of 1,000 heavy calls stops after about 42 instances (source) or 2 (function
+    work), in under a second. 1,000 small instances are all evaluated.
+  - Mutation checks each fail a test: no budget check, no source charge, no caller charge, no
+    locals usage, no shared inputs, no address prefix, no refs or unknown dimension, no
+    unknown recording.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: local reference entries were not charged (51.7M entries, 913 MiB live).
+    - Major: one combined value budget gave locals four modules' worth, and unknown paths were
+      not counted (2.3 GiB live).
+    - Minors: the ADR's worst-case claim, and the root charged to the source budget.
+    - All fixed with per-kind budgets, refs and unknown dimensions, and regression tests built
+      from the probes.
+  - Round 2: APPROVE. The probes now run at 8 MiB and 387 MiB live; the 387 MiB is one module,
+    tracked in T-0118. The minor about the usage doc for accumulating unknown steps is fixed.
+- Next: T-0107h (expose module outputs to callers).
