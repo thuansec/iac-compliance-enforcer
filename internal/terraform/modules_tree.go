@@ -189,6 +189,9 @@ type TreeOptions struct {
 	// ran `terraform init` in a trusted step may set it: the scanned repository can commit a
 	// manifest and module copies of its own (ADR 0013).
 	TrustModuleManifest bool
+	// allowUndiscovered loads a root that discovery did not list (a hidden local child scanned
+	// as a root by EvaluateRoots); it is listed like any hidden directory.
+	allowUndiscovered bool
 }
 
 // LoadModuleTree parses the root module in dir, a directory of d, and the modules it calls,
@@ -214,7 +217,7 @@ func LoadModuleTree(ctx context.Context, root *fsutil.Root, d *Discovery, dir st
 	for _, dd := range d.Dirs {
 		l.dirs[dd.Path] = dd
 	}
-	if _, ok := l.dirs[dir]; !ok {
+	if _, ok := l.dirs[dir]; !ok && !opts.allowUndiscovered {
 		return nil, fmt.Errorf("load module tree: %q is not a discovered directory", dir)
 	}
 	l.rootDir = dir

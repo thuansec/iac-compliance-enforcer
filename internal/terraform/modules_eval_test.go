@@ -217,7 +217,7 @@ func TestEvaluateTreeBoundsTheWholeTree(t *testing.T) {
 				t.Errorf("%d instances: %d evaluated, %d skipped, warned %v; want 2 to %d evaluated and the rest skipped with a warning",
 					len(instances), evaluated, skipped, warned, tc.maxEvaluated)
 			}
-			if elapsed > 20*time.Second {
+			if elapsed > raceSlowdown*20*time.Second {
 				t.Errorf("took %v", elapsed)
 			}
 		})

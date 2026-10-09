@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/fsutil"
 	"github.com/thuansec/iac-compliance-enforcer/internal/terraform"
@@ -160,7 +161,7 @@ func TestClassifyModules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := classify(t, files(t, tc.files))
-			if diff := cmp.Diff(tc.want, got); diff != "" {
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(terraform.Modules{}, "CalledBy")); diff != "" {
 				t.Errorf("ClassifyModules (-want +got):\n%s", diff)
 			}
 		})
@@ -204,5 +205,20 @@ func TestClassifyModulesHonoursCancellation(t *testing.T) {
 	cancel()
 	if _, err := terraform.ClassifyModules(ctx, r, d, terraform.DefaultLimits()); err == nil {
 		t.Error("ClassifyModules with a cancelled context succeeded, want an error")
+	}
+}
+
+// CalledBy lists each child's local callers, override files included, without duplicates.
+func TestClassifyModulesRecordsCallers(t *testing.T) {
+	t.Parallel()
+	m := classify(t, files(t, map[string]string{
+		"main.tf":          module("a", "./a") + module("a2", "./a"),
+		"main_override.tf": module("a", "./b"),
+		"a/main.tf":        module("b", "../b"),
+		"b/main.tf":        module("a", "../a"),
+	}))
+	want := map[string][]string{"a": {".", "b"}, "b": {".", "a"}}
+	if diff := cmp.Diff(want, m.CalledBy); diff != "" {
+		t.Errorf("CalledBy (-want +got):\n%s", diff)
 	}
 }

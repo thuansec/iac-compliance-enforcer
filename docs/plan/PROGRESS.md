@@ -1283,3 +1283,37 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       added, and entry-limit and empty-Dir tests were added.
   - Round 2: APPROVE, no findings.
 - Next: T-0107e (local children that no root instantiates).
+
+## 2026-10-09 · T-0107e · done
+- What: no local module is skipped silently.
+  - EvaluateRoots evaluates mods.Roots, then scans as orphan roots every local child that no
+    tree instantiated. Skipped instances count as covered, because they are reported.
+  - Candidates come from ClassifyModules (Children and the new CalledBy) and from every loaded
+    tree's resolved calls, which also reach calls made inside hidden modules.
+  - Orphans:
+    - get an uninstantiated_module warning;
+    - use their own defaults only (no pipeline vars);
+    - never trust the module manifest;
+    - may be hidden directories (TreeOptions.allowUndiscovered).
+  - Orphans called by other orphans wait. When all wait, the first cycle member goes first
+    (firstInCycle). ADR 0014 records the decision.
+  - The T-0107g wall-clock check in TestEvaluateTreeBoundsTheWholeTree failed 1 time in 3 under
+    `-race -shuffle=on` (20.14 s). It is now scaled by raceSlowdown (10 under race, 1 otherwise),
+    and the deterministic assertions are unchanged.
+- Files: internal/terraform/{modules_roots.go,modules_roots_test.go,modules.go,modules_tree.go,
+  modules_test.go,modules_tree_test.go,modules_eval_test.go,race_ext_on_test.go,
+  race_ext_off_test.go}, docs/adr/0014-scan-uninstantiated-local-modules-as-roots.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test:
+    - no waiting for orphan callers, all-in-cycle promotion, first-by-path fallback;
+    - skipped instances not counted as covered, no allowUndiscovered;
+    - no tree walk, orphans trusting the manifest.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: calls made inside hidden modules were never candidates, so their `count = 0`
+      children were silently skipped. Fixed by walking the loaded trees.
+    - Minors: the cycle fallback could pick a non-member and scan a module twice; orphans
+      inherited manifest trust. Both fixed.
+  - Round 2: APPROVE. Its minor (ADR wrapping) is fixed.
+- Next: T-0107f (paths inside child module instances).
