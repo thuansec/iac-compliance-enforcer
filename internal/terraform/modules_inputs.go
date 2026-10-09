@@ -47,10 +47,16 @@ func (m *ParsedModule) NewInstance() *ParsedModule {
 // unknown. Meta-arguments are not inputs. A nested block is an error, as in Terraform. What
 // cannot be evaluated is unknown with a warning; only a cancelled context is an error.
 func (m *ParsedModule) ModuleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local) (map[string]Input, error) {
+	return m.moduleInputs(ctx, call, vars, locals, nil)
+}
+
+// moduleInputs is ModuleInputs with modules as module.* (resourceDecoder.modules).
+func (m *ParsedModule) moduleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local, modules map[string]cty.Value) (map[string]Input, error) {
 	attrs, diags := call.Body.JustAttributes()
 	m.addHCLDiags(call.File, diags)
 	// The inputs of all of m's calls share one size budget, as its resources do.
 	d := m.newResourceDecoder(vars, locals)
+	d.modules = modules
 	d.remaining = maxResourcesSize - m.usage.inputs
 	defer func() { m.usage.inputs = maxResourcesSize - d.remaining }()
 	out := map[string]Input{}

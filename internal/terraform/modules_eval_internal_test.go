@@ -314,3 +314,127 @@ func TestEvaluateTreeBoundsAncestorsOfDeepChains(t *testing.T) {
 		t.Error("evaluation warning for a truncated module's output")
 	}
 }
+
+// Locals that depend on a call are evaluated after it: in a chain, every ancestor would evaluate
+// them after its subtree used up the tree budget. A child stops evaluating locals once the
+// budget is used up (ADR 0011), so each kind stays within the budget, one instance and the root.
+func TestEvaluateTreeBoundsLocalsAfterCalls(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, content string) {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.tf", "module \"m1\" {\n  source = \"./m1\"\n}\n")
+	const depth = 30
+	for i := 1; i <= depth; i++ {
+		var b strings.Builder
+		fmt.Fprintf(&b, "variable \"big\" {\n  default = %q\n}\n", strings.Repeat("x", 200_000))
+		if i < depth {
+			fmt.Fprintf(&b, "module \"next\" {\n  source = \"../m%d\"\n}\nlocals {\n", i+1)
+			for j := range 25 {
+				fmt.Fprintf(&b, "  a%d = [module.next.o, upper(var.big)]\n", j)
+			}
+			b.WriteString("}\n")
+		}
+		b.WriteString("output \"o\" {\n  value = \"x\"\n}\n")
+		write(fmt.Sprintf("m%d/main.tf", i), b.String())
+	}
+	r, err := fsutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	d, err := Discover(t.Context(), r, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances, err := EvaluateTree(t.Context(), r, tree, VarOptions{}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn, maxFn := 0, 0
+	for _, inst := range instances {
+		fn += inst.Module.fnWork
+		maxFn = max(maxFn, inst.Module.fnWork)
+	}
+	if fn > maxTreeFunctionWork+2*maxFn {
+		t.Errorf("function work %d, budget %d, one module %d", fn, maxTreeFunctionWork, maxFn)
+	}
+	// A stopped child is truncated and reported at its call, on its caller (the previous
+	// instance in a chain).
+	truncated := 0
+	for i, inst := range instances {
+		if !inst.Truncated {
+			continue
+		}
+		truncated++
+		line := inst.Call.DefRange.Start.Line
+		if !slices.ContainsFunc(instances[i-1].Module.Diagnostics, func(d Diagnostic) bool {
+			return d.Code == DiagModuleWorkLimit && d.File == inst.Call.File && d.Line == line
+		}) {
+			t.Errorf("%s is truncated without a module_work_limit warning", inst.Address)
+		}
+	}
+	if truncated == 0 {
+		t.Error("no instance was truncated")
+	}
+}
+
+// The root always evaluates its locals in full, even after its calls used up the tree budget:
+// two children each spend more than half the function budget, and the root's locals after them
+// are still evaluated.
+func TestEvaluateTreeNeverStopsTheRootsLocals(t *testing.T) {
+	t.Parallel()
+	var child strings.Builder
+	fmt.Fprintf(&child, "variable \"big\" {\n  default = %q\n}\nlocals {\n", strings.Repeat("x", 200_000))
+	for j := range 30 {
+		fmt.Fprintf(&child, "  a%d = upper(var.big)\n", j)
+	}
+	child.WriteString("}\noutput \"o\" {\n  value = \"x\"\n}\n")
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"c/main.tf": child.String(),
+		"main.tf": "module \"a\" {\n  source = \"./c\"\n}\nmodule \"b\" {\n  source = \"./c\"\n}\n" +
+			"locals {\n  x = [module.a.o, module.b.o, \"known\"]\n  y = \"also-known\"\n}\n",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := fsutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	d, err := Discover(t.Context(), r, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances, err := EvaluateTree(t.Context(), r, tree, VarOptions{}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := instances[0]
+	x, y := root.Locals["x"].Value, root.Locals["y"].Value
+	if !y.IsKnown() || !x.IsKnown() || x.LengthInt() != 3 {
+		t.Errorf("root locals x = %#v, y = %#v; want both evaluated", x, y)
+	}
+}
