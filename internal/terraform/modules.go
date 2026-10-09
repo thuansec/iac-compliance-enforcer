@@ -21,6 +21,9 @@ type Modules struct {
 	// Children are the existing directories called through a local source, by path. They may
 	// lie outside Discovery.Dirs, for example in a hidden directory.
 	Children []string
+	// CalledBy maps each child to the directories that call it through a local source, by
+	// path. Calls in override files count, as Terraform would load them.
+	CalledBy map[string][]string
 }
 
 var moduleSchema = &hcl.BodySchema{
@@ -90,9 +93,19 @@ func ClassifyModules(ctx context.Context, root *fsutil.Root, d *Discovery, limit
 			reach(dir.Path)
 		}
 	}
+	m.CalledBy = map[string][]string{}
+	for caller, targets := range calls {
+		for _, t := range targets {
+			if !isRoot[t] {
+				m.CalledBy[t] = append(m.CalledBy[t], caller)
+			}
+		}
+	}
 	for dir := range called {
 		if !isRoot[dir] {
 			m.Children = append(m.Children, dir)
+			slices.SortFunc(m.CalledBy[dir], comparePaths)
+			m.CalledBy[dir] = slices.Compact(m.CalledBy[dir])
 		}
 	}
 	slices.SortFunc(m.Roots, comparePaths)

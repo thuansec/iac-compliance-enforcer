@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/fsutil"
 	"github.com/thuansec/iac-compliance-enforcer/internal/terraform"
@@ -343,7 +344,7 @@ func TestLoadModuleTreeJSONCalls(t *testing.T) {
 		t.Errorf("net version = %q", v)
 	}
 	wantModules := &terraform.Modules{Roots: []string{"."}, Children: []string{"${var.d}", "net"}}
-	if diff := cmp.Diff(wantModules, classify(t, dir)); diff != "" {
+	if diff := cmp.Diff(wantModules, classify(t, dir), cmpopts.IgnoreFields(terraform.Modules{}, "CalledBy")); diff != "" {
 		t.Errorf("ClassifyModules (-want +got):\n%s", diff)
 	}
 }
