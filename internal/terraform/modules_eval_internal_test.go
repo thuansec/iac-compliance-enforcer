@@ -98,8 +98,10 @@ resource "aws_s3_bucket" "b" {
 		u.expansion == 0 || u.structure == 0 || u.instances != 3 {
 		t.Errorf("usage = %+v", u)
 	}
-	if got := usageOf(m); got.moduleUsage != u {
-		t.Errorf("usageOf = %+v", got)
+	want := u
+	want.refs += m.attrRefs // the resources' attribute references
+	if got := usageOf(m); got.moduleUsage != want || m.attrRefs == 0 {
+		t.Errorf("usageOf = %+v, attribute references %d", got, m.attrRefs)
 	}
 }
 

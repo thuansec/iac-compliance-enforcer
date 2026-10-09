@@ -93,9 +93,14 @@ type Resource struct {
 	Count, ForEach hcl.Expression
 	// ProviderConfig is the provider meta-argument ("aws.eu"), "" when absent.
 	ProviderConfig string
-	// DependsOn holds the addresses in depends_on, sorted and unique.
+	// DependsOn holds the addresses in depends_on, sorted and unique, qualified with the
+	// module address.
 	DependsOn []string
-	Lifecycle model.Lifecycle
+	// References maps each attribute's dot-joined path to the addresses its expression refers
+	// to (references); ReferencesIncomplete reports that some may be missing.
+	References           map[string][]string
+	ReferencesIncomplete bool
+	Lifecycle            model.Lifecycle
 	// File is relative to the scan root; Range spans the block and DefRange is its header.
 	File            string
 	Range, DefRange hcl.Range
@@ -135,6 +140,15 @@ type resourceDecoder struct {
 	modules map[string]cty.Value
 	// instancesLimited records that expand cut an expansion at maxInstancesPerResource.
 	instancesLimited bool
+	// varRefs holds each variable's references (module inputs); refEntries points at the
+	// module's reference entry count (ParsedModule.attrRefs).
+	varRefs       map[string][]string
+	varIncomplete map[string]bool
+	refEntries    *int
+	// refMemo memoizes references by source range.
+	refMemo map[sourceKey]refResult
+	// inspected memoizes inspectExpr by source range (inspect).
+	inspected map[sourceKey]inspection
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.
@@ -228,6 +242,7 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, path cty.Pat
 			continue // recorded once by metaArguments
 		}
 		r.Attributes[prefix+a.Name] = a.Expr.Range()
+		d.recordReferences(r, prefix+a.Name, a.Expr)
 		attrs[a.Name] = d.attribute(a)
 	}
 	blocks := map[string][]cty.Value{}
@@ -397,7 +412,7 @@ func (d *resourceDecoder) meta(name string, expr hcl.Expression, r *Resource) {
 				d.invalid(e, "Invalid depends_on reference")
 				continue
 			}
-			r.DependsOn = append(r.DependsOn, addr)
+			r.DependsOn = append(r.DependsOn, d.m.qualify(addr))
 		}
 		slices.Sort(r.DependsOn)
 		r.DependsOn = slices.Compact(r.DependsOn)
@@ -496,13 +511,24 @@ func (d *resourceDecoder) attribute(a *hclsyntax.Attribute) cty.Value {
 // newResourceDecoder returns a decoder that evaluates with vars as var.* and locals as local.*,
 // within maxResourcesSize.
 func (m *ParsedModule) newResourceDecoder(vars map[string]Variable, locals map[string]Local) *resourceDecoder {
+	varRefs := make(map[string][]string, len(vars))
+	varIncomplete := map[string]bool{}
+	for name, v := range vars {
+		varRefs[name] = v.References
+		if v.ReferencesIncomplete {
+			varIncomplete[name] = true
+		}
+	}
 	return &resourceDecoder{
-		m:         m,
-		vars:      variablesObject(vars),
-		locals:    locals,
-		sizes:     map[string]int{},
-		sensitive: map[string]bool{},
-		remaining: maxResourcesSize,
+		m:             m,
+		vars:          variablesObject(vars),
+		locals:        locals,
+		sizes:         map[string]int{},
+		sensitive:     map[string]bool{},
+		remaining:     maxResourcesSize,
+		varRefs:       varRefs,
+		varIncomplete: varIncomplete,
+		refEntries:    &m.attrRefs,
 	}
 }
 
@@ -510,7 +536,7 @@ func (m *ParsedModule) newResourceDecoder(vars map[string]Variable, locals map[s
 // ok is false when it was not evaluated or failed, which has been reported; the value is then
 // unknown.
 func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRange hcl.Range) (val cty.Value, ok bool) {
-	calls, safe := d.m.inspectExpr(expr)
+	calls, safe := d.inspect(expr)
 	if !safe {
 		v, _ := d.m.evalExpr(expr, nil) // reports the expression as too complex
 		return v, false

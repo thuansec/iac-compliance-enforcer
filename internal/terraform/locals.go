@@ -56,8 +56,10 @@ type Local struct {
 	// paths or maxUnknownPathSteps steps, Unknown is the whole value.
 	Unknown []cty.Path
 	// References are the addresses of the resources, data sources, ephemeral resources and
-	// module calls the local depends on, directly or through other locals: sorted, unique and
-	// without instance keys ("aws_s3_bucket.b", "data.aws_ami.x", "module.m").
+	// module calls the local depends on, directly, through other locals, or through the module
+	// inputs behind the variables it uses: sorted, unique, qualified with the module address,
+	// and with a statically known index kept ("aws_s3_bucket.b", "aws_subnet.a[0]",
+	// "module.net.data.aws_ami.x", "module.m").
 	References []string
 	// ReferencesIncomplete reports that References may lack entries: this local or one it
 	// depends on was too complex to analyse or is in a cycle, or the reference limit was hit.
@@ -141,8 +143,8 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 				}
 			default:
 				s.roots = append(s.roots, root)
-				if ref, ok := referenceAddress(tr); ok {
-					s.refs = append(s.refs, ref)
+				if ref, ok := referenceWithIndex(tr); ok {
+					s.refs = append(s.refs, m.qualify(ref))
 				}
 				if name, ok := traversalAttr(tr, 1); ok && root == "module" && byName[name] != nil {
 					s.uses["module."+name]++
@@ -192,7 +194,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 		r := s.attr.NameRange
 		l := Local{Name: name, DeclRange: s.attr.Range}
 		var capped bool
-		l.References, l.ReferencesIncomplete, capped = localReferences(s, out, refEntries)
+		l.References, l.ReferencesIncomplete, capped = localReferences(s, out, vars, refEntries)
 		refEntries += len(l.References)
 		if capped && !refsWarned {
 			refsWarned = true
@@ -333,15 +335,20 @@ func (m *ParsedModule) declareLocals() (states map[string]*localState, order []s
 	return states, order
 }
 
-// localReferences returns s's references: its own plus those of the locals it uses, unless that
-// would take the references stored so far (stored) past maxReferenceEntries. Then it returns only
-// its own, as incomplete, and capped is true.
-func localReferences(s *localState, done map[string]Local, stored int) (refs []string, incomplete, capped bool) {
+// localReferences returns s's references: its own plus those of the locals and variables it
+// uses (a variable's are those of the module input that set it), unless that would take the
+// references stored so far (stored) past maxReferenceEntries. Then it returns only its own,
+// which its source bounds, as incomplete, and capped is true.
+func localReferences(s *localState, done map[string]Local, vars map[string]Variable, stored int) (refs []string, incomplete, capped bool) {
 	incomplete = !s.safe || s.cyclic
 	n := len(s.refs)
 	for _, dep := range s.deps {
 		n += len(done[dep].References)
 		incomplete = incomplete || done[dep].ReferencesIncomplete
+	}
+	for _, name := range s.vars {
+		n += len(vars[name].References)
+		incomplete = incomplete || vars[name].ReferencesIncomplete
 	}
 	refs = slices.Clone(s.refs)
 	if stored+n > maxReferenceEntries {
@@ -349,6 +356,9 @@ func localReferences(s *localState, done map[string]Local, stored int) (refs []s
 	} else {
 		for _, dep := range s.deps {
 			refs = append(refs, done[dep].References...)
+		}
+		for _, name := range s.vars {
+			refs = append(refs, vars[name].References...)
 		}
 	}
 	slices.Sort(refs)

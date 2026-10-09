@@ -128,11 +128,11 @@ func TestLocalReferencesLimit(t *testing.T) {
 	t.Parallel()
 	s := &localState{safe: true, refs: []string{"b.x"}, deps: []string{"d"}}
 	done := map[string]Local{"d": {References: []string{"a.x", "b.x"}}}
-	refs, incomplete, capped := localReferences(s, done, maxReferenceEntries-3)
+	refs, incomplete, capped := localReferences(s, done, nil, maxReferenceEntries-3)
 	if fmt.Sprint(refs) != "[a.x b.x]" || incomplete || capped {
 		t.Errorf("at the limit: %v, incomplete %v, capped %v; want [a.x b.x], complete", refs, incomplete, capped)
 	}
-	refs, incomplete, capped = localReferences(s, done, maxReferenceEntries-2)
+	refs, incomplete, capped = localReferences(s, done, nil, maxReferenceEntries-2)
 	if fmt.Sprint(refs) != "[b.x]" || !incomplete || !capped {
 		t.Errorf("above the limit: %v, incomplete %v, capped %v; want only its own, incomplete", refs, incomplete, capped)
 	}

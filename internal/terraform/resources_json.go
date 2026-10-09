@@ -159,6 +159,7 @@ func (d *resourceDecoder) jsonValue(jb jsonBody, prefix string, path cty.Path, r
 			continue
 		}
 		r.Attributes[prefix+a.Name] = a.Expr.Range()
+		d.recordReferences(r, prefix+a.Name, a.Expr)
 		attrs[a.Name], _ = d.evalBounded(a.Expr, a.Name, a.NameRange)
 	}
 	for _, blk := range jb.dynamic {
@@ -215,6 +216,9 @@ func (d *resourceDecoder) jsonDynamic(blk *hcl.Block, prefix string, path cty.Pa
 	blocks map[string][]cty.Value, unknown map[string]bool, top bool,
 ) {
 	name := blk.Labels[0]
+	var forEachExpr hcl.Expression
+	expanded := false
+	defer func() { d.dynamicReferences(r, forEachExpr, expanded) }()
 	content, diags := blk.Body.Content(jsonDynamicSchema)
 	switch {
 	case diags.HasErrors():
@@ -243,6 +247,7 @@ func (d *resourceDecoder) jsonDynamic(blk *hcl.Block, prefix string, path cty.Pa
 	if it := content.Attributes["iterator"]; it != nil {
 		iter = it.Expr
 	}
+	forEachExpr, expanded = content.Attributes["for_each"].Expr, true
 	d.expandDynamic(dynamicSpec{
 		name:      name,
 		forEach:   content.Attributes["for_each"],

@@ -210,7 +210,8 @@ locals {
 		{"ami", []string{"data.aws_ami.ubuntu"}, []string{""}},
 		{"vpc", []string{"module.network"}, []string{""}},
 		{"eph", []string{"ephemeral.random_password.db"}, []string{""}},
-		{"indexed", []string{"aws_instance.web"}, []string{""}},
+		// A statically known index is kept, as the input document records it (T-0108a).
+		{"indexed", []string{"aws_instance.web[0]"}, []string{""}},
 		{"mixed", []string{"aws_s3_bucket.logs"}, []string{"arn"}},
 		// References carry through other locals, sorted and without duplicates.
 		{"derived", []string{"aws_s3_bucket.logs", "data.aws_ami.ubuntu"}, []string{""}},

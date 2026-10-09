@@ -28,6 +28,9 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 	blocks map[string][]cty.Value, unknown map[string]bool, top bool,
 ) {
 	invalidAt := func(rng hcl.Range, name, why string) { d.invalidDynamic(rng, name, why, unknown) }
+	var forEachExpr hcl.Expression
+	expanded := false
+	defer func() { d.dynamicReferences(r, forEachExpr, expanded) }()
 	if len(b.Labels) != 1 {
 		invalidAt(b.TypeRange, "", "it needs exactly one label, the block type")
 		return
@@ -64,6 +67,7 @@ func (d *resourceDecoder) dynamic(b *hclsyntax.Block, prefix string, path cty.Pa
 		iter = it.Expr
 	}
 	body := content[0].Body
+	forEachExpr, expanded = forEach.Expr, true
 	d.expandDynamic(dynamicSpec{
 		name:      name,
 		forEach:   forEach.AsHCLAttribute(),
