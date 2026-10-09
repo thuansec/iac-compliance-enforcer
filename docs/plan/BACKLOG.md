@@ -410,11 +410,18 @@ locations and without executing anything.
     - resource instances multiply a body's expression cost (T-0106b review): maxExpansionWork counts source bytes, so a for expression in a block with count = 10,000 runs 10,000 times; the bound covers the per-instance work, not just one evaluation
   - attempts: 1
   - result: every for expression is rewritten after parsing to iterate over __iace_for, which evaluates its collection itself and charges, before the loop runs, the collection's measured size plus iterations × (16 + body bytes + referenced values' sizes, or largest elements for indexed ones) to the module's function work; over the limit the for expression is unknown with expression_too_complex; type constraints with a for are refused; .tf.json single template strings are evaluated by iace, nested ones with a for refused (ADR 0020; follow-ups T-0113a, T-0113b)
-- [ ] T-0113a · Charge the result size of template for directives
+- [x] T-0113a · Charge the result size of template for directives
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0113
   - accept:
     - nested `%{ for }` template directives charge the size of the strings they build, not only their iterations (ADR 0020): today the iteration limit stops three nested directives over 1,000 elements, but only after building strings that grow per level (about 2.5 s, 10 s under -race); a test bounds the time or allocation of that template
+  - attempts: 1
+  - result: %{ for } directive bodies are wrapped in __iace_val, which charges each iteration's string up to the work left (300 levels around 200 KB: 290 MB evaluated in full before, now limited); profiling showed hcl's per-iteration overhead (about 1.3 KB, short-lived) dominated, so forIterationWork is 64 (three nested directives over 1,000: 0.3 s / 220 MB, was 0.7 s / 583 MB); the weight bounds time, about 125k iterations per tree (ADR 0020; follow-up T-0113c)
+- [ ] T-0113c · Measure for-expression work on real configurations
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0113a
+  - accept:
+    - a set of realistic module trees (large for_each fan-out, nested for expressions over maps of a few hundred entries, templatefile-heavy modules) is scanned and the function work each uses is recorded in PROGRESS against maxFunctionWork; if a realistic tree reaches the limit, forIterationWork or the budget is adjusted with an ADR 0020 amendment, and a test keeps the realistic tree under the limit (T-0113a review: at 64, 5,000 instances each running a 20-element for expression reach it)
   - attempts: 0
 - [ ] T-0113b · Bound for expressions in nested .tf.json template strings
   - skills: iace-terraform-parsing, iace-testing

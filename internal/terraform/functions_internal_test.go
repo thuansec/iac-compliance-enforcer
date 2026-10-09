@@ -48,7 +48,13 @@ func parseFilesModule(t *testing.T, files map[string]string) *ParsedModule {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
-	m, err := ParseModule(context.Background(), r, Dir{Path: ".", Files: slices.Sorted(maps.Keys(files))}, DefaultLimits())
+	var names []string // Terraform files only, as discovery lists them; templates are data
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if strings.HasSuffix(name, ".tf") || strings.HasSuffix(name, ".tf.json") {
+			names = append(names, name)
+		}
+	}
+	m, err := ParseModule(context.Background(), r, Dir{Path: ".", Files: names}, DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

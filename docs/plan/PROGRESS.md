@@ -1700,3 +1700,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Accepted and documented: the estimate is conservative (nested local.m[k] is charged per
     outer iteration), and one cosmetic error summary changes.
 - Next: T-0113a / T-0113b or the next ready M1 task.
+
+## 2026-10-09 · T-0113a · done
+- What: template for directives are charged the strings they produce, and the iteration weight
+  is set by measurement (ADR 0020).
+  - rewriteForExprs wraps the body of each `%{ for }` directive (a TemplateJoinExpr's
+    ForExpr) in `__iace_val` (forResultFunction). It charges each iteration's string up to the
+    work left. Over the limit it returns unknown with forLimited, keeping the marks.
+  - Profiling the three-level template (583 MB total) showed the strings were about 16 MB. The
+    rest was hcl's per-iteration overhead, about 1.3 KB per iteration and short-lived (the live
+    heap stays at a few MB). So forIterationWork goes from 16 to 64. It bounds time: about
+    125k small-body iterations per module tree instead of about 500k.
+  - The test helper parseFilesModule now passes only .tf and .tf.json files to ParseModule, as
+    discovery does.
+- Files: internal/terraform/{forexpr.go,forexpr_internal_test.go,functions_internal_test.go},
+  docs/adr/0020-charge-for-expression-iterations.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Three nested directives over 1,000 elements: 0.3 s and 220 MB total, against 0.7 s and
+    583 MB before.
+  - 300 one-element levels around a 200 KB string: limited and under 150 MB, against 290 MB
+    and evaluated in full without the wrap (mutation-checked).
+  - forResultFunction is tested just below, at and just above the limit, with exact charging
+    and marks.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: no test exercised the string charge.
+    - Minors: the weight was justified by the wrong metric (it bounds time, not memory), the
+      ADR header, and a duplicate fixture.
+    - All fixed. T-0113c added (measure realistic trees against the limit).
+  - Round 2: APPROVE.
+- Next: T-0113b, T-0113c or the next ready M1 task.
