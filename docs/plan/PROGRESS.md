@@ -1771,3 +1771,23 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       fixed.
   - Round 2: APPROVE. Its minor (ADR 0021 now lists the test's checks) is fixed.
 - Next: T-0113b, T-0113d, T-0113e or the next ready M1 task.
+
+## 2026-10-09 · T-0113d · done
+- What: a module tree's expansion work is four modules' worth (ADR 0022, amending ADR 0009). The
+  per-module budget (2^21) is unchanged. The realistic fan-out is tested at 200 instances.
+- Measurements:
+  - 200 instances: 358 of 400 resources before; 400 of 400 after.
+  - Expansion work 2,350,131 of 8,388,608 (28%, call arguments included); function work 41%.
+  - The scan takes about 1.0 s, so at most 431 ns per byte.
+  - Worst case with overshoot: about 12.6 MB, 5 to 8 s. The new "expansion" case of
+    TestEvaluateTreeBoundsTheWholeTree (1,000 calls of a 300-operator body under count = 10,000)
+    stops at about 5 instances in 4.2 s.
+- Files: internal/terraform/{modules_eval.go,modules_eval_test.go,realistic_internal_test.go,
+  testdata/realistic/fanout/main.tf}, docs/adr/{0022-give-a-module-tree-four-modules-of-expansion-work.md,
+  0009 (header)}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. With the old budget, the realistic test fails (358 of 400,
+  expansion at 99.7%).
+- Review: iace-reviewer, 1 round: APPROVE. Its three minors are done: the ADR worst case
+  includes the overshoot, the test charges call expansion as the tree does, and a behaviour
+  and time test for the expansion budget.
+- Next: T-0113b, T-0113e or the next ready M1 task.

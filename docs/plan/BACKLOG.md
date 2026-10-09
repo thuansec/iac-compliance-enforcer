@@ -424,12 +424,13 @@ locations and without executing anything.
     - a set of realistic module trees (large for_each fan-out, nested for expressions over maps of a few hundred entries, templatefile-heavy modules) is scanned and the function work each uses is recorded in PROGRESS against maxFunctionWork; if a realistic tree reaches the limit, forIterationWork or the budget is adjusted with an ADR 0020 amendment, and a test keeps the realistic tree under the limit (T-0113a review: at 64, 5,000 instances each running a 20-element for expression reach it)
   - attempts: 1
   - result: testdata/realistic (fanout 150 instances, nested-maps 300 entries, templates 50 instances) is a regression test; fanout at 200 needed about 13.6M function work against the tree's 8.4M (for-expression charges about 76% of it), so the tree's function work is four modules' worth (ADR 0021); now fanout 10.3M of 33.5M, nested-maps 0.72M and templates 1.15M (each module under half of maxFunctionWork); follow-ups T-0113d (expansion budget at 200) and T-0113e (whole-map function arguments, about 140 entries)
-- [ ] T-0113d · Size the tree expansion budget for realistic fan-out
+- [x] T-0113d · Size the tree expansion budget for realistic fan-out
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0113c
   - accept:
     - testdata/realistic/fanout at 200 module instances (it is at 150) evaluates in full: today each instance re-evaluates about 11,700 bytes of source (a dynamic block of 100 rules), so 200 reach the tree's expansion work (2^21, ADR 0009/0010) and the tree is truncated (T-0113c); measure the time per byte at that size and raise the tree's expansion budget, or charge dynamic-block content more precisely, with an ADR; TestRealisticTreesStayUnderTheWorkLimit covers 200
-  - attempts: 0
+  - attempts: 1
+  - result: a tree's expansion work is four modules' worth (ADR 0022); the realistic fan-out at 200 instances evaluates in full (400 of 400 resources, expansion 28% of the tree's, about 1 s, at most 431 ns per byte); worst case about 12.6 MB with overshoot, 5 to 8 s, bounded by a new expansion case in TestEvaluateTreeBoundsTheWholeTree (4.2 s)
 - [ ] T-0113e · Charge large function arguments once per for expression
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0113c

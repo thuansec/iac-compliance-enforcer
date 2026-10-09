@@ -1,9 +1,9 @@
-# A VPC fanned out over 150 subnets, each a module instance with security-group rules built
+# A VPC fanned out over 200 subnets, each a module instance with security-group rules built
 # from nested for expressions over ports and CIDR blocks.
 locals {
   azs = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
   subnets = {
-    for i in range(150) : "subnet-${i}" => {
+    for i in range(200) : "subnet-${i}" => {
       cidr = cidrsubnet("10.0.0.0/8", 8, i)
       az   = local.azs[i % length(local.azs)]
       tier = i % 4 == 0 ? "public" : "private"
