@@ -401,13 +401,26 @@ locations and without executing anything.
     - a resource or data source declared twice in a module's own files is an error, as in Terraform (today neither copy is reported, and an override merges only into the first copy; T-0112b review); a test shows the duplicate is reported where the second copy is and the module has errors
   - attempts: 1
   - result: decodeResources reports a second resource or data declaration of the same mode, type and name as duplicate_resource (error) at its header and skips it; the first copy, into which overrides merge, is decoded; reported once per child module however many instances
-- [ ] T-0113 · Bound for-expression cost in evalExpr
+- [x] T-0113 · Bound for-expression cost in evalExpr
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0104c
   - accept:
     - evaluation work inside one expression is bounded: nested for expressions over collections cannot multiply into a hang or OOM (T-0104c review: three nested fors over a 200-element list built 8M elements in 3.1s; 1,000 elements would be about 1e9). An expression over the bound is unknown with a limit diagnostic that T-0109 maps to a limit_exceeded gap
     - applies to every evalExpr caller (variables, locals, later attributes) and to templatefile templates (`%{ for }` directives nest the same way); tests just below, at and just above the bound
     - resource instances multiply a body's expression cost (T-0106b review): maxExpansionWork counts source bytes, so a for expression in a block with count = 10,000 runs 10,000 times; the bound covers the per-instance work, not just one evaluation
+  - attempts: 1
+  - result: every for expression is rewritten after parsing to iterate over __iace_for, which evaluates its collection itself and charges, before the loop runs, the collection's measured size plus iterations × (16 + body bytes + referenced values' sizes, or largest elements for indexed ones) to the module's function work; over the limit the for expression is unknown with expression_too_complex; type constraints with a for are refused; .tf.json single template strings are evaluated by iace, nested ones with a for refused (ADR 0020; follow-ups T-0113a, T-0113b)
+- [ ] T-0113a · Charge the result size of template for directives
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0113
+  - accept:
+    - nested `%{ for }` template directives charge the size of the strings they build, not only their iterations (ADR 0020): today the iteration limit stops three nested directives over 1,000 elements, but only after building strings that grow per level (about 2.5 s, 10 s under -race); a test bounds the time or allocation of that template
+  - attempts: 0
+- [ ] T-0113b · Bound for expressions in nested .tf.json template strings
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0113
+  - accept:
+    - a for expression in a template string nested in a JSON object or array is evaluated with its iterations charged instead of being refused as too complex (ADR 0020), for example by evaluating JSON objects and arrays member by member; tests show a small nested for evaluates and a large one is limited
   - attempts: 0
 - [ ] T-0114 · Charge only the used part of a value in the locals size estimate
   - skills: iace-terraform-parsing, iace-testing

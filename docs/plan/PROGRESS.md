@@ -1656,3 +1656,47 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: iace-reviewer, 1 round: APPROVE. Its three minors are done: the DecodeResources doc
   comment, the override case, and the expanded-child test.
 - Next: the next ready M1 task.
+
+## 2026-10-09 · T-0113 · done
+- What: for-expression cost is bounded (ADR 0020).
+  - Every for expression iace evaluates is rewritten after parsing to iterate over
+    `__iace_for(coll, bodyBytes, iteratorUses, __iace_refs(...), __iace_elems(...))`. This
+    covers module files, tfvars, `--var` and templatefile templates.
+  - The function evaluates the collection as an expression closure, so cty never walks it for
+    free. Before the loop runs, it charges the module's function work:
+    - the collection's measured size;
+    - each iteration: 16 plus the body's source bytes, plus the sizes of the values the body
+      refers to, or the largest element for values it only indexes;
+    - the collection's size once for each use of the iterators.
+  - Every measurement stops at the work left and is charged. A refused loop spends only what it
+    measured.
+  - Over the limit, the for expression is unknown with expression_too_complex ("For expression
+    too large").
+  - Type constraints that hold a for expression are refused, in HCL and JSON, because typeexpr
+    evaluates optional() defaults outside the rewrite.
+  - In .tf.json, a value that is a single template string is evaluated by iace, as hcl would.
+    A for in a nested JSON template string is refused.
+  - The internal functions are in scope only for expressions that need them.
+- Files: internal/terraform/{forexpr.go,forexpr_internal_test.go,evalguard.go,functions.go,
+  functions_files.go,parse.go,variables.go}, docs/adr/0020-charge-for-expression-iterations.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Three nested fors over 1,000 elements (about 1e9 iterations) are limited in about 2 s.
+  - A 200 KB string per element: 393 MB before the change (1.36 GB as a `%{ for }`), now under
+    100 MB. The mutation `__iace_refs` = 0 reproduces 393/325/1,365 MB.
+  - The reviewer's measuring probes are now limited (unfixed, 33 s to about an hour) and are
+    regression tests.
+  - A refused loop leaves the module's work for later calls (mutation-checked).
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blockers: type-constraint defaults escaped the rewrite; per-iteration value size was not
+      charged (393 MB).
+    - Minors: an HCL optional default turned into an error; error summaries in contexts with no
+      functions.
+  - Round 2: CHANGES_REQUIRED. Blockers: the collection and the references were walked for free
+    (33 s to hours).
+  - Round 3: APPROVE. Its minor (a refused loop spent all remaining work) is fixed and tested.
+  - Accepted and documented: the estimate is conservative (nested local.m[k] is charged per
+    outer iteration), and one cosmetic error summary changes.
+- Next: T-0113a / T-0113b or the next ready M1 task.

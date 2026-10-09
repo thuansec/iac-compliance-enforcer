@@ -250,6 +250,7 @@ func (m *ParsedModule) renderTemplate(p string, vars map[string]cty.Value) cty.V
 	if diags.HasErrors() {
 		return templateError(errorsOnly(diags))
 	}
+	rewriteForExprs(expr)
 	fns := map[string]function.Function{}
 	for n, f := range m.functions(expr, syntaxCalls(expr)) {
 		fns[n] = f
@@ -257,7 +258,12 @@ func (m *ParsedModule) renderTemplate(p string, vars map[string]cty.Value) cty.V
 	for _, n := range []string{"templatefile", "core::templatefile"} {
 		fns[n] = nestedTemplateFunc
 	}
+	// The template's for directives report their collections' errors here, not to the
+	// expression that called templatefile.
+	outer := m.forDiags
+	m.forDiags = nil
 	val, diags := expr.Value(&hcl.EvalContext{Variables: vars, Functions: fns})
+	diags, m.forDiags = append(diags, m.forDiags...), outer
 	if diags.HasErrors() {
 		return templateError(errorsOnly(diags))
 	}

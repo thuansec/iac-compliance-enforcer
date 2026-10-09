@@ -163,7 +163,7 @@ func (m *ParsedModule) declareVariable(b Block) *varState {
 	if attr, ok := content.Attributes["type"]; ok && !m.safeTypeExpr(attr.Expr) {
 		r := attr.Expr.Range()
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
-			"The type constraint is nested too deeply to read safely, so the variable's type is unknown.",
+			"The type constraint is nested too deeply, or has a for expression, to read safely, so the variable's type is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 	} else if ok {
 		ty, defaults, diags := typeexpr.TypeConstraintWithDefaults(attr.Expr)
@@ -266,6 +266,9 @@ func (m *ParsedModule) applyVarsFile(root *fsutil.Root, name string, limits Limi
 		file, diags = parser.ParseJSON(data, name)
 	} else {
 		file, diags = parser.ParseHCL(data, name)
+		if body, ok := file.Body.(*hclsyntax.Body); ok && !diags.HasErrors() {
+			rewriteForExprs(body)
+		}
 	}
 	m.addParseDiags(name, diags)
 	if file == nil || diags.HasErrors() {
@@ -317,6 +320,7 @@ func (m *ParsedModule) applyVarFlag(i int, kv string, vars map[string]*varState)
 	if diags.HasErrors() {
 		return fmt.Errorf("--var %q: not a valid expression: %s", name, diags[0].Summary)
 	}
+	rewriteForExprs(expr)
 	m.setSource(file, src)
 	val, diags := m.evalExpr(expr, nil)
 	m.dropSource(file)
@@ -385,7 +389,10 @@ func (m *ParsedModule) finishVariable(v *varState) Variable {
 func (m *ParsedModule) safeTypeExpr(expr hcl.Expression) bool {
 	r := expr.Range()
 	if !strings.HasSuffix(r.Filename, ".json") {
-		return m.safeToEvaluate(expr)
+		// typeexpr evaluates optional() defaults itself, so a for expression there would not
+		// be charged (ADR 0020): a type with one is refused.
+		se, ok := expr.(hclsyntax.Expression)
+		return m.safeToEvaluate(expr) && (!ok || !hasForExpr(se))
 	}
 	src, ok := m.src[r.Filename]
 	if !ok || r.Start.Byte < 0 || r.Start.Byte > r.End.Byte || r.End.Byte > len(src) {
@@ -404,6 +411,9 @@ func (m *ParsedModule) safeTypeExpr(expr hcl.Expression) bool {
 		if tok.Kind() == '"' {
 			tokens, _ := hclsyntax.LexExpression([]byte(tok.String()), r.Filename, hcl.InitialPos)
 			if scanTokens(tokens, maxOperators) != nil {
+				return false
+			}
+			if e, diags := hclsyntax.ParseExpression([]byte(tok.String()), r.Filename, hcl.InitialPos); !diags.HasErrors() && hasForExpr(e) {
 				return false
 			}
 		}
