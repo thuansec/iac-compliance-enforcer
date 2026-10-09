@@ -1469,3 +1469,32 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 3: CHANGES_REQUIRED. Major: tfvars diagnostics were uncapped.
   - Round 4: APPROVE. Its minor (per-name counting when a file is read twice) goes to T-0121.
 - Next: T-0111b (scan-wide parse budget).
+
+## 2026-10-09 · T-0111b · done
+- What: the syntax trees a scan keeps are bounded.
+  - ParseBudget (budget.go) is carried as a pointer in Limits and shared by every ParseModule
+    of a scan. DefaultLimits creates one, and EvaluateRoots creates one when there is none.
+    MaxScanTokens is 3,000,000.
+  - lexCost: an HCL file costs its lexer tokens (from the nesting guard's lex) plus one per 30
+    source bytes; a JSON file costs its bytes.
+  - A file is parsed, and its source kept, only when its cost fits. Otherwise it gets a
+    parse_limit warning naming it (T-0109 maps it to limit_exceeded). ADR 0017 records the
+    decision.
+- Measurements (kept heap per budget token at 1 MiB): operator chain 128, nested blocks 127, list
+  82, call arguments 82, JSON list 81, realistic 74, long literal 60, long comment 30. So the
+  budget keeps at most about 384 MB, plus one file's ~450 MB transient peak (ADR 0016). Realistic
+  HCL costs about 380,000 budget tokens per MiB.
+- Files: internal/terraform/{budget.go,budget_internal_test.go,nesting.go,parse.go,discover.go,
+  modules_roots.go}, docs/adr/0017-bound-the-syntax-trees-a-scan-keeps.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test: no budget check, a tokens-only cost, src stored before
+    the budget, no EvaluateRoots fallback.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: a token-only cost let 1 MiB literals cost 18 tokens.
+    - Majors: a refused file kept its source; 90 B per token understated the operator chain.
+    - Minor: a budget per call.
+    - All fixed.
+  - Round 2: APPROVE. Its minors (a fallback test, nested blocks and JSON shapes, stale
+    comments, RSS versus live heap noted for T-0109's benchmark) are done.
+- Next: T-0111c (index chains).
