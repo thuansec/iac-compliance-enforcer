@@ -66,6 +66,16 @@ func (r *Root) Stat(name string) (fs.FileInfo, error) {
 	return fi, nil
 }
 
+// Lstat describes name without following a final symlink. Symlinks in its parent directories
+// are followed only while they stay inside the root.
+func (r *Root) Lstat(name string) (fs.FileInfo, error) {
+	fi, err := r.root.Lstat(filepath.FromSlash(name))
+	if err != nil {
+		return nil, WrapPathError("lstat", name, err)
+	}
+	return fi, nil
+}
+
 // ReadFile reads a regular file of at most limit bytes. Symlinks are followed only inside the
 // root. The file is opened without blocking and checked on the open handle, so a FIFO or device
 // swapped in after a Stat can neither hang the scan nor be read.

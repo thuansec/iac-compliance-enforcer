@@ -63,6 +63,7 @@ func TestDiscoverSymlinksAndSpecialFiles(t *testing.T) {
 			{Path: "outside-mod", Reason: terraform.SkipSymlinkEscape, Detail: escape},
 			{Path: "pipe.tf", Reason: terraform.SkipNotRegular, Detail: "not a regular file"},
 		},
+		Entries: 12,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Discover (-want +got):\n%s", diff)

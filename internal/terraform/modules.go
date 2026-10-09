@@ -2,7 +2,6 @@ package terraform
 
 import (
 	"context"
-	"path"
 	"slices"
 	"strings"
 
@@ -53,8 +52,8 @@ func ClassifyModules(ctx context.Context, root *fsutil.Root, d *Discovery, limit
 				return nil, err
 			}
 			for _, src := range moduleSources(file, data) {
-				target, ok := localTarget(root, dir.Path, src)
-				if !ok || target == dir.Path {
+				target, reason := localSource(root, dir.Path, src)
+				if reason != "" || target == dir.Path {
 					continue
 				}
 				calls[dir.Path] = append(calls[dir.Path], target)
@@ -154,23 +153,4 @@ func literalString(expr hcl.Expression, isJSON bool) (string, bool) {
 		return "", false
 	}
 	return v.AsString(), true
-}
-
-// localTarget resolves a local module source against the calling directory. It reports false
-// for a non-local source, one that leaves the scan root, or one that is not a directory inside
-// it (checked through the root, so a symlink cannot lead outside).
-func localTarget(root *fsutil.Root, dir, src string) (string, bool) {
-	src = strings.ReplaceAll(src, `\`, "/")
-	if !strings.HasPrefix(src, "./") && !strings.HasPrefix(src, "../") {
-		return "", false
-	}
-	target := path.Join(dir, src)
-	if target == ".." || strings.HasPrefix(target, "../") {
-		return "", false
-	}
-	info, err := root.Stat(target)
-	if err != nil || !info.IsDir() {
-		return "", false
-	}
-	return target, true
 }
