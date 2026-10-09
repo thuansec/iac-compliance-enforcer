@@ -111,6 +111,8 @@ type ModuleInstance struct {
 	Resources []Resource
 	// Outputs are the instance's outputs, which its caller sees as module.<name>.
 	Outputs map[string]Output
+	// Providers are the instance's provider blocks.
+	Providers []ProviderConfig
 }
 
 // treeEvaluator evaluates one ModuleTree.
@@ -241,6 +243,7 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 			r.BaseAddress = inst.Address + "." + r.BaseAddress
 		}
 	}
+	inst.Providers = m.ProviderConfigs()
 	if inst.Outputs, err = m.evaluateOutputs(ctx, inst.Variables, inst.Locals, modules); err != nil {
 		return nil, err
 	}

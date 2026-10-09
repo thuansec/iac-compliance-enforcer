@@ -1387,3 +1387,38 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - All fixed. The reviewer's repros now run in 0.45 s with a 145 MB heap.
   - Round 2: APPROVE. Its minor, over-flagging incompleteness (safe), is follow-up T-0121.
 - Next: T-0108b (providers and locked versions).
+
+## 2026-10-09 · T-0108b · done
+- What: provider sources and locked versions.
+  - RequiredProviders (per instance, memoized) reads required_providers without evaluation:
+    - the object form (quoted keys included) and the legacy string form;
+    - sources normalized to lowercase [host/]namespace/type, with registry.terraform.io as the
+      default host;
+    - undeclared names default to hashicorp, and "terraform" to terraform.io/builtin/terraform;
+    - an unreadable, non-literal or invalid source, or a non-object entry, gives "" with
+      invalid_provider_source, never a silent default.
+  - Resource.Provider comes from the provider meta-argument's local name, else the type prefix.
+    ProviderConfigs lists provider blocks (local name, literal alias, source) on
+    ModuleInstance.Providers.
+  - ReadLockFile reads `.terraform.lock.hcl` with a 1 MiB cap and the nesting guard before
+    parsing, and keeps only valid addresses with exact literal versions.
+    - Anything unusable (size, depth, syntax, a malformed block, a bad address, a non-exact
+      version, a duplicate, not a regular file) is a lock_file_invalid warning; reading never
+      fails the scan.
+    - RootResult.ProviderVersions holds the result, and T-0109 maps both codes to gaps.
+- Files: internal/terraform/{providers.go,providers_test.go,resources.go,parse.go,
+  modules_eval.go,modules_roots.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test (12 mutations): lowercase, legacy, the nesting guard,
+    literal versions, duplicates, the config name, unwrap, non-literal and non-object sources,
+    builtin, semver, content diagnostics.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: an unreadable source (a quoted key, a template, a non-object entry) silently fell
+      back to hashicorp/<name>.
+    - Minors: the builtin terraform provider; a lock file that is not a regular file failed the
+      scan; dropped parse diagnostics; no version format check; size-boundary and kept-version
+      assertions.
+    - All fixed.
+  - Round 2: APPROVE. Its minors (a dead error result, a nil-subject diagnostic) are fixed.
+- Next: T-0111 or the next ready M1 task; T-0109 waits on T-0113, T-0115 and T-0116.

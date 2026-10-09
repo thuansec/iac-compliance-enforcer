@@ -93,6 +93,9 @@ type Resource struct {
 	Count, ForEach hcl.Expression
 	// ProviderConfig is the provider meta-argument ("aws.eu"), "" when absent.
 	ProviderConfig string
+	// Provider is the source address of the resource's provider, from its local name (the
+	// meta-argument's, else its type's prefix) through required_providers; "" when unknown.
+	Provider string
 	// DependsOn holds the addresses in depends_on, sorted and unique, qualified with the
 	// module address.
 	DependsOn []string
@@ -198,6 +201,7 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 			body = jb
 		}
 		body.metaArguments(d, &base)
+		base.Provider = m.providerSource(resourceProviderName(&base))
 		cost, structure := body.cost(), body.structure()
 		for i, spec := range d.expand(&base) {
 			if err := ctx.Err(); err != nil {
