@@ -90,6 +90,33 @@ func TestStatFollowsSymlinksOnlyInsideTheRoot(t *testing.T) {
 	}
 }
 
+func TestLstatDoesNotFollowTheFinalSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "sub", "main.tf"), []byte("inside"))
+	if err := os.Symlink("sub", filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "away")); err != nil {
+		t.Fatal(err)
+	}
+	r := openRoot(t, dir)
+	for _, name := range []string{"alias", "away"} {
+		if fi, err := r.Lstat(name); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("Lstat(%s) = %v, %v; want the symlink itself", name, fi, err)
+		}
+	}
+	if fi, err := r.Lstat("alias/main.tf"); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("Lstat(alias/main.tf) = %v, %v; want the file through the link inside the root", fi, err)
+	}
+	if _, err := r.Lstat("away/x"); err == nil {
+		t.Error("Lstat(away/x) succeeded, want an escape error")
+	}
+	if _, err := r.Lstat("sub/../../x"); err == nil {
+		t.Error("Lstat(sub/../../x) succeeded, want an escape error")
+	}
+}
+
 // TestOpenRootConfinesToTheDirectory: a sub-root refuses ".." and symlinks that leave its
 // directory, even to files inside the parent root.
 func TestOpenRootConfinesToTheDirectory(t *testing.T) {

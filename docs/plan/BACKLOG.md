@@ -244,18 +244,49 @@ locations and without executing anything.
     - tests mirror the HCL dynamic tests on JSON input, including an iterator shadowing local
   - attempts: 1
   - result: JSON dynamic blocks (top-level, in content bodies, and inside nested block objects) expand through the syntax-neutral expandDynamic core shared with HCL; properties holding a dynamic block (detected structurally, memoized) or sharing a dynamic type decode as arrays of blocks with nested ranges, merged in source order (ADR 0007); JSON re-evaluation is charged at 4× per byte including each dynamic block's full source; json_dynamic_not_expanded removed; follow-up in T-0111
-- [ ] T-0107 · Resolve local and pre-downloaded modules
+- [x] T-0107a · Build the module call tree of a root module
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0106c, T-0106e
   - accept:
-    - local sources resolve only inside the scan root (an escape leaves the module unresolved with a warning); inputs and outputs flow; depth limit 32; cycles detected
-    - remote modules resolve only via .terraform/modules/modules.json; unresolved modules are reported as coverage gaps
+    - each `module` block of a root module becomes a call with its address (`module.a`, `module.a.module.b`), literal source and version, file and ranges; a local source resolves to a directory inside the scan root and is parsed (once per directory) and walked recursively, including directories discovery skipped (hidden ones)
+    - a call that cannot be resolved stays in the tree, unresolved with a reason (outside the scan root, not found, not a literal or missing source, remote until T-0107d, depth past 32, a cycle by directory, the per-tree call limit) and a module_unresolved warning with file:line; duplicate module names are an error as in Terraform
+    - tests cover nesting, an escape, a self-call and an A→B→A cycle, depth 32 and 33, a fan-out tree at the call limit and above it, and a child in a hidden directory
+  - attempts: 1
+  - result: terraform.LoadModuleTree builds the call tree of one root depth first (addresses, literal source/version, ranges); local sources resolve inside the scan root without following any symlink (Lstat per component), each directory parsed and analyzed once, hidden directories listed within discovery's file budget (Discovery.Entries); unresolved calls stay in the tree with a reason and a module_unresolved warning; depth 32, cycles by directory, and at most 1,000 calls per tree, resolved or not, then Truncated (ADR 0008); duplicate/invalid names are errors; T-0107 split into a–f; go toolchain 1.27.2 for GO-2026-6604
+- [ ] T-0107b · Flow module inputs and outputs
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107a
+  - accept:
+    - module inputs are evaluated in the caller's context and become the child's variables (type conversion, defaults, sensitivity as in EvaluateVariables); outputs are evaluated in the child's context and exposed to the caller as `module.<name>.<output>`, in locals, resources and other module inputs, ordered by dependencies with cycles reported; unresolved modules' outputs are unknown
+    - each call evaluates in its own state (diagnostics, function work, budgets) over the shared parse; the work of the whole tree is bounded so a fan-out of calls cannot multiply the per-module budgets into a hang; resources carry their module address
+  - attempts: 0
+- [ ] T-0107c · Expand count and for_each on module calls
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107b
+  - accept:
+    - module calls with count or for_each produce `module.x[0]` / `module.x["k"]` instance prefixes with count.index/each.* in the inputs; unknown or invalid expansions are one `module.x[*]` placeholder with unknown inputs, as T-0106b does for resources; instances count toward the tree's limits
+  - attempts: 0
+- [ ] T-0107d · Resolve remote modules through .terraform/modules/modules.json
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107a
+  - accept:
+    - remote modules resolve only via an existing .terraform/modules/modules.json (strict JSON with a size cap, keyed by module path), and only to directories inside the scan root; anything else stays unresolved and is reported as a coverage gap
+  - attempts: 0
+- [ ] T-0107e · Never skip a local child that no root instantiates
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107c
+  - accept:
     - a local child that no root instantiates (decoy call, `count = 0`, a source redirected by an override file) is scanned as a root or reported as a coverage gap, never silently skipped
+  - attempts: 0
+- [ ] T-0107f · Resolve paths inside child module instances as Terraform does
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107b
+  - accept:
     - inside a child module instance, path.module is the child's path relative to the root module, path.root is ".", and file/fileexists/templatefile resolve relative paths against the root module directory as Terraform does (T-0105c resolves them against the module's own directory, which is right only for root modules)
   - attempts: 0
 - [ ] T-0108 · Extract references and provider versions
   - skills: iace-terraform-parsing
-  - depends: T-0107
+  - depends: T-0107e, T-0107f
   - accept:
     - per-attribute references to resource addresses; provider local names are mapped to source addresses, including aliases
     - .terraform.lock.hcl versions populate provider_versions; tests cover each
@@ -266,7 +297,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed)
+    - every parse Diagnostic reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -280,7 +311,7 @@ locations and without executing anything.
   - attempts: 0
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing
-  - depends: T-0107
+  - depends: T-0107e
   - accept:
     - override.tf, *_override.tf and their .tf.json forms are merged into the blocks they name with Terraform's rules (attributes replace, nested blocks replace by type, locals/terraform/required_providers merge by key); an override for a block that does not exist is an error, as in Terraform
     - fixtures show that a weakening override (`acl = "public-read"`) reaches the input document; the override_not_merged diagnostic and ADR 0005's accepted risk are retired (threat model T14)

@@ -2,7 +2,7 @@ module github.com/thuansec/iac-compliance-enforcer
 
 go 1.27.0
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 require (
 	github.com/google/go-cmp v0.7.0

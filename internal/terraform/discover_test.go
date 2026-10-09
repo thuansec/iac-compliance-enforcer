@@ -71,6 +71,7 @@ func TestDiscoverListsTerraformFilesPerDirectory(t *testing.T) {
 			{Path: "envs/prod", Files: []string{"envs/prod/main.tf"}},
 			{Path: "modules/net", Files: []string{"modules/net/main.tf", "modules/net/vars.tf.json"}},
 		},
+		Entries: 5,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Discover (-want +got):\n%s", diff)
@@ -90,6 +91,7 @@ func TestDiscoverSkipsOversizedFiles(t *testing.T) {
 		Skipped: []terraform.Skip{{
 			Path: "big/huge.tf", Reason: terraform.SkipTooLarge, Detail: "5242881 bytes, limit 5242880",
 		}},
+		Entries: 2,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Discover (-want +got):\n%s", diff)
@@ -114,18 +116,19 @@ func TestDiscoverFileLimitBoundaries(t *testing.T) {
 			{Path: "a", Files: []string{"a/1.tf", "a/2.tf"}},
 			{Path: "b", Files: []string{"b/1.tf", "b/2.tf"}},
 			{Path: "c", Files: []string{"c/1.tf"}},
-		}}},
+		}, Entries: 5}},
 		{"exactly the limit", 5, &terraform.Discovery{Dirs: []terraform.Dir{
 			{Path: "a", Files: []string{"a/1.tf", "a/2.tf"}},
 			{Path: "b", Files: []string{"b/1.tf", "b/2.tf"}},
 			{Path: "c", Files: []string{"c/1.tf"}},
-		}}},
+		}, Entries: 5}},
 		{"one over the limit", 4, &terraform.Discovery{
 			Dirs: []terraform.Dir{
 				{Path: "a", Files: []string{"a/1.tf", "a/2.tf"}},
 				{Path: "b", Files: []string{"b/1.tf", "b/2.tf"}},
 			},
 			Skipped: limitSkip("c/1.tf", 4),
+			Entries: 4,
 		}},
 		{"well over the limit", 3, &terraform.Discovery{
 			Dirs: []terraform.Dir{
@@ -133,6 +136,7 @@ func TestDiscoverFileLimitBoundaries(t *testing.T) {
 				{Path: "b", Files: []string{"b/1.tf"}},
 			},
 			Skipped: limitSkip("b/2.tf", 3),
+			Entries: 3,
 		}},
 	}
 	for _, tc := range tests {
@@ -167,7 +171,7 @@ func TestDiscoverAcceptsAFileAtTheSizeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := discover(t, dir, terraform.DefaultLimits())
-	want := &terraform.Discovery{Dirs: []terraform.Dir{{Path: ".", Files: []string{"exact.tf"}}}}
+	want := &terraform.Discovery{Dirs: []terraform.Dir{{Path: ".", Files: []string{"exact.tf"}}}, Entries: 1}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Discover (-want +got):\n%s", diff)
 	}

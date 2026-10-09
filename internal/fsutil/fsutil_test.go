@@ -117,6 +117,7 @@ func TestErrorsNeverCarryANewlineFromThePath(t *testing.T) {
 	calls := map[string]func() error{
 		"ReadDir":  func() error { _, err := r.ReadDir(name); return err },
 		"Stat":     func() error { _, err := r.Stat(name); return err },
+		"Lstat":    func() error { _, err := r.Lstat(name); return err },
 		"ReadFile": func() error { _, err := r.ReadFile(name, 10); return err },
 	}
 	for op, call := range calls {

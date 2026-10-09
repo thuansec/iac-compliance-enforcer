@@ -1037,3 +1037,44 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       measured from its own ranges.
   - Round 3: APPROVE. Minor (memoizing scalar leaves costs memory) is recorded in T-0111.
 - Next: T-0107 (resolve local and pre-downloaded modules).
+
+## 2026-10-09 · T-0107a · done
+- What: the module call tree of a root module.
+  - T-0107 was split into T-0107a–f: the call tree, inputs and outputs, count/for_each on calls,
+    modules.json, uninstantiated children, and child paths. T-0108 and T-0112 now depend on the
+    later slices, and T-0109 maps module_unresolved, ModuleTree.Skipped and Truncated to gaps.
+  - LoadModuleTree walks the module blocks depth first in block order. Each call keeps its
+    address, literal source and version, file and ranges. Nothing is evaluated.
+  - Local sources resolve inside the scan root. Every path component is Lstat'ed through the
+    root (new fsutil.Root.Lstat), so no symlink is followed, as in discovery.
+  - Unresolved calls stay in the tree with a reason (remote_source, source_not_literal,
+    missing_source, outside_root, not_found, symlinked_directory, depth_limit, cycle,
+    call_limit) and a module_unresolved warning. Duplicate and invalid names are errors.
+  - Each directory is parsed and its blocks analyzed once. Hidden directories are listed within
+    discovery's MaxFiles budget (Discovery.Entries).
+  - A tree holds at most 1,000 calls, resolved or not. Past that, the walk stops and Truncated
+    is set (ADR 0008, threat model T3).
+  - go.mod toolchain go1.27.1 → go1.27.2: govulncheck flagged GO-2026-6604 (os.Root, Windows),
+    which failed the vuln gate on main as well.
+- Files: internal/terraform/{modules_tree.go,modules_tree_test.go,modules_tree_unix_test.go,
+  modules.go,discover.go,discover_test.go,discover_unix_test.go},
+  internal/fsutil/{fsutil.go,fsutil_test.go,fsutil_unix_test.go},
+  docs/adr/0008-bound-the-module-call-tree.md, docs/security/threat-model.md,
+  docs/plan/BACKLOG.md, go.mod
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test: no Entries seed, no listFull guard, no call-limit check,
+    no symlink check.
+  - The reviewer's attack (1,000 calls to a 4.99 MB module of 150k source-less blocks) went
+    from 60s and 13.8 GiB (on a 370 KB file) to 3.0s and 382 MiB.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: only resolved calls were bounded, so instances × unresolved blocks grew without
+      limit (DoS).
+    - Minors: symlinked directories defeated cycle detection and the parse cache; listing had a
+      second file budget and repeated file_limit skips; no ADR for the limits.
+    - All fixed.
+  - Round 2: APPROVE, no findings.
+- Note: an attempted change to treat JSON sources holding `${` as non-literal was reverted.
+  Terraform decodes module sources without a context, so they are literal strings
+  (TestModuleSourcesNeverEvaluates).
+- Next: T-0107b (flow module inputs and outputs).

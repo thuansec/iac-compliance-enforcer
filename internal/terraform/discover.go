@@ -72,6 +72,9 @@ type Discovery struct {
 	Dirs []Dir
 	// Skipped are the paths left out, by path.
 	Skipped []Skip
+	// Entries is the number of entries counted toward Limits.MaxFiles, so module loading can
+	// list more directories within the same budget.
+	Entries int
 }
 
 // errFileLimit stops the walk once Limits.MaxFiles is reached.
@@ -94,7 +97,7 @@ func Discover(ctx context.Context, root *fsutil.Root, limits Limits) (*Discovery
 		return nil, fmt.Errorf("discover: %w", err)
 	}
 
-	d := &Discovery{Skipped: w.skipped}
+	d := &Discovery{Skipped: w.skipped, Entries: w.count}
 	for dir, files := range w.files {
 		d.Dirs = append(d.Dirs, Dir{Path: dir, Files: files})
 	}
