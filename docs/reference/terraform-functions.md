@@ -94,17 +94,18 @@ sensitive mark anywhere inside their arguments. So `lookup(obj, "b")` is sensiti
 
 ## Filesystem functions
 
-`file`, `fileexists` and `templatefile` read only inside the module's directory, through a
-sub-root of the scan root (`os.Root`). Neither `..` nor a symlink can leave that directory, even
-to a file elsewhere in the repository. Relative paths resolve against the module directory,
-which is Terraform's working directory for a root module, and `path.module` is `"."`. Child
-module instances will resolve against the root module (T-0107). `path.root` and `path.cwd` are
-unknown.
+`file`, `fileexists` and `templatefile` resolve relative paths against the root module's
+directory, which is Terraform's working directory for every module of a tree
+([ADR 0015](../adr/0015-resolve-file-paths-against-the-root-module.md)). `path.module` is the
+module instance's path from the root module: `"."` for a root, and for example
+`"../../modules/net"` for a child of a root in `envs/prod`. `path.root` is `"."`, and
+`path.cwd` is unknown. Reads are confined to the scan root through `os.Root`: neither `..` nor a
+symlink can leave it, but any file of the scanned repository can be read, as in Terraform.
 
 | case | result |
 |---|---|
-| absolute, `~`, drive-letter or `..`-escaping path | unknown, `file_outside_module` warning |
-| missing file (`file`, `templatefile`), directory, symlink leaving the module, file over 1 MiB, not UTF-8 | unknown, `file_unreadable` warning |
+| absolute, `~` or drive-letter path, or one that leaves the scan root | unknown, `file_outside_module` warning |
+| missing file (`file`, `templatefile`), directory, symlink leaving the scan root, file over 1 MiB, not UTF-8 | unknown, `file_unreadable` warning |
 | `fileexists` on a missing path | `false` |
 | template syntax error, a variable not in `vars`, `var.*` or `local.*` in the template, `templatefile` inside a template | unknown, `template_error` warning at the template file |
 | `vars` not a map or object, or a key that is not an identifier | unknown, `evaluation` warning (as in Terraform, an argument error) |

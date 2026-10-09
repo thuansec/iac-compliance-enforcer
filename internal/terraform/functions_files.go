@@ -18,13 +18,12 @@ import (
 
 // Diagnostic codes for the filesystem functions.
 const (
-	// DiagFileOutsideModule: file, fileexists or templatefile named a path outside the module
-	// directory (absolute, home-relative or with too many ".."), which iace does not read, so
-	// the call is unknown.
+	// DiagFileOutsideModule: file, fileexists or templatefile named a path outside the scan
+	// root (absolute, home-relative or with too many ".."), which iace does not read, so the
+	// call is unknown.
 	DiagFileOutsideModule DiagCode = "file_outside_module"
 	// DiagFileUnreadable: the named file is missing, too large, not a regular file, not UTF-8
-	// text, or reached through a symlink that leaves the module directory, so the call is
-	// unknown.
+	// text, or reached through a symlink that leaves the scan root, so the call is unknown.
 	DiagFileUnreadable DiagCode = "file_unreadable"
 	// DiagTemplateError: a templatefile template could not be parsed or evaluated (a syntax
 	// error, a variable that is not in its vars, a nested templatefile), so the call is unknown.
@@ -35,9 +34,9 @@ const (
 // bounded like any function result, so a file that large is read but unknown.
 const maxFunctionFileSize = 1 << 20
 
-// fileCallCost is the work charged for each filesystem call (opening the module directory and
-// a stat or a read), before it happens, so that calls stop touching the filesystem once the
-// module's function work is spent.
+// fileCallCost is the work charged for each filesystem call (resolving the path through the
+// scan root and a stat or a read), before it happens, so that calls stop touching the
+// filesystem once the module's function work is spent.
 const fileCallCost = 1 << 10
 
 // moduleFunctionNames are the functions built per module, because they read the module's files
@@ -55,14 +54,14 @@ func (m *ParsedModule) fnWarn(code DiagCode, summary, detail string) {
 	m.fnDiags = append(m.fnDiags, pendingDiag{code: code, summary: summary, detail: detail})
 }
 
-// fileFunctions returns file, fileexists and templatefile for this module. They read only inside
-// the module's directory, through a sub-root of the scan root, so neither ".." nor a symlink
-// can leave it. Relative paths resolve against the module directory, which is Terraform's
-// working directory for a root module; path.module is ".". Anything they cannot read is unknown
-// with a warning, never an error.
+// fileFunctions returns file, fileexists and templatefile for this module instance. Relative
+// paths resolve against the root module's directory, Terraform's working directory, which is the
+// module's own directory for a root module; path.module locates the module from there (T-0107f,
+// ADR 0015). They read only inside the scan root, through it, so neither ".." nor a symlink can
+// leave it. Anything they cannot read is unknown with a warning, never an error.
 func (m *ParsedModule) fileFunctions() map[string]function.Function {
 	file := function.New(&function.Spec{
-		Description: "Reads a UTF-8 text file in the module directory.",
+		Description: "Reads a UTF-8 text file, relative to the root module directory.",
 		Params:      []function.Parameter{{Name: "path", Type: cty.String}},
 		Type:        function.StaticReturnType(cty.String),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
@@ -74,7 +73,7 @@ func (m *ParsedModule) fileFunctions() map[string]function.Function {
 		},
 	})
 	fileExists := function.New(&function.Spec{
-		Description: "Reports whether a regular file exists in the module directory.",
+		Description: "Reports whether a regular file exists, relative to the root module directory.",
 		Params:      []function.Parameter{{Name: "path", Type: cty.String}},
 		Type:        function.StaticReturnType(cty.Bool),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
@@ -82,7 +81,7 @@ func (m *ParsedModule) fileFunctions() map[string]function.Function {
 		},
 	})
 	templateFile := function.New(&function.Spec{
-		Description: "Renders a template file in the module directory with the given variables.",
+		Description: "Renders a template file, relative to the root module directory, with the given variables.",
 		Params: []function.Parameter{
 			{Name: "path", Type: cty.String},
 			{Name: "vars", Type: cty.DynamicPseudoType},
@@ -108,27 +107,37 @@ func (m *ParsedModule) fileFunctions() map[string]function.Function {
 	return map[string]function.Function{"file": file, "fileexists": fileExists, "templatefile": templateFile}
 }
 
-// modulePath resolves p, a path from a function argument, against the module directory. It
-// refuses absolute, home-relative and drive-letter paths and paths that leave the directory.
-func modulePath(p string) (string, bool) {
+// filePath resolves p, a path from a function argument, against the instance's base directory:
+// the root module's directory, which is Terraform's working directory for every module of a
+// tree. It refuses absolute, home-relative and drive-letter paths and paths that leave the scan
+// root; the scan root confines symlinks on the read itself.
+func (m *ParsedModule) filePath(p string) (string, bool) {
 	if p == "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "~") ||
 		len(p) >= 2 && p[1] == ':' {
 		return "", false
 	}
-	c := path.Clean(p)
+	c := path.Join(m.base(), p)
 	if c == ".." || strings.HasPrefix(c, "../") {
 		return "", false
 	}
 	return c, true
 }
 
-// readModuleFile reads the UTF-8 text file p in the module directory, charging its size to the
-// module's function work. It reports a warning and false when it cannot.
+// base is the directory relative file paths resolve against: the root module's directory.
+func (m *ParsedModule) base() string {
+	if m.baseDir != "" {
+		return m.baseDir
+	}
+	return m.Dir
+}
+
+// readModuleFile reads the UTF-8 text file p (filePath), charging its size to the module's
+// function work. It reports a warning and false when it cannot.
 func (m *ParsedModule) readModuleFile(p string) ([]byte, bool) {
-	rel, ok := modulePath(p)
+	name, ok := m.filePath(p)
 	if !ok {
-		m.fnWarn(DiagFileOutsideModule, "File outside the module",
-			"The path is absolute or leaves the module directory, which iace does not read, so the value is unknown.")
+		m.fnWarn(DiagFileOutsideModule, "File outside the scan root",
+			"The path is absolute or leaves the scan root, which iace does not read, so the value is unknown.")
 		return nil, false
 	}
 	if m.root == nil {
@@ -141,13 +150,7 @@ func (m *ParsedModule) readModuleFile(p string) ([]byte, bool) {
 	}
 	// Read no more than the work left: fsutil refuses a larger file by its size, before reading.
 	limit := min(maxFunctionFileSize, maxFunctionWork-m.fnWork)
-	sub, err := m.root.OpenRoot(m.Dir)
-	if err != nil {
-		m.fnWarn(DiagFileUnreadable, "File not readable", "The module directory could not be opened, so the value is unknown.")
-		return nil, false
-	}
-	defer func() { _ = sub.Close() }() // read-only: a close error loses nothing
-	data, err := sub.ReadFile(rel, int64(limit))
+	data, err := m.root.ReadFile(name, int64(limit))
 	m.fileBytesRead += len(data)
 	switch {
 	case errors.Is(err, fsutil.ErrTooLarge) && limit < maxFunctionFileSize:
@@ -155,7 +158,7 @@ func (m *ParsedModule) readModuleFile(p string) ([]byte, bool) {
 		return nil, false
 	case err != nil:
 		m.fnWarn(DiagFileUnreadable, "File not readable",
-			"The file is missing, larger than 1 MiB, not a regular file, or reached through a symlink that leaves the module directory, so the value is unknown.")
+			"The file is missing, larger than 1 MiB, not a regular file, or reached through a symlink that leaves the scan root, so the value is unknown.")
 		return nil, false
 	case !m.chargeFunctionWork(len(data)): // every byte read is charged, whatever follows
 		m.fnLimited = true
@@ -167,19 +170,19 @@ func (m *ParsedModule) readModuleFile(p string) ([]byte, bool) {
 	return data, true
 }
 
-// moduleFileExists reports whether p is a regular file in the module directory: false when
-// nothing is there, and unknown with a warning when p is outside the directory, is something
-// other than a regular file, or cannot be checked.
+// moduleFileExists reports whether p (filePath) is a regular file: false when nothing is there,
+// and unknown with a warning when p is outside the scan root, is something other than a regular
+// file, or cannot be checked.
 func (m *ParsedModule) moduleFileExists(p string) cty.Value {
-	rel, ok := modulePath(p)
+	name, ok := m.filePath(p)
 	if !ok {
-		m.fnWarn(DiagFileOutsideModule, "File outside the module",
-			"The path is absolute or leaves the module directory, which iace does not read, so the value is unknown.")
+		m.fnWarn(DiagFileOutsideModule, "File outside the scan root",
+			"The path is absolute or leaves the scan root, which iace does not read, so the value is unknown.")
 		return cty.UnknownVal(cty.Bool)
 	}
 	unreadable := func() cty.Value {
 		m.fnWarn(DiagFileUnreadable, "File not checkable",
-			"The path is not a regular file, or could not be checked inside the module directory, so the value is unknown.")
+			"The path is not a regular file, or could not be checked inside the scan root, so the value is unknown.")
 		return cty.UnknownVal(cty.Bool)
 	}
 	if m.root == nil {
@@ -189,12 +192,7 @@ func (m *ParsedModule) moduleFileExists(p string) cty.Value {
 		m.fnLimited = true
 		return cty.UnknownVal(cty.Bool)
 	}
-	sub, err := m.root.OpenRoot(m.Dir)
-	if err != nil {
-		return unreadable()
-	}
-	defer func() { _ = sub.Close() }() // read-only: a close error loses nothing
-	fi, err := sub.Stat(rel)
+	fi, err := m.root.Stat(name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return cty.False
@@ -231,8 +229,7 @@ func (m *ParsedModule) renderTemplate(p string, vars map[string]cty.Value) cty.V
 	if !ok {
 		return unknown
 	}
-	rel, _ := modulePath(p)
-	name := path.Join(m.Dir, rel)
+	name, _ := m.filePath(p)
 	tokens, _ := hclsyntax.LexTemplate(src, name, hcl.InitialPos)
 	if scanTokens(tokens, maxOperators) != nil {
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
