@@ -445,12 +445,19 @@ locations and without executing anything.
     - a for expression in a template string nested in a JSON object or array is evaluated with its iterations charged instead of being refused as too complex (ADR 0020), for example by evaluating JSON objects and arrays member by member; tests show a small nested for evaluates and a large one is limited
   - attempts: 1
   - result: every .tf.json value evaluated with a context is evaluated by iace member by member (evalJSON, matching hcl's decoder, compared by TestEvalJSONMatchesHCL), with its template strings rewritten, so for expressions nested in objects, arrays and keys are evaluated and charged; a sensitive object key is an error instead of hcl's panic (ADR 0024)
-- [ ] T-0114 · Charge only the used part of a value in the locals size estimate
+- [x] T-0114 · Charge only the used part of a value in the locals size estimate
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0104c
   - accept:
     - when a traversal's later steps are static attribute or index steps (`local.cfg.env`), the estimate resolves them against the evaluated value and charges that sub-value's size, not the whole value's (T-0104c review: 6+ field reads of a ~45 KB map are a false value_too_large today)
     - the estimate stays an upper bound: tests with dynamic index steps and splats still charge the whole value
+  - attempts: 1
+  - result: a use with static steps (local.cfg.env, ["k"], [0], legacy .0) is charged the sub-value it reaches; dynamic indexes, splats and unresolvable steps still charge the whole value; path measurements are cached by text and charged to the module's function work, falling back to the whole value's size when it runs out (ADR 0025)
+- [ ] T-0114a · Bound the per-local walks of a large input
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114
+  - accept:
+    - many locals that each use a large input once take time in proportion to their source, not to the input's size per local: today 3,000 locals `aN = length(var.c.l)` over a 120,000-element list take about 140 s, and 1,000 locals `aN = var.c.l != null` about 44 s (T-0114 review), because each evaluation walks the whole input somewhere (cty's argument checks for function calls, and an unidentified walk for operators); find the walks with a profile, charge or remove them, and add a test that bounds both shapes
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing

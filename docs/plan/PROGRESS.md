@@ -1856,3 +1856,37 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   crash (now fixed by routing every JSON value through evalJSON), and tests for the marked key
   and the parse and evaluation failures.
 - Next: the next ready M1 task.
+
+## 2026-10-09 · T-0114 · done
+- What: the locals size estimate charges the used part of a value (ADR 0025).
+  - A use with static steps after its name (attribute steps and literal indexes, legacy `.0`
+    included) is charged the size of the sub-value the steps reach (staticSteps, hcl's
+    conversions).
+  - Dynamic indexes and splats (where Variables() ends a traversal), unresolvable steps and
+    locals not yet evaluated are still charged the whole value, so the estimate stays an upper
+    bound.
+  - Path sizes are cached by their text. Every measurement is charged to the module's function
+    work. With no work left, the whole value's size is charged without walking.
+- Files: internal/terraform/{locals.go,locals_estimate_internal_test.go},
+  docs/adr/{0025-charge-the-used-part-of-a-value-in-the-locals-estimate.md,0020 (header)},
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Six reads of a field of a 45 KB map are no longer refused: attribute, string index, list
+    index, variable, legacy step, sensitive base, unknown midway and module output, all
+    refused before.
+  - Dynamic index, splat, whole value and large element are still refused (a mutation that
+    charges whole fails the first group).
+  - 3,000 aliased paths into a 120K list measure at most 70 and stay within the function
+    work; uncharged, they took 66 s.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED. Major: an uncached per-occurrence walk (67 s for 3,000 locals).
+    Minors: untested branches.
+  - Round 2: CHANGES_REQUIRED. Major: the text cache could be bypassed by aliases and
+    overlapping paths (80 s).
+    My round-2 message wrongly claimed the gates had passed, before I read the result. The
+    test gate had failed on a 60 s wall-clock test, which was replaced by deterministic tests.
+  - Round 3: APPROVE. Its minor (document the charge) is ADR 0025.
+- Follow-up: T-0114a (an existing walk of a large input per local for function calls and
+  operators: about 140 s for 3,000 `length(var.c.l)`).
+- Next: T-0114a or the next ready M1 task.
