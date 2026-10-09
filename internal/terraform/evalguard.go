@@ -28,7 +28,7 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	if !m.safeToEvaluate(expr) {
 		r := expr.Range()
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
-			"The expression is nested too deeply or has too many operators to evaluate safely, so its value is unknown.",
+			"The expression is nested too deeply, or has too many operators or chained steps, to evaluate safely, so its value is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil

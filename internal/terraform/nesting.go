@@ -58,9 +58,87 @@ func lexCost(name string, data []byte) (int, error) {
 	return len(tokens) + (len(data)+bytesPerToken-1)/bytesPerToken, scanTokens(tokens, 0)
 }
 
-// scanTokens applies the nesting limits to a token stream and, when maxOps is positive, caps the
-// number of binary operators (evaluating an operator chain recurses once per operand).
+// maxChain bounds the postfix steps (`x[k][k]...`, `x.a.b...`) that nest in an expression that is
+// evaluated: brackets close, so the nesting limits do not see a chain, but walking and evaluating
+// it recurse once per step (T-0111c: a 1 MiB chain of 350,000 steps allocated about 600 MB and
+// used 128 MB of stack). Real configurations use a handful.
+const maxChain = 1024
+
+var errChainTooLong = errors.New("index or attribute chain too long to evaluate safely")
+
+// checkChains reports an expression whose postfix steps nest more than maxChain deep. An index
+// (`[`) or attribute (`.`) step right after a value (a name, a number, a splat `*`, or a closing
+// bracket, parenthesis or quote) continues the chain. The count adds up through nesting, as the
+// syntax tree's depth does: a bracket's content starts at the count where it opens, and the
+// deepest count inside it carries out when it closes, so a chain wrapped in parentheses, in an
+// index key or in call arguments still counts as one. Comments and newlines are skipped; any other
+// token ends the chain at its level.
+func checkChains(tokens hclsyntax.Tokens) error {
+	type level struct {
+		base, cur, deepest int  // the count where the level opened, now, and the deepest inside it
+		end                bool // the previous token at this level ends a value
+		step               bool // the previous token at this level is a `.` step
+	}
+	stack := []level{{}}
+	for _, tok := range tokens {
+		top := &stack[len(stack)-1]
+		switch tok.Type {
+		case hclsyntax.TokenOBrack, hclsyntax.TokenDot:
+			if top.end {
+				top.cur++
+				top.deepest = max(top.deepest, top.cur)
+				if top.cur > maxChain {
+					return fmt.Errorf("%w: more than %d steps at line %d", errChainTooLong, maxChain, tok.Range.Start.Line)
+				}
+			} else {
+				top.cur = top.base
+			}
+			top.end, top.step = false, tok.Type == hclsyntax.TokenDot && top.end
+			if tok.Type == hclsyntax.TokenOBrack {
+				stack = append(stack, level{base: top.cur, cur: top.cur, deepest: top.cur})
+			}
+		case hclsyntax.TokenOBrace, hclsyntax.TokenOParen, hclsyntax.TokenTemplateInterp,
+			hclsyntax.TokenTemplateControl, hclsyntax.TokenOQuote, hclsyntax.TokenOHeredoc:
+			top.cur, top.end, top.step = top.base, false, false // only `[` and `.` continue a chain
+			stack = append(stack, level{base: top.cur, cur: top.cur, deepest: top.cur})
+		case hclsyntax.TokenCBrack, hclsyntax.TokenCBrace, hclsyntax.TokenCParen,
+			hclsyntax.TokenTemplateSeqEnd, hclsyntax.TokenCQuote, hclsyntax.TokenCHeredoc:
+			deepest := top.deepest
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+			top = &stack[len(stack)-1]
+			top.cur = max(top.cur, deepest)
+			top.deepest = max(top.deepest, top.cur)
+			top.end, top.step = true, false
+		case hclsyntax.TokenIdent, hclsyntax.TokenNumberLit, hclsyntax.TokenStar:
+			if !top.step {
+				if tok.Type == hclsyntax.TokenStar {
+					top.cur, top.end = top.base, false // multiplication, or `[*]`, whose `[` counted
+					continue
+				}
+				top.cur = top.base // a new value starts
+			}
+			top.end, top.step = true, false
+		case hclsyntax.TokenComment, hclsyntax.TokenNewline:
+			// The parser skips comments, and newlines inside brackets, between the steps of one
+			// chain: neither ends it. Skipping newlines everywhere can only over-count.
+		default:
+			top.cur, top.end, top.step = top.base, false, false
+		}
+	}
+	return nil
+}
+
+// scanTokens applies the nesting limits to a token stream and, when maxOps is positive (an
+// expression about to be evaluated), caps the number of binary operators (evaluating an operator
+// chain recurses once per operand) and the length of postfix chains (checkChains).
 func scanTokens(tokens hclsyntax.Tokens, maxOps int) error {
+	if maxOps > 0 {
+		if err := checkChains(tokens); err != nil {
+			return err
+		}
+	}
 	open := []int{0} // per open bracket, the conditionals open inside it; [0] is the outermost level
 	conditionals, unary, splats, ops := 0, 0, 0, 0
 	for i, tok := range tokens {
