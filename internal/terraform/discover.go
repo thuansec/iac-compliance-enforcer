@@ -19,12 +19,17 @@ type Limits struct {
 	// MaxFiles is the most entries discovery records in one scan root: Terraform files, accepted
 	// or skipped, plus skipped symlinks. It bounds both the files read and the Skipped list.
 	MaxFiles int
+	// ParseBudget bounds the syntax trees a scan keeps, across every ParseModule call that shares
+	// these Limits (ADR 0017). EvaluateRoots, the scan's entry point, creates one when it is nil;
+	// a direct ParseModule call with nil has no budget.
+	ParseBudget *ParseBudget
 }
 
 // DefaultLimits returns the documented limits: 1 MiB per file (ADR 0016: lexing and parsing a
-// worst-case file holds about 110 times its size in memory) and 10,000 files.
+// worst-case file holds about 110 times its size in memory), 10,000 files, and a new parse budget
+// of MaxScanTokens for one scan (ADR 0017). Call it once per scan: each call has its own budget.
 func DefaultLimits() Limits {
-	return Limits{MaxFileSize: 1 << 20, MaxFiles: 10_000}
+	return Limits{MaxFileSize: 1 << 20, MaxFiles: 10_000, ParseBudget: NewParseBudget(MaxScanTokens)}
 }
 
 // Dir is a directory that holds Terraform files.

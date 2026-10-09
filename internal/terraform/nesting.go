@@ -42,11 +42,20 @@ func (e *nestingError) Unwrap() error { return errTooDeep }
 // bracket, or when that bracket closes. Newlines never close one, because the parser ignores
 // them inside parentheses and brackets.
 func checkNesting(name string, data []byte) error {
+	_, err := lexCost(name, data)
+	return err
+}
+
+// lexCost is checkNesting that also returns what keeping the file's syntax costs, in budget
+// tokens (ADR 0017): the lexer's tokens plus one per bytesPerToken source bytes for HCL, since a
+// kept file holds its source and copies of its literals whatever its token count, and the bytes
+// of a JSON file, which keep about as much tree each.
+func lexCost(name string, data []byte) (int, error) {
 	if strings.HasSuffix(name, ".json") {
-		return checkJSONNesting(data)
+		return len(data), checkJSONNesting(data)
 	}
 	tokens, _ := hclsyntax.LexConfig(data, name, hcl.InitialPos)
-	return scanTokens(tokens, 0)
+	return len(tokens) + (len(data)+bytesPerToken-1)/bytesPerToken, scanTokens(tokens, 0)
 }
 
 // scanTokens applies the nesting limits to a token stream and, when maxOps is positive, caps the

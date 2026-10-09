@@ -111,6 +111,8 @@ type ParsedModule struct {
 	// files whose too_many_diagnostics entry is an error (parseDiag).
 	parseDiagCounts map[string]int
 	tooManyErrors   map[string]bool
+	// budget is the scan's parse budget (Limits.ParseBudget), nil for none.
+	budget *ParseBudget
 	// required memoizes RequiredProviders.
 	required map[string]RequiredProvider
 	// addrPrefix is the instance's module address ("module.a[0]"), which qualifies the
@@ -170,7 +172,7 @@ var topLevelSchema = &hcl.BodySchema{
 // module keeps root for the filesystem functions (file, fileexists, templatefile), so the caller
 // keeps it open until evaluation is done; once it is closed, those calls are unknown.
 func ParseModule(ctx context.Context, root *fsutil.Root, dir Dir, limits Limits) (*ParsedModule, error) {
-	m := &ParsedModule{Dir: dir.Path, root: root}
+	m := &ParsedModule{Dir: dir.Path, root: root, budget: limits.ParseBudget}
 	parser := hclparse.NewParser()
 	for _, name := range dir.Files {
 		if err := ctx.Err(); err != nil {
@@ -210,11 +212,8 @@ func (m *ParsedModule) sortDiagnostics() {
 
 // parseFile adds one file's top-level blocks and diagnostics to the module.
 func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []byte) {
-	if m.src == nil {
-		m.src = map[string][]byte{}
-	}
-	m.src[name] = data
-	if err := checkNesting(name, data); err != nil {
+	cost, err := lexCost(name, data)
+	if err != nil {
 		line := 0
 		if ne, ok := errors.AsType[*nestingError](err); ok {
 			line = ne.line
@@ -223,6 +222,17 @@ func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []by
 			"The file nests expressions or blocks too deeply to parse safely, so it was not parsed.", name, line, 0)
 		return
 	}
+	if !m.budget.take(cost) {
+		m.diag(SeverityWarning, DiagParseLimit, "Parse budget used up",
+			fmt.Sprintf("The scan already keeps the syntax of %d tokens, its limit, so this file is not parsed or checked.", m.budget.size()),
+			name, 0, 0)
+		return
+	}
+	// Only a file whose syntax is kept keeps its source, for the expression checks.
+	if m.src == nil {
+		m.src = map[string][]byte{}
+	}
+	m.src[name] = data
 	var file *hcl.File
 	var diags hcl.Diagnostics
 	if strings.HasSuffix(name, ".json") {

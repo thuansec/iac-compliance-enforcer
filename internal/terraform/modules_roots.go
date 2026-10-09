@@ -37,6 +37,9 @@ type RootResult struct {
 // the pipeline prepared .terraform for its roots only (ADR 0014). Problems in the files are
 // diagnostics; a file that cannot be read or a cancelled context is an error.
 func EvaluateRoots(ctx context.Context, root *fsutil.Root, d *Discovery, mods *Modules, opts VarOptions, limits Limits, topts TreeOptions) ([]RootResult, error) {
+	if limits.ParseBudget == nil {
+		limits.ParseBudget = NewParseBudget(MaxScanTokens) // a scan always has one (ADR 0017)
+	}
 	var out []RootResult
 	covered := map[string]bool{}
 	children := map[string]bool{}
