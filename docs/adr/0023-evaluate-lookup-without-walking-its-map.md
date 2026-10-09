@@ -4,6 +4,7 @@
 - Date: 2026-10-09
 - Task: T-0113e
 - Amends: ADR 0020 (references passed to lookup)
+- Amended by: ADR 0024 (lookup in .tf.json templates)
 
 ## Context
 `lookup` reads one element of a map, but as a cty function every call walks the whole map
@@ -47,8 +48,8 @@ value that used it unknown.
     map or key is still unknown.
 - ADR 0020's reference charge treats a reference passed as lookup's map like one the body only
   indexes: each iteration is charged its largest element, not the whole map.
-- Lookups in templates that hcl parses at evaluation (nested .tf.json strings) still go through
-  the bounded lookup.
+- Lookups in .tf.json template strings are rewritten too, since iace evaluates JSON values
+  itself (ADR 0024).
 
 ## Alternatives considered
 - Cache measured sizes per value: cty values have no identity to key a cache on, and cty's own

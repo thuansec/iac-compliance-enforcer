@@ -438,12 +438,13 @@ locations and without executing anything.
     - the idiom `{ for k in keys(local.m) : k => lookup(local.m, k, null).x }` over a map of a few hundred entries evaluates within one module's function work: today, from about 140 entries, it reaches maxFunctionWork (each lookup call measures and charges the whole map, and ADR 0020 charges the reference again per iteration), so every value that uses it is unknown (T-0113c review); for example measure a referenced value once per evaluation of the for expression (a size cache) instead of on every call, with an ADR 0020 amendment; testdata/realistic gains this idiom over 300 entries, and the test keeps it under half a module's work while a body that copies the whole map on every iteration stays limited
   - attempts: 1
   - result: a size cache was not possible (cty values have no identity, and cty walks every argument), so lookup calls are rewritten to __iace_lookup, which takes expression closures, reads the element in constant time and charges only what it returns; ADR 0020 charges a reference passed to lookup per element; the idiom over 300 entries uses about 10% of a module's work, and copying a 1,000-entry map per iteration stays limited; lookup now marks as Terraform does and returns a known element of a partly unknown map (ADR 0023)
-- [ ] T-0113b · Bound for expressions in nested .tf.json template strings
+- [x] T-0113b · Bound for expressions in nested .tf.json template strings
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0113
   - accept:
     - a for expression in a template string nested in a JSON object or array is evaluated with its iterations charged instead of being refused as too complex (ADR 0020), for example by evaluating JSON objects and arrays member by member; tests show a small nested for evaluates and a large one is limited
-  - attempts: 0
+  - attempts: 1
+  - result: every .tf.json value evaluated with a context is evaluated by iace member by member (evalJSON, matching hcl's decoder, compared by TestEvalJSONMatchesHCL), with its template strings rewritten, so for expressions nested in objects, arrays and keys are evaluated and charged; a sensitive object key is an error instead of hcl's panic (ADR 0024)
 - [ ] T-0114 · Charge only the used part of a value in the locals size estimate
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0104c

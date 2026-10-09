@@ -141,34 +141,74 @@ resource "aws_s3_bucket" "b" {
 	}
 }
 
-// In .tf.json, a value that is one template string is charged like HCL; a for expression in a
-// template nested in an object or array, which hcl evaluates as a whole, is refused.
+// In .tf.json, for expressions are charged like HCL's wherever their template string is: a value
+// that is one template string, or one nested in objects and arrays, keys included (T-0113b).
 func TestJSONForExpressions(t *testing.T) {
 	t.Parallel()
-	nested := `${[for a in local.xs : [for b in local.xs : [for c in local.xs : c]]]}`
 	m := parseFilesModule(t, map[string]string{"main.tf.json": `{"locals": {
-  "xs": "${range(1000)}",
   "small": "${[for x in [1, 2] : x * 2]}",
-  "big": "` + nested + `",
-  "inside": {"k": "${[for x in [1] : x]}"}
+  "inside": {"k": "${[for x in [1] : x]}", "list": [1, "${join(\",\", [for x in [1, 2] : x])}"]},
+  "key": {"${join(\"-\", [for x in [\"a\", \"b\"] : x])}": true}
 }}`})
 	locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := cty.TupleVal([]cty.Value{cty.NumberIntVal(2), cty.NumberIntVal(4)}); !locals["small"].Value.RawEquals(want) {
-		t.Errorf("small = %#v, want %#v", locals["small"].Value, want)
+	for name, want := range map[string]cty.Value{
+		"small": cty.TupleVal([]cty.Value{cty.NumberIntVal(2), cty.NumberIntVal(4)}),
+		"inside": cty.ObjectVal(map[string]cty.Value{
+			"k":    cty.TupleVal([]cty.Value{cty.NumberIntVal(1)}),
+			"list": cty.TupleVal([]cty.Value{cty.NumberIntVal(1), cty.StringVal("1,2")}),
+		}),
+		"key": cty.ObjectVal(map[string]cty.Value{"a-b": cty.True}),
+	} {
+		if got := locals[name].Value; !got.RawEquals(want) {
+			t.Errorf("%s = %#v, want %#v", name, got, want)
+		}
 	}
-	if locals["big"].Value.IsWhollyKnown() || !forLimitedIn(m) {
-		t.Errorf("big is known, or no for-expression limit: %v", m.Diagnostics)
+	if len(m.Diagnostics) != 0 {
+		t.Errorf("diagnostics %v, want none", m.Diagnostics)
 	}
-	if locals["inside"].Value.IsKnown() {
-		t.Errorf("inside = %#v, want unknown: its for expression cannot be bounded", locals["inside"].Value)
+	// About 1e9 iterations, at the top level and nested in an object and an array, are limited.
+	nested := `${[for a in local.xs : [for b in local.xs : [for c in local.xs : c]]]}`
+	for name, value := range map[string]string{"top": `"` + nested + `"`, "deep": `{"a": ["` + nested + `"]}`} {
+		m := parseFilesModule(t, map[string]string{"main.tf.json": `{"locals": {"xs": "${range(1000)}", "v": ` + value + `}}`})
+		locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if locals["v"].Value.IsWhollyKnown() || !forLimitedIn(m) {
+			t.Errorf("%s: known %v, diagnostics %v; want the for-expression limit", name, locals["v"].Value.IsWhollyKnown(), m.Diagnostics)
+		}
 	}
-	if !slices.ContainsFunc(m.Diagnostics, func(d Diagnostic) bool {
-		return d.Code == DiagExpressionTooComplex && strings.Contains(d.Summary, "too complex")
-	}) {
-		t.Errorf("no expression_too_complex for the nested template: %v", m.Diagnostics)
+}
+
+// evalJSON evaluates JSON values exactly as hcl's JSON decoder does: same values and the same
+// errors (keys that are null, not strings or duplicated; an unknown key makes the object unknown).
+func TestEvalJSONMatchesHCL(t *testing.T) {
+	t.Parallel()
+	for _, src := range []string{
+		`"plain"`, `"${var.x}-y"`, `1.5`, `true`, `null`, `[]`, `{}`,
+		`[1, "a", "${var.x}"]`,
+		`{"a": 1, "b": {"c": ["${var.x}", null]}}`,
+		`{"${var.x}": 1, "k": "$${not}"}`,
+		`{"${var.u}": 1, "k": 2}`,
+		`{"a": 1, "${\"a\"}": 2}`,
+		`{"${null}": 1}`,
+		`{"${[1]}": 1}`,
+		`"${"`,             // a template that does not parse
+		`"${var.missing}"`, // one that does not evaluate
+		`{"k": "${var.missing}"}`,
+	} {
+		m, expr := parseOne(t, "x.tf.json", jsonVar(src))
+		ctx := &hcl.EvalContext{Variables: map[string]cty.Value{
+			"var": cty.ObjectVal(map[string]cty.Value{"x": cty.StringVal("ok"), "u": cty.UnknownVal(cty.String)}),
+		}}
+		want, wantDiags := expr.Value(ctx)
+		got, gotDiags := m.evalJSON(expr, ctx)
+		if !got.RawEquals(want) || len(wantDiags) != len(gotDiags) || wantDiags.HasErrors() != gotDiags.HasErrors() {
+			t.Errorf("%s: evalJSON = %#v %v, hcl = %#v %v", src, got, gotDiags, want, wantDiags)
+		}
 	}
 }
 
@@ -402,5 +442,30 @@ func TestCopyingAWholeMapPerIterationStaysLimited(t *testing.T) {
 	}
 	if v, _ := m.evalExpr(expr, ctx); v.IsWhollyKnown() || !forLimitedIn(m) {
 		t.Errorf("a body copying a 1,000-entry map 1,000 times was not limited: %v", m.Diagnostics)
+	}
+}
+
+// A sensitive object key is an error, not a panic: hcl's own JSON decoder panics on it, so iace
+// evaluates every JSON value itself (ADR 0024), with or without a for expression.
+func TestJSONSensitiveKeysAreErrors(t *testing.T) {
+	t.Parallel()
+	secret := Variable{Name: "s", Value: cty.StringVal("FAKE-secret").Mark(SensitiveMark)}
+	for name, value := range map[string]string{
+		"plain":    `{"${var.s}": 1}`,
+		"with for": `{"${var.s}": "${[for x in [1] : x]}"}`,
+	} {
+		m := parseFilesModule(t, map[string]string{"main.tf.json": `{"locals": {"v": ` + value + `}}`})
+		locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{"s": secret})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if locals["v"].Value.IsKnown() || len(m.Diagnostics) != 1 {
+			t.Errorf("%s: value %#v, diagnostics %v; want unknown with one diagnostic", name, locals["v"].Value, m.Diagnostics)
+		}
+		for _, d := range m.Diagnostics {
+			if strings.Contains(d.Summary+d.Detail, "FAKE-secret") {
+				t.Errorf("%s: diagnostic %v quotes the sensitive key", name, d)
+			}
+		}
 	}
 }
