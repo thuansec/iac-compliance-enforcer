@@ -194,14 +194,17 @@ func countSkipped(instances []*terraform.ModuleInstance) (evaluated, skipped int
 // and skips the rest with a warning.
 func TestEvaluateTreeBoundsTheWholeTree(t *testing.T) {
 	t.Parallel()
-	// Each instance of "source" re-reads 200 KB (8 MiB tree budget: about 42 instances), and
-	// each instance of "function" charges 38 × 200 KB of function work (2^23: 2 instances).
+	// Each instance of "source" re-reads 200 KB (8 MiB tree budget: about 42 instances), each
+	// instance of "function" charges 38 × 200 KB of function work (2^25: about 5 instances), and
+	// each instance of "expansion" re-evaluates its resource body until its own expansion work
+	// (2^21) is spent (tree 2^23: about 5 instances, ADR 0022).
 	for name, tc := range map[string]struct {
 		mod          string
 		maxEvaluated int
 	}{
-		"source":   {heavyModule(200_000, 0), 44},
-		"function": {heavyModule(200_000, 38), 5},
+		"source":    {heavyModule(200_000, 0), 44},
+		"function":  {heavyModule(200_000, 38), 5},
+		"expansion": {"resource \"x\" \"b\" {\n  count = 10000\n  x     = " + strings.Repeat("1+", 300) + "1\n}\n", 7},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
