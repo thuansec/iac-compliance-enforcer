@@ -270,15 +270,23 @@ locations and without executing anything.
     - the evaluation work of the whole tree is bounded: up to 1,000 instances cannot multiply the per-module budgets (values, expansion work, function work, file reads) into a hang or OOM; past the tree budget, instances are unknown with a limit diagnostic; tests with a fan-out of large modules finish within the time budget
   - attempts: 1
   - result: terraform.EvaluateTree evaluates the root and every resolved call depth first, each in its own instance (inputs in the caller, variables, locals, resources); resources carry Module, CallFile/CallRange and module-prefixed addresses; per-kind tree budgets (child source 8 MiB; one module's function work, locals, resources, inputs, reference entries, expansion, structure, instances; 2^20 unknown path steps) charged after each instance and caller, so each kind stays within two modules' worth; skipped instances warn module_work_limit (ADR 0009); inputs of one caller share a value budget
-- [ ] T-0107h · Expose module outputs to callers
+- [x] T-0107h · Expose module outputs to callers' resources and outputs
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107g
   - accept:
-    - outputs are evaluated in the child's context (sensitive outputs marked) and exposed to the caller as `module.<name>.<output>` in locals, resources and other module inputs, ordered by dependencies with cycles reported; outputs of unresolved modules are unknown
+    - each instance's `output` blocks are evaluated in its context after its own module calls (value within the attribute size limits, `sensitive = true` marks it, a missing value or duplicate name is an error as in Terraform) and recorded on the instance
+    - a caller's resources and outputs see `module.<name>.<output>`: values, sensitivity and unknowns flow through; outputs of unresolved or skipped modules, and names that are not called, are unknown; output values count toward the tree budgets
+  - attempts: 1
+  - result: output blocks are evaluated per instance after its calls (bounded, sensitive fail-closed, missing_output_value / duplicate_output errors) and recorded as ModuleInstance.Outputs; resources and outputs see module.<name> (unknown when unresolved, skipped or truncated); calls run before resources and outputs, and a child whose calls used up the tree budget is Truncated (ADR 0010); outputs budgeted as a tree dimension; T-0107h split into h and i
+- [ ] T-0107i · Order locals and module calls by their dependencies
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0107h
+  - accept:
+    - locals and module inputs that reference `module.<name>.<output>` see the output (today unknown): locals and module calls of a module are evaluated in one dependency order, and a cycle through them makes its members unknown with a warning
   - attempts: 0
 - [ ] T-0107c · Expand count and for_each on module calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0107h
+  - depends: T-0107i
   - accept:
     - module calls with count or for_each produce `module.x[0]` / `module.x["k"]` instance prefixes with count.index/each.* in the inputs; unknown or invalid expansions are one `module.x[*]` placeholder with unknown inputs, as T-0106b does for resources; instances count toward the tree's limits
   - attempts: 0
@@ -314,7 +322,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped module instance, ADR 0009) → a limit_exceeded gap naming the call
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file

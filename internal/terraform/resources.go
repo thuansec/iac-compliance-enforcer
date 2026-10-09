@@ -130,6 +130,9 @@ type resourceDecoder struct {
 	extraUnknown []cty.Path
 	// dynamicSource memoizes holdsDynamicSource by source range.
 	dynamicSource map[sourceKey]bool
+	// modules holds module.<name> for the module's calls: each an object of the called
+	// instance's outputs, or unknown. nil means every module reference is unknown.
+	modules map[string]cty.Value
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.
@@ -144,7 +147,13 @@ type instanceSpec struct {
 // unknown with a warning, never an error; only a cancelled context is an error. Ephemeral
 // resources are not decoded: their values are never stored, so no policy inspects them.
 func (m *ParsedModule) DecodeResources(ctx context.Context, vars map[string]Variable, locals map[string]Local) ([]Resource, error) {
+	return m.decodeResources(ctx, vars, locals, nil)
+}
+
+// decodeResources is DecodeResources with modules as module.* (resourceDecoder.modules).
+func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Variable, locals map[string]Local, modules map[string]cty.Value) ([]Resource, error) {
 	d := m.newResourceDecoder(vars, locals)
+	d.modules = modules
 	var out []Resource
 	for _, b := range m.Blocks {
 		if err := ctx.Err(); err != nil {
@@ -506,7 +515,7 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	}
 	r := expr.Range()
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": d.vars}}
-	locals := map[string]cty.Value{}
+	locals, mods := map[string]cty.Value{}, map[string]cty.Value{}
 	est := r.End.Byte - r.Start.Byte
 	sensitive := false
 	// Each reference costs map lookups only: sizes and sensitivity are cached per value. A
@@ -539,6 +548,17 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 		case "path":
 			ectx.Variables["path"] = pathObject()
 			est++
+		case "module":
+			if d.modules == nil {
+				ectx.Variables[root] = cty.DynamicVal
+				est++
+				break
+			}
+			if v, ok := d.modules[attr]; ok {
+				mods[attr] = v
+				est += d.size("module."+attr, v)
+				sensitive = sensitive || d.isSensitive("module."+attr, v)
+			}
 		case "count", "each":
 			v, ok := d.inst[root]
 			if !ok {
@@ -556,6 +576,9 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	}
 	if !shadowed["local"] {
 		ectx.Variables["local"] = cty.ObjectVal(locals)
+	}
+	if d.modules != nil && !shadowed["module"] {
+		ectx.Variables["module"] = cty.ObjectVal(mods)
 	}
 	ectx.Functions = d.m.functions(expr, calls)
 	unknown := cty.DynamicVal
