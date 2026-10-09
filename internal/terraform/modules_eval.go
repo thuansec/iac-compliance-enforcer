@@ -20,14 +20,15 @@ const DiagModuleWorkLimit DiagCode = "module_work_limit"
 // MaxModuleCalls instances would multiply them, so the tree has budgets of its own: an instance
 // is evaluated only while every tree budget has some left, and charged after, so the tree uses
 // at most each budget plus one module's per-module budget of that kind. Each kind is budgeted on
-// its own, so no kind of work or memory passes about two modules' worth. maxTreeSource bounds
+// its own, so no kind of work or memory passes about two modules' worth, except function work:
+// four modules' worth (ADR 0021), so about five with one instance's overshoot. maxTreeSource bounds
 // the module source that child instances evaluate again (variable defaults, locals, resources;
 // 200 to 630ns per byte); the root is always evaluated and not charged. maxTreeUnknownSteps
 // bounds the steps of the unknown paths recorded for locals and resources, which hold memory
 // (about 128 bytes per path) that their value units do not count.
 const (
 	maxTreeSource        = 1 << 23
-	maxTreeFunctionWork  = maxFunctionWork
+	maxTreeFunctionWork  = 4 * maxFunctionWork // ADR 0021: for expressions charge it conservatively
 	maxTreeLocals        = maxLocalsSize
 	maxTreeResources     = maxResourcesSize
 	maxTreeInputs        = maxResourcesSize
