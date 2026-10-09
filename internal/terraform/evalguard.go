@@ -33,9 +33,30 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
-	m.fnLimited, m.fnDiags = false, nil
-	val, diags := expr.Value(ctx)
+	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags = false, nil, false, nil
+	var val cty.Value
+	var diags hcl.Diagnostics
+	switch {
+	case ctx == nil && isJSON(expr):
+		val, diags = expr.Value(nil) // strings stay literal, as hcl's JSON decoder keeps them
+	case isJSON(expr):
+		if tmpl, ok := m.jsonStringTemplate(expr); ok && hasForExpr(tmpl) {
+			val, diags = tmpl.Value(m.withForFunction(ctx))
+			break
+		}
+		val, diags = expr.Value(ctx)
+	case m.callsForFunctions(expr):
+		val, diags = expr.Value(m.withForFunction(ctx))
+	default:
+		val, diags = expr.Value(ctx) // contexts without functions keep hcl's own errors
+	}
+	diags, m.forDiags = append(diags, m.forDiags...), nil
 	r := expr.Range()
+	if m.forLimited {
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "For expression too large",
+			"A for expression would iterate past the work limit, so its value is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+	}
 	if m.fnLimited {
 		m.diag(SeverityWarning, DiagFunctionLimit, "Function call too large",
 			"A function call would pass the size or work limit for function calls, so its value is unknown.",
@@ -159,6 +180,9 @@ func jsonTemplateCalls(name string, text []byte) ([]functionCall, error) {
 			return nil, err
 		}
 		if tmpl, diags := hclsyntax.ParseTemplate([]byte(s), name, hcl.InitialPos); !diags.HasErrors() {
+			if dec.StackDepth() > 0 && hasForExpr(tmpl) {
+				return nil, errForInJSONTemplate // nested: hcl evaluates it, so it cannot be charged
+			}
 			calls = append(calls, syntaxCalls(tmpl)...)
 		}
 	}

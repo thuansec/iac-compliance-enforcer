@@ -117,6 +117,13 @@ type ParsedModule struct {
 	fnWork    int
 	fnLimited bool
 	fnDiags   []pendingDiag
+	// forFn is forFunctionName (forFunction); forLimited records that a for expression during
+	// the current evaluation would have iterated past the function work limit.
+	forFn      *function.Function
+	forLimited bool
+	// forDiags are the diagnostics of the for-expression collections forFunction evaluated
+	// itself during the current evaluation, which evalExpr returns with hcl's.
+	forDiags hcl.Diagnostics
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
@@ -251,6 +258,9 @@ func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []by
 		file, diags = parser.ParseJSON(data, name)
 	} else {
 		file, diags = parser.ParseHCL(data, name)
+		if body, ok := file.Body.(*hclsyntax.Body); ok && !diags.HasErrors() {
+			rewriteForExprs(body)
+		}
 	}
 	m.addParseDiags(name, diags)
 	if file == nil || diags.HasErrors() {

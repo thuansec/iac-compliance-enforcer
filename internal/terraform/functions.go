@@ -192,6 +192,9 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 		for name, f := range m.fileFunctions() {
 			m.fns[name] = m.bounded(f, nil, nil)
 		}
+		for name, f := range m.forFunctions() {
+			m.fns[name] = f
+		}
 		m.fns["replace"] = m.bounded(m.replaceFunc(), nil, nil)
 		m.fns["regex"] = m.bounded(m.regexFunc(false), nil, nil)
 		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil, nil)
