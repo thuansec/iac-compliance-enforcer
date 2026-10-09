@@ -376,11 +376,20 @@ locations and without executing anything.
     - an expression's source is lexed and checked (scanTokens) at most once per evaluation: refusing a 1 MiB postfix chain allocated about 1.1 GB in total because evaluateLocals (inspectExpr) and evalExpr (safeToEvaluate) each lex it (T-0111c review); a test bounds the allocation of a refused 1 MiB expression
   - attempts: 1
   - result: inspectExpr is memoized on the module per file and source range (setSource/dropSource invalidate a file, forgetInspections clears the memo at the end of each evaluation stage); EvaluateLocals on a refused 1 MiB chain allocates within 1.25× one inspection (was 2×, 1.23 GB)
-- [ ] T-0112 · Merge override files with Terraform semantics
+- [x] T-0112a · Merge non-resource overrides with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0107e
   - accept:
-    - override.tf, *_override.tf and their .tf.json forms are merged into the blocks they name with Terraform's rules (attributes replace, nested blocks replace by type, locals/terraform/required_providers merge by key); an override for a block that does not exist is an error, as in Terraform
+    - variable, output, module and provider (by name and alias) overrides merge into the block they name: attributes replace, nested blocks replace by type; locals merge by name; terraform settings replace, except required_providers, which merges by provider name; override files apply in name order after every other file
+    - an override of a variable, output, module call, provider or local value that no other file declares is an error (override_without_base), as in Terraform
+    - resource, data and other override blocks are reported per block (override_not_merged) until T-0112b; ADR 0019 records the merge rules
+  - attempts: 1
+  - result: applyOverrides (override.go) merges variable/output/module/provider overrides through mergedBody, locals by name and terraform settings by key (required_providers by provider) through maskedBody, in linear time (1 MiB of overrides parses in about 1.5 s); override_without_base and override_unsupported (depends_on) are errors; resource and data overrides stay override_not_merged per block (ADR 0019)
+- [ ] T-0112b · Merge resource and data overrides with Terraform semantics
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0112a
+  - accept:
+    - resource and data overrides merge into the block they name with Terraform's rules (attributes replace, nested blocks replace by type, meta-arguments count/for_each/provider/depends_on replace, lifecycle merges by argument), for HCL and JSON bodies, with the resource decoder's cost, structure, dynamic-block and reference accounting intact; an override of a resource that does not exist is an error, as in Terraform
     - fixtures show that a weakening override (`acl = "public-read"`) reaches the input document; the override_not_merged diagnostic and ADR 0005's accepted risk are retired (threat model T14)
   - attempts: 0
 - [ ] T-0113 · Bound for-expression cost in evalExpr

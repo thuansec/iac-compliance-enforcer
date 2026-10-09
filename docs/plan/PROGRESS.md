@@ -1564,3 +1564,40 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   before parsing protects the parser), which is accepted because the CLI input is trusted and
   small.
 - Next: the next ready M1 task.
+
+## 2026-10-09 · T-0112a · done
+- What: overrides of everything except resources and data sources are merged with Terraform's
+  semantics (ADR 0019).
+  - T-0112 was split. This task covers the blocks read through hcl.Body; T-0112b covers
+    resource and data overrides, which the resource decoder reads by concrete body type.
+  - ParseModule sets override blocks aside and merges them after every other file, in file
+    name order.
+    - variable, output, module and provider blocks (a provider by name and alias) merge through
+      mergedBody: attributes replace, and nested blocks replace by type.
+    - locals merge by name.
+    - terraform settings replace by key, required_providers by provider name, and backend and
+      cloud replace each other (maskedBody).
+  - Errors, as in Terraform: an override without a base (override_without_base), and depends_on
+    in a module or output override (override_unsupported).
+  - Resource, data and other override blocks are reported per block as override_not_merged.
+  - Literal module sources and provider aliases decide JSON syntax by the expression's file
+    (inJSON). addHCLDiags names a diagnostic's own file.
+  - Behaviour change: a module source override now redirects the call, as in Terraform.
+    TestUninstantiatedChildrenAreScannedAsRoots now expects ./evil to be called and ./good to be
+    an orphan.
+- Files: internal/terraform/{override.go,override_internal_test.go,parse.go,parse_test.go,
+  modules_tree.go,providers.go,modules_roots_test.go},
+  docs/adr/{0019-merge-overrides-with-terraform-semantics.md,0005-...md},
+  docs/security/threat-model.md (T14), docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. TestOverrideMergingIsLinear parses a 1 MiB override file of
+  each kind in about 1.5 s (2.4–3.5 s per subtest under -race, against a 20 s bound).
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: merging was super-linear in untrusted override blocks (2,000 locals overrides
+      took 100 s).
+    - Minors: duplicate locals were hidden, diagnostic file names, PartialContent dropped
+      required checks, depends_on, test gaps.
+    - All fixed.
+  - Round 2: APPROVE. Its note: if a slow runner trips the linear test's 20 s bound, raise it
+    (the old cost would take hours).
+- Next: T-0112b (resource and data overrides).

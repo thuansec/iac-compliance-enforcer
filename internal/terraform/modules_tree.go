@@ -358,10 +358,9 @@ func (l *treeLoader) analyze(m *ParsedModule) []callSpec {
 		}
 		names[name] = true
 		s := callSpec{b: b, where: b.DefRange}
-		isJSON := strings.HasSuffix(b.File, ".json")
 		content, _, _ := b.Body.PartialContent(moduleCallSchema)
 		if v, ok := content.Attributes["version"]; ok {
-			s.version, _ = literalString(v.Expr, isJSON)
+			s.version, _ = literalString(v.Expr, inJSON(v.Expr))
 		}
 		src, ok := content.Attributes["source"]
 		switch {
@@ -370,7 +369,7 @@ func (l *treeLoader) analyze(m *ParsedModule) []callSpec {
 		default:
 			s.where = src.Expr.Range()
 			var literal bool
-			if s.source, literal = literalString(src.Expr, isJSON); !literal {
+			if s.source, literal = literalString(src.Expr, inJSON(src.Expr)); !literal {
 				s.reason = UnresolvedSourceNotLiteral
 				break
 			}

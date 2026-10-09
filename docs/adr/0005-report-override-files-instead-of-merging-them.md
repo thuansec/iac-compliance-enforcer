@@ -1,6 +1,6 @@
 # 0005 · Report override files instead of merging them
 
-- Status: accepted
+- Status: accepted; superseded for non-resource blocks by [ADR 0019](0019-merge-overrides-with-terraform-semantics.md)
 - Date: 2026-10-07
 - Task: T-0103
 

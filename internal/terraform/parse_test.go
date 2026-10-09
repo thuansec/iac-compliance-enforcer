@@ -170,7 +170,7 @@ func TestParseModuleDiagnostics(t *testing.T) {
 			hasErrors: true,
 		},
 		{
-			name: "override files are reported and not merged",
+			name: "resource overrides are reported and not merged",
 			files: map[string]string{
 				"main.tf":          "resource \"aws_s3_bucket\" \"b\" {}\n",
 				"main_override.tf": "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"public-read\"\n}\n",
@@ -182,8 +182,7 @@ func TestParseModuleDiagnostics(t *testing.T) {
 				{"variable", []string{"v"}, "notoverride.tf", 1, 1},
 			},
 			wantDiags: []terraform.Diagnostic{
-				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "main_override.tf", Line: 0, Column: 0},
-				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "override.tf.json", Line: 0, Column: 0},
+				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "main_override.tf", Line: 1, Column: 1},
 			},
 		},
 		{
@@ -194,11 +193,9 @@ func TestParseModuleDiagnostics(t *testing.T) {
 				"c_override.tf.json": "{\"resource\": {\"aws_s3_bucket\": {\"b\": {}}}}",
 			},
 			wantDiags: []terraform.Diagnostic{
-				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "a_override.tf"},
 				{Severity: terraform.SeverityError, Code: terraform.DiagSyntax, File: "a_override.tf", Line: 1, Column: 30},
-				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "b_override.tf"},
 				{Severity: terraform.SeverityError, Code: terraform.DiagNestingTooDeep, File: "b_override.tf", Line: 1},
-				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "c_override.tf.json"},
+				{Severity: terraform.SeverityWarning, Code: terraform.DiagOverrideNotMerged, File: "c_override.tf.json", Line: 1, Column: 38},
 			},
 			hasErrors: true,
 		},
