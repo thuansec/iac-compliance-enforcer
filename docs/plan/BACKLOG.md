@@ -262,13 +262,14 @@ locations and without executing anything.
     - each module instance evaluates in its own state (diagnostics, function work, regex cache) over the shared parse; tests show two instances of one parse do not share budgets or diagnostics
   - attempts: 1
   - result: ParsedModule.ModuleInputs evaluates a call's arguments (meta-arguments skipped, nested blocks an error) through evalBounded with var/local in the caller; EvaluateModuleVariables applies them to the child's declared variables (conversion, optional defaults, nullable, defaults, sensitivity re-marked over the whole converted value), with missing_module_input and undeclared_module_input errors; NewInstance gives each call its own diagnostics, function state, regex cache and source map; T-0107b split into b, g, h; follow-up T-0119
-- [ ] T-0107g · Evaluate the module tree
+- [x] T-0107g · Evaluate the module tree
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107b
   - accept:
     - every resolved call of a ModuleTree is evaluated as an instance (inputs, variables, locals, resources), depth first; resources carry their module address (`module.a.module.b`) and the call's source range
     - the evaluation work of the whole tree is bounded: up to 1,000 instances cannot multiply the per-module budgets (values, expansion work, function work, file reads) into a hang or OOM; past the tree budget, instances are unknown with a limit diagnostic; tests with a fan-out of large modules finish within the time budget
-  - attempts: 0
+  - attempts: 1
+  - result: terraform.EvaluateTree evaluates the root and every resolved call depth first, each in its own instance (inputs in the caller, variables, locals, resources); resources carry Module, CallFile/CallRange and module-prefixed addresses; per-kind tree budgets (child source 8 MiB; one module's function work, locals, resources, inputs, reference entries, expansion, structure, instances; 2^20 unknown path steps) charged after each instance and caller, so each kind stays within two modules' worth; skipped instances warn module_work_limit (ADR 0009); inputs of one caller share a value budget
 - [ ] T-0107h · Expose module outputs to callers
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107g
@@ -304,6 +305,7 @@ locations and without executing anything.
   - depends: T-0107e, T-0107f
   - accept:
     - per-attribute references to resource addresses; provider local names are mapped to source addresses, including aliases
+    - inside a module instance, references and depends_on addresses are qualified with the instance's module address (EvaluateTree prefixes resource addresses only)
     - .terraform.lock.hcl versions populate provider_versions; tests cover each
   - attempts: 0
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
@@ -312,7 +314,7 @@ locations and without executing anything.
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008)
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason; every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped module instance, ADR 0009) → a limit_exceeded gap naming the call
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -373,6 +375,7 @@ locations and without executing anything.
   - depends: T-0106c
   - accept:
     - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
+    - unknown paths are weighed too: one module's locals held about 3M unknown paths (385 MiB live) from `l0 = [for i in range(1024) : aws_x.r.id]` and 2,999 locals of `local.l0` (T-0107g review); bound the paths, or their steps, per module
     - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
   - attempts: 0
 - [ ] T-0119 · Reject null for a non-nullable variable without a default
