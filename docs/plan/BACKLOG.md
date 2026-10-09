@@ -109,7 +109,7 @@ locations and without executing anything.
   - depends: T-0101
   - accept:
     - internal/fsutil confines reads to the scan root (os.Root), caps file size and refuses non-regular files (FIFOs, devices) without blocking
-    - discovery lists Terraform files per directory; skips .terraform, .git and hidden dirs; never follows symlinked directories or symlinks that leave the scan root; enforces the file-size (5 MiB) and file-count (10k) limits, each skip recorded with a clear reason
+    - discovery lists Terraform files per directory; skips .terraform, .git and hidden dirs; never follows symlinked directories or symlinks that leave the scan root; enforces the file-size (5 MiB, 1 MiB since T-0111a) and file-count (10k) limits, each skip recorded with a clear reason
     - tests cover symlink escape, oversized files, FIFOs, hidden dirs and the file-count limit
   - attempts: 1
   - result: internal/fsutil (os.Root, non-blocking open, size cap, newline-free errors) and terraform.Discover with recorded skips and an entry limit; skips become coverage gaps in T-0109
@@ -336,18 +336,35 @@ locations and without executing anything.
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; too_many_diagnostics → parse_error when it is an error, else a coverage gap naming the file (ADR 0016); uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
     - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
-- [ ] T-0111 · Bound parse memory per file
+- [x] T-0111a · Bound parse memory per file
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0103
   - accept:
-    - a benchmark records peak memory of the nesting guard and the parse for a 5 MiB file (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on `a=1` lines)
-    - the per-file cost fits the 1 GiB scan budget: the guard no longer allocates a token slice and/or MaxFileSize is lowered, with the decision recorded in an ADR
-    - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded too: at 5 MiB they evaluate but use about 2.4 GB (measured in the T-0104a review)
-    - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: today a flat 2.4 MB array allocates about 2.4 GB in total and keeps one memo entry per element (T-0106e review)
+    - a test records the live memory of the nesting guard's lexing and of the parse for worst-case HCL and JSON files at the per-file size limit, and asserts it stays under a recorded ceiling; the measurements are in PROGRESS (the T-0102b review measured about 1.9 GB for LexConfig and 2.2 GB for ParseConfig on 5 MiB of `a=1` lines, in total allocations)
+    - the per-file cost fits the 1 GiB scan budget: MaxFileSize is lowered (the guard keeps its token slice, which the lower size bounds), with the decision recorded in an ADR; tests at, below and above the new limit
+  - attempts: 1
+  - result: DefaultLimits MaxFileSize 5 MiB → 1 MiB (ADR 0016); TestParseMemoryPerFile asserts ≤ 320 MB lexing and ≤ 192 MB parsing for nine worst-case shapes at the limit, diagnostics included; parsing keeps at most 100 diagnostics per file (Terraform and tfvars files) plus one too_many_diagnostics; T-0111 split into a–d
+- [ ] T-0111b · Bound the parse memory a scan retains
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0111a
+  - accept:
+    - the parsed syntax trees a scan keeps (all files of all modules of all roots, a directory parsed once per tree) are bounded by a scan-wide budget counted in lexer tokens (about 90 bytes of live heap each, T-0111a); past it a file is not parsed and is reported (a limit diagnostic that T-0109 maps to a limit_exceeded gap); tests at, below and above the budget; the budget leaves room for one file's transient parse peak, about 450 MB in the worst case (ADR 0016)
+  - attempts: 0
+- [ ] T-0111c · Bound index chains
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0111a
+  - accept:
+    - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded: in a 5 MiB file they evaluated but used about 2.4 GB (measured in the T-0104a review); re-measure at the T-0111a limit and bound the chain length or its evaluation work, with tests at, below and above the bound
+  - attempts: 0
+- [ ] T-0111d · Memoize only containers in holdsDynamicSource
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0111a
+  - accept:
+    - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: a flat 2.4 MB array allocated about 2.4 GB in total and kept one memo entry per element (T-0106e review); a test bounds the allocation
   - attempts: 0
 - [ ] T-0112 · Merge override files with Terraform semantics
   - skills: iace-terraform-parsing, iace-testing
@@ -420,16 +437,18 @@ locations and without executing anything.
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0107f
   - accept:
+    - .claude/skills/iace-terraform-parsing/SKILL.md and the roadmap say 1 MiB per file, not 5 MiB (ADR 0016)
     - .claude/skills/iace-terraform-parsing/references/hcl-evaluation.md says the filesystem functions resolve relative paths against the root module directory, with path.module as the instance's path from the root and path.root ".", and read anywhere inside the scan root (ADR 0015), no longer "only inside the module directory"
     - .claude/skills/iace-security/references/threat-model.md (and the SKILL.md module rules) state: the file-function boundary is the scan root, and a module can read any repository file, `.git/config` (where actions/checkout may persist an auth header) and a committed `.terraform` included; the values reach outputs only through the existing redaction. The module manifest is trusted only by pipeline input (ADR 0013). Uninstantiated local modules are scanned as roots (ADR 0014)
   - attempts: 0
   - blocked: needs-human — these references live in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
-- [ ] T-0121 · Flag references incomplete only when something is missing
+- [ ] T-0121 · Flag references and diagnostics only when something is missing
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0108a
   - accept:
     - once the module's reference budget is full, expressions without traversals (literals) no longer mark their resource ReferencesIncomplete; a dynamic block over a literal for_each whose content uses the iterator is complete (T-0108a review: both over-flag today, which is safe but noisy)
     - tests cover both, and the budget-full case still marks expressions that do refer to something
+    - the per-file parse diagnostic cap (parseDiag) counts per file read, not per file name: a tfvars file passed twice with --var-file, or a --var-file naming one of the module's .tf files, no longer gets a spurious too_many_diagnostics (T-0111a review)
   - attempts: 0
 - [ ] T-0122 · Evaluate provider configuration values
   - skills: iace-terraform-parsing, iace-security, iace-testing

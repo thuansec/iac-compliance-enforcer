@@ -107,6 +107,10 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// parseDiagCounts counts the parse diagnostics of each file; tooManyErrors records the
+	// files whose too_many_diagnostics entry is an error (parseDiag).
+	parseDiagCounts map[string]int
+	tooManyErrors   map[string]bool
 	// required memoizes RequiredProviders.
 	required map[string]RequiredProvider
 	// addrPrefix is the instance's module address ("module.a[0]"), which qualifies the
@@ -226,7 +230,7 @@ func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []by
 	} else {
 		file, diags = parser.ParseHCL(data, name)
 	}
-	m.addHCLDiags(name, diags)
+	m.addParseDiags(name, diags)
 	if file == nil || diags.HasErrors() {
 		// Terraform rejects the file, so its blocks are not used: a truncated body would yield
 		// misleading values. The error makes the module a parse_error gap.
@@ -234,7 +238,7 @@ func (m *ParsedModule) parseFile(parser *hclparse.Parser, name string, data []by
 	}
 
 	content, remain, diags := file.Body.PartialContent(topLevelSchema)
-	m.addHCLDiags(name, diags)
+	m.addParseDiags(name, diags)
 	for _, b := range content.Blocks {
 		m.Blocks = append(m.Blocks, Block{
 			Type: b.Type, Labels: b.Labels, File: name,
@@ -258,7 +262,7 @@ func (m *ParsedModule) leftovers(name string, remain hcl.Body) {
 			}
 		}
 		for _, a := range body.Attributes {
-			m.diag(SeverityError, DiagSyntax, "Unsupported argument",
+			m.parseDiag(SeverityError, DiagSyntax, "Unsupported argument",
 				fmt.Sprintf("An argument named %q is not expected at the top level.", a.Name), name,
 				a.NameRange.Start.Line, a.NameRange.Start.Column)
 		}
@@ -277,25 +281,94 @@ func (m *ParsedModule) leftovers(name string, remain hcl.Body) {
 }
 
 func (m *ParsedModule) unsupported(name, blockType string, r hcl.Range) {
-	m.diag(SeverityWarning, DiagUnsupportedBlock, "Unsupported block type",
+	m.parseDiag(SeverityWarning, DiagUnsupportedBlock, "Unsupported block type",
 		fmt.Sprintf("Blocks of type %q are not supported by iace, so this block is not checked.", blockType),
 		name, r.Start.Line, r.Start.Column)
 }
 
+// maxDiagnosticsPerFile bounds the diagnostics parsing keeps per file: a 1 MiB file of invalid
+// characters gives one per byte (118 MB), and one of empty unsupported blocks one per four bytes
+// (45 MB); either would flood every report (ADR 0016).
+const maxDiagnosticsPerFile = 100
+
+// DiagTooManyDiagnostics reports a file with more parse diagnostics than iace keeps; it is an
+// error when any of those not kept is one.
+const DiagTooManyDiagnostics DiagCode = "too_many_diagnostics"
+
+// markTooManyError makes file name's too_many_diagnostics entry an error.
+func (m *ParsedModule) markTooManyError(name string) {
+	if m.tooManyErrors == nil {
+		m.tooManyErrors = map[string]bool{}
+	}
+	m.tooManyErrors[name] = true
+	for i := range m.Diagnostics {
+		if d := &m.Diagnostics[i]; d.File == name && d.Code == DiagTooManyDiagnostics {
+			d.Severity = SeverityError
+		}
+	}
+}
+
+// parseDiag records a diagnostic that parsing file adds, at most maxDiagnosticsPerFile per file:
+// a file is parsed once per module, so each one is distinct. Past the cap, one
+// too_many_diagnostics diagnostic stands for the rest, with error severity once any of them is an
+// error, so HasErrors never loses one. Evaluation diagnostics are not counted: they are bounded
+// by the expressions evaluated, and repeated evaluations would count twice.
+func (m *ParsedModule) parseDiag(sev Severity, code DiagCode, summary, detail, file string, line, col int) {
+	if m.parseDiagCounts == nil {
+		m.parseDiagCounts = map[string]int{}
+	}
+	n := m.parseDiagCounts[file]
+	m.parseDiagCounts[file] = n + 1
+	switch {
+	case n < maxDiagnosticsPerFile:
+		m.diag(sev, code, summary, detail, file, line, col)
+	case n == maxDiagnosticsPerFile:
+		m.diag(sev, DiagTooManyDiagnostics, "Too many diagnostics",
+			fmt.Sprintf("The file has more than %d diagnostics; only the first are listed.", maxDiagnosticsPerFile),
+			file, 0, 0)
+		if sev == SeverityError {
+			m.markTooManyError(file)
+		}
+	case sev == SeverityError && !m.tooManyErrors[file]:
+		m.markTooManyError(file) // once per file, however many errors follow
+	}
+}
+
+// addParseDiags records hcl's diagnostics from parsing file name through parseDiag.
+func (m *ParsedModule) addParseDiags(name string, diags hcl.Diagnostics) {
+	for _, d := range diags {
+		m.parseDiag(hclSeverity(d), DiagSyntax, d.Summary, "", name, hclLine(d), hclColumn(d))
+	}
+}
+
+// addHCLDiags records hcl's diagnostics for file name from evaluation, uncapped.
 func (m *ParsedModule) addHCLDiags(name string, diags hcl.Diagnostics) {
 	for _, d := range diags {
-		sev := SeverityError
-		if d.Severity == hcl.DiagWarning {
-			sev = SeverityWarning
-		}
-		line, col := 0, 0
-		if d.Subject != nil {
-			line, col = d.Subject.Start.Line, d.Subject.Start.Column
-		}
 		// hcl's Detail can quote source text, such as an unquoted value ("x" is not a valid JSON
 		// keyword), so only its Summary, which names keywords and blocks, is kept.
-		m.diag(sev, DiagSyntax, d.Summary, "", name, line, col)
+		m.diag(hclSeverity(d), DiagSyntax, d.Summary, "", name, hclLine(d), hclColumn(d))
 	}
+}
+
+func hclSeverity(d *hcl.Diagnostic) Severity {
+	if d.Severity == hcl.DiagWarning {
+		return SeverityWarning
+	}
+	return SeverityError
+}
+
+func hclLine(d *hcl.Diagnostic) int {
+	if d.Subject == nil {
+		return 0
+	}
+	return d.Subject.Start.Line
+}
+
+func hclColumn(d *hcl.Diagnostic) int {
+	if d.Subject == nil {
+		return 0
+	}
+	return d.Subject.Start.Column
 }
 
 func (m *ParsedModule) diag(sev Severity, code DiagCode, summary, detail, file string, line, col int) {

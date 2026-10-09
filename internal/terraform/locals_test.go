@@ -538,7 +538,9 @@ func TestEvaluateLocalsDeepValues(t *testing.T) {
 // marked incomplete, with one warning.
 func TestEvaluateLocalsManyReferences(t *testing.T) {
 	t.Parallel()
-	const n = 20000
+	// The chain's references pass 2^17 entries near 512 locals; 15,000 keep the file under the
+	// 1 MiB file limit (ADR 0016).
+	const n = 15000
 	m, locals := evalLocals(t, chain(n, `"${aws_s3_bucket.r0.id}"`, func(i int) string {
 		return `"${` + prev(i) + `}${aws_s3_bucket.r` + strconv.Itoa(i) + `.id}"`
 	}), terraform.VarOptions{})

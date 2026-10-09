@@ -259,6 +259,8 @@ func (m *ParsedModule) applyVarsFile(root *fsutil.Root, name string, limits Limi
 			"The file nests expressions too deeply to parse safely, so it was not parsed.", name, line, 0)
 		return nil
 	}
+	// A tfvars file is untrusted input read once here: its diagnostics share the per-file cap
+	// of parsing (parseDiag, ADR 0016).
 	parser := hclparse.NewParser()
 	var file *hcl.File
 	var diags hcl.Diagnostics
@@ -267,22 +269,22 @@ func (m *ParsedModule) applyVarsFile(root *fsutil.Root, name string, limits Limi
 	} else {
 		file, diags = parser.ParseHCL(data, name)
 	}
-	m.addHCLDiags(name, diags)
+	m.addParseDiags(name, diags)
 	if file == nil || diags.HasErrors() {
 		return nil
 	}
 	attrs, diags := file.Body.JustAttributes()
-	m.addHCLDiags(name, diags)
+	m.addParseDiags(name, diags)
 	for _, attr := range sortedAttributes(attrs) {
 		v, ok := vars[attr.Name]
 		if !ok {
-			m.diag(SeverityWarning, DiagUndeclaredVariable, "Value for undeclared variable",
+			m.parseDiag(SeverityWarning, DiagUndeclaredVariable, "Value for undeclared variable",
 				fmt.Sprintf("The module declares no variable named %q, so this value is ignored.", attr.Name),
 				name, attr.NameRange.Start.Line, attr.NameRange.Start.Column)
 			continue
 		}
 		val, diags := m.evalExpr(attr.Expr, nil)
-		m.addHCLDiags(name, diags)
+		m.addParseDiags(name, diags)
 		if diags.HasErrors() {
 			val = cty.DynamicVal
 		}
