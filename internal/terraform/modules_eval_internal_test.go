@@ -136,7 +136,7 @@ func evaluateFanOut(t *testing.T, child string) []*ModuleInstance {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits(), TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestEvaluateTreeBoundsAncestorsOfDeepChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits(), TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestEvaluateTreeBoundsLocalsAfterCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits(), TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestEvaluateTreeNeverStopsTheRootsLocals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits(), TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

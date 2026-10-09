@@ -31,7 +31,7 @@ func childVariables(t *testing.T, dir, name string) (vars map[string]terraform.V
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", limits)
+	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", limits, terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestModuleInputsInJSONAndBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits())
+	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits(), terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ locals {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits())
+	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits(), terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestModuleInputsHonourCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits())
+	tree, err := terraform.LoadModuleTree(ctx, r, d, ".", terraform.DefaultLimits(), terraform.TreeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
