@@ -202,7 +202,7 @@ func (m *ParsedModule) ProviderConfigs() []ProviderConfig {
 		p := ProviderConfig{LocalName: b.Labels[0], Source: m.providerSource(b.Labels[0]), File: b.File, Range: b.Range, DefRange: b.DefRange}
 		content, _, _ := b.Body.PartialContent(providerBlockSchema)
 		if a, ok := content.Attributes["alias"]; ok {
-			p.Alias, _ = literalString(a.Expr, strings.HasSuffix(b.File, ".json"))
+			p.Alias, _ = literalString(a.Expr, inJSON(a.Expr))
 		}
 		out = append(out, p)
 	}

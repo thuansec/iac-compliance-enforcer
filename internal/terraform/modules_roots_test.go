@@ -70,7 +70,8 @@ module "decoy" {
   source = "./good"
 }
 `,
-		// An override file redirects module.decoy, which Terraform would load from ./evil.
+		// An override file redirects module.decoy to ./evil, as Terraform would, so ./good is
+		// uninstantiated.
 		"main_override.tf":    "module \"decoy\" {\n  source = \"./evil\"\n}\n",
 		"zero/main.tf":        "resource \"aws_s3_bucket\" \"z\" {}\n" + module("deep", "../deep"),
 		"deep/main.tf":        `resource "aws_s3_bucket" "d" {}`,
@@ -86,11 +87,11 @@ module "decoy" {
 		t.Fatal(err)
 	}
 	want := []string{
-		". : [module.used.aws_s3_bucket.u module.decoy.aws_s3_bucket.g]",
+		". : [module.used.aws_s3_bucket.u module.decoy.aws_s3_bucket.x]",
 		"other: []",
 		".hidden/mod (orphan): [aws_s3_bucket.h]",
 		"empty (orphan): [aws_s3_bucket.e]",
-		"evil (orphan): [aws_s3_bucket.x]",
+		"good (orphan): [aws_s3_bucket.g]",
 		// ./deep is instantiated through the orphan ./zero, so it is not an orphan itself.
 		"zero (orphan): [aws_s3_bucket.z module.deep.aws_s3_bucket.d]",
 	}

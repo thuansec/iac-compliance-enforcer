@@ -37,8 +37,15 @@ const (
 	DiagSyntax DiagCode = "syntax"
 	// DiagNestingTooDeep: the file nests too deeply to parse safely and was not parsed.
 	DiagNestingTooDeep DiagCode = "nesting_too_deep"
-	// DiagOverrideNotMerged: an override file, whose settings are not merged yet and not checked.
+	// DiagOverrideNotMerged: a block in an override file that iace does not merge yet (a
+	// resource or data source, T-0112b), whose settings are not checked.
 	DiagOverrideNotMerged DiagCode = "override_not_merged"
+	// DiagOverrideWithoutBase: an override of a variable, output, module call, provider or local
+	// value that no other file declares; Terraform rejects the module (ADR 0019).
+	DiagOverrideWithoutBase DiagCode = "override_without_base"
+	// DiagOverrideUnsupported: an override of something Terraform does not let an override
+	// change (depends_on of a module call or output); Terraform rejects the module.
+	DiagOverrideUnsupported DiagCode = "override_unsupported"
 	// DiagUnsupportedBlock: a top-level block type iace does not know (a newer Terraform
 	// feature, for example); it is not checked.
 	DiagUnsupportedBlock DiagCode = "unsupported_block"
@@ -171,13 +178,14 @@ var topLevelSchema = &hcl.BodySchema{
 // fsutil with the size limit and checked by the nesting guard first. Problems in the files become
 // diagnostics, never errors. A file the parser itself rejects contributes no blocks; structural
 // errors (wrong labels, top-level arguments) keep the file's valid blocks, and the module still
-// HasErrors. Override files are reported, checked for syntax and nesting, and not merged. A file
+// HasErrors. Override files are merged into the blocks they name (applyOverrides). A file
 // that cannot be read (removed, grown past the limit) or a cancelled context is an error. The
 // module keeps root for the filesystem functions (file, fileexists, templatefile), so the caller
 // keeps it open until evaluation is done; once it is closed, those calls are unknown.
 func ParseModule(ctx context.Context, root *fsutil.Root, dir Dir, limits Limits) (*ParsedModule, error) {
 	m := &ParsedModule{Dir: dir.Path, root: root, budget: limits.ParseBudget}
 	parser := hclparse.NewParser()
+	var overrides []Block
 	for _, name := range dir.Files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -187,16 +195,17 @@ func ParseModule(ctx context.Context, root *fsutil.Root, dir Dir, limits Limits)
 			return nil, err
 		}
 		if isOverrideFile(name) {
-			// Not merged (ADR 0005): reported, and still checked for syntax errors and nesting,
-			// which Terraform would reject, but its blocks are not used.
-			m.diag(SeverityWarning, DiagOverrideNotMerged, "Override file not merged",
-				"iace does not merge override files yet, so the settings in this file are not checked.", name, 0, 0)
+			// Merged after every other file (ADR 0019); its blocks are set aside until then.
 			n := len(m.Blocks)
 			m.parseFile(parser, name, data)
+			overrides = append(overrides, m.Blocks[n:]...)
 			m.Blocks = m.Blocks[:n]
 			continue
 		}
 		m.parseFile(parser, name, data)
+	}
+	if err := m.applyOverrides(ctx, overrides); err != nil {
+		return nil, err
 	}
 	m.sortDiagnostics()
 	return m, nil
@@ -357,7 +366,11 @@ func (m *ParsedModule) addHCLDiags(name string, diags hcl.Diagnostics) {
 	for _, d := range diags {
 		// hcl's Detail can quote source text, such as an unquoted value ("x" is not a valid JSON
 		// keyword), so only its Summary, which names keywords and blocks, is kept.
-		m.diag(hclSeverity(d), DiagSyntax, d.Summary, "", name, hclLine(d), hclColumn(d))
+		file := name
+		if d.Subject != nil && d.Subject.Filename != "" {
+			file = d.Subject.Filename // a merged body's diagnostic may come from an override file
+		}
+		m.diag(hclSeverity(d), DiagSyntax, d.Summary, "", file, hclLine(d), hclColumn(d))
 	}
 }
 
