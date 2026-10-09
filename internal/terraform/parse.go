@@ -37,14 +37,13 @@ const (
 	DiagSyntax DiagCode = "syntax"
 	// DiagNestingTooDeep: the file nests too deeply to parse safely and was not parsed.
 	DiagNestingTooDeep DiagCode = "nesting_too_deep"
-	// DiagOverrideNotMerged: a block in an override file that iace does not merge yet (a
-	// resource or data source, T-0112b), whose settings are not checked.
-	DiagOverrideNotMerged DiagCode = "override_not_merged"
-	// DiagOverrideWithoutBase: an override of a variable, output, module call, provider or local
-	// value that no other file declares; Terraform rejects the module (ADR 0019).
+	// DiagOverrideWithoutBase: an override of a variable, output, module call, provider, local
+	// value, resource or data source that no other file declares; Terraform rejects the module
+	// (ADR 0019).
 	DiagOverrideWithoutBase DiagCode = "override_without_base"
 	// DiagOverrideUnsupported: an override of something Terraform does not let an override
-	// change (depends_on of a module call or output); Terraform rejects the module.
+	// change (depends_on of a module call, output, resource or data source; a moved, import or
+	// removed block); Terraform rejects the module.
 	DiagOverrideUnsupported DiagCode = "override_unsupported"
 	// DiagUnsupportedBlock: a top-level block type iace does not know (a newer Terraform
 	// feature, for example); it is not checked.
@@ -85,6 +84,9 @@ type Block struct {
 	DefRange hcl.Range
 	// Body is the block's content, decoded by later stages.
 	Body hcl.Body
+	// overrides are the override blocks merged into a resource or data block, in the order they
+	// apply; the resource decoder layers them over Body (overriddenBody, ADR 0019).
+	overrides []Block
 }
 
 // ParsedModule is the syntax of one module directory.

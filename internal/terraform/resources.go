@@ -111,9 +111,12 @@ type Resource struct {
 
 // resourceDecoder decodes a module's resources within the module's size budget.
 type resourceDecoder struct {
-	m      *ParsedModule
-	vars   cty.Value
-	locals map[string]Local
+	m *ParsedModule
+	// overridden reports, while a layer of an overridden resource body is decoded, whether a
+	// later layer sets a top-level name, which this layer then skips; nil otherwise.
+	overridden func(name string) bool
+	vars       cty.Value
+	locals     map[string]Local
 	// sizes and sensitive cache the size of "var.<name>" and "local.<name>", and whether it
 	// contains a sensitive value: both walk the whole value, which many references would repeat.
 	sizes     map[string]int
@@ -186,18 +189,12 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 		} else {
 			base.Mode, base.BaseAddress = model.ModeData, "data."+base.Type+"."+base.Name
 		}
-		var body resourceBody
-		if syntax, ok := b.Body.(*hclsyntax.Body); ok {
-			body = hclResourceBody{syntax}
-		} else {
-			jb, ok := d.jsonResourceBody(b)
-			if !ok {
-				base.Address, base.Value, base.Unknown = base.BaseAddress, cty.DynamicVal, []cty.Path{{}}
-				base.Attributes = map[string]hcl.Range{}
-				out = append(out, base)
-				continue
-			}
-			body = jb
+		body, ok := d.resourceBody(b)
+		if !ok {
+			base.Address, base.Value, base.Unknown = base.BaseAddress, cty.DynamicVal, []cty.Path{{}}
+			base.Attributes = map[string]hcl.Range{}
+			out = append(out, base)
+			continue
 		}
 		body.metaArguments(d, &base)
 		base.Provider = m.providerSource(resourceProviderName(&base))
@@ -234,6 +231,27 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 	return out, nil
 }
 
+// resourceBody reads the body of b and of its overrides (overriddenBody). ok is false when one
+// of them does not have the shape Terraform accepts, which has been reported.
+func (d *resourceDecoder) resourceBody(b Block) (resourceBody, bool) {
+	layers := make([]resourceBody, 0, 1+len(b.overrides))
+	for _, l := range append([]Block{b}, b.overrides...) {
+		if syntax, ok := l.Body.(*hclsyntax.Body); ok {
+			layers = append(layers, hclResourceBody{syntax})
+			continue
+		}
+		jb, ok := d.jsonResourceBody(l)
+		if !ok {
+			return nil, false
+		}
+		layers = append(layers, jb)
+	}
+	if len(layers) == 1 {
+		return layers[0], true
+	}
+	return newOverriddenBody(layers), true
+}
+
 // body decodes a block body into an object. prefix and path are the body's dot-joined path
 // (ending in a dot unless empty) and its cty path; top is true for the resource's own body, the
 // only place meta-arguments are. Static and dynamic blocks of a type are merged in source
@@ -241,8 +259,8 @@ func (m *ParsedModule) decodeResources(ctx context.Context, vars map[string]Vari
 func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, path cty.Path, r *Resource, top bool) cty.Value {
 	attrs := map[string]cty.Value{}
 	for _, a := range sortedSyntaxAttributes(body.Attributes) {
-		if top && isMetaArgument(a.Name) {
-			continue // recorded once by metaArguments
+		if top && (isMetaArgument(a.Name) || d.overridden != nil && d.overridden(a.Name)) {
+			continue // recorded once by metaArguments, or replaced by an override
 		}
 		r.Attributes[prefix+a.Name] = a.Expr.Range()
 		d.recordReferences(r, prefix+a.Name, a.Expr)
@@ -254,6 +272,8 @@ func (d *resourceDecoder) body(body *hclsyntax.Body, prefix string, path cty.Pat
 		switch {
 		case top && (b.Type == "lifecycle" || b.Type == "provisioner" || b.Type == "connection"):
 			continue // lifecycle is recorded by metaArguments; the others run at apply time
+		case top && d.overridden != nil && d.overridden(blockName(b)):
+			continue // replaced by an override
 		case b.Type == "dynamic":
 			d.dynamic(b, prefix, path, r, blocks, unknown, top)
 			continue

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-09
-- Task: T-0112a (resources and data sources: T-0112b)
+- Tasks: T-0112a; T-0112b (resources and data sources)
 
 ## Context
 ADR 0005 reported override files (`override.tf`, `*_override.tf` and their `.tf.json` forms)
@@ -44,12 +44,26 @@ read through the generic `hcl.Body` interface.
   - A test parses 1 MiB of overrides of one local, setting, provider and variable.
 - A merged block holds expressions from more than one file. So whether an expression is JSON is
   decided by the expression's own file (inJSON), not the block's file.
-- Resource, data and every other block type in an override file are not merged yet. Each is
-  reported where it is written as `override_not_merged` (ADR 0005) and not used, until T-0112b.
+- resource and data overrides (T-0112b) are layered over the block of the same type and name,
+  which must exist (`override_without_base`). The resource decoder merges the layers
+  (overriddenBody) by the same rules, for HCL and JSON bodies alike:
+  - At the top of the body, a layer skips every attribute and nested block type, static or
+    dynamic, that a later layer sets. A replaced value is never evaluated, recorded or
+    referenced. The last layer that sets each name is indexed once, so decoding stays linear.
+  - Meta-arguments apply layer by layer: count, for_each and provider replace, and so does each
+    lifecycle argument. An `ignore_changes` list replaces the one before only when it is not
+    empty, and `ignore_changes = all`, once set, stays, as in Terraform.
+  - depends_on in a resource or data override is an error (`override_unsupported`), as for
+    module calls and outputs.
+  - Cost and structure are charged for every layer, which can only over-count.
+- moved, import and removed blocks in an override file are errors (`override_unsupported`), as
+  Terraform rejects them. ephemeral, check and action blocks are not checked by iace in any file,
+  so their overrides change nothing iace checks.
+- `override_not_merged` and ADR 0005's accepted risk are retired.
 
 ## Alternatives considered
-- Merge resources in the same change: the resource decoder needs its own merge of HCL and JSON
-  bodies, which is a separate slice (T-0112b).
+- A merged hcl.Body for resources: the resource decoder reads concrete HCL and JSON bodies for
+  its cost, structure, dynamic-block and reference accounting, so it layers the bodies instead.
 - Rewrite override bodies into new syntax trees: it would lose source ranges, which findings
   and diagnostics point to.
 
@@ -57,6 +71,5 @@ read through the generic `hcl.Body` interface.
 - Positive: an override that redirects a module source, changes a variable default or a local
   value, or changes provider requirements is checked as Terraform would apply it. An override
   without a base fails closed, because the module has errors.
-- Negative / accepted risks: a resource override stays a reported gap until T-0112b (threat
-  model T14). Terraform's rule that a variable's `type` set only in an override re-converts the
+- Negative / accepted risks: Terraform's rule that a variable's `type` set only in an override re-converts the
   base default is not modelled: the default is converted to the merged type.

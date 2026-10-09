@@ -205,8 +205,8 @@ variable "v" {
 	}
 }
 
-// An override of something no other file declares is an error, as in Terraform; resource
-// overrides are not merged yet and are reported.
+// An override of something no other file declares is an error, as in Terraform, and so is a
+// moved block in an override file.
 func TestOverridesWithoutBase(t *testing.T) {
 	t.Parallel()
 	m := parseFilesModule(t, map[string]string{
@@ -222,8 +222,12 @@ locals {
 provider "aws" {
   alias = "nowhere"
 }
-resource "aws_s3_bucket" "b" {
+resource "aws_s3_bucket" "nowhere" {
   acl = "public-read"
+}
+moved {
+  from = aws_s3_bucket.a
+  to   = aws_s3_bucket.b
 }
 `,
 	})
@@ -239,7 +243,8 @@ resource "aws_s3_bucket" "b" {
 		{DiagOverrideWithoutBase, 2},
 		{DiagOverrideWithoutBase, 7},
 		{DiagOverrideWithoutBase, 9},
-		{DiagOverrideNotMerged, 12},
+		{DiagOverrideWithoutBase, 12},
+		{DiagOverrideUnsupported, 15},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("diagnostics %v, want %v", got, want)

@@ -18,8 +18,9 @@ import (
 //   - locals merge by name: each value replaces the base value of that name, which must exist.
 //   - terraform settings merge into the module's settings: an attribute or nested block type
 //     replaces the base's, except required_providers, which merges by provider name.
-//   - Other blocks (resources and data sources among them) are not merged yet (T-0112b): each
-//     is reported as override_not_merged and not used.
+//   - resource and data blocks are layered over the block they name, which must exist; the
+//     resource decoder merges them with the same rules (overriddenBody).
+//   - moved, import and removed blocks may not be overridden: each is an error, as in Terraform.
 
 // inJSON reports whether expr was written in a .tf.json file. A merged block holds expressions
 // from more than one file, so the syntax is decided by the expression's own file.
@@ -43,15 +44,19 @@ func (m *ParsedModule) applyOverrides(ctx context.Context, overrides []Block) er
 		switch ov.Type {
 		case "variable", "output", "module", "provider":
 			o.block(ov)
+		case "resource", "data":
+			o.resource(ov)
 		case "locals":
 			o.locals(ov)
 		case "terraform":
 			o.settings(ov)
-		default:
-			m.diag(SeverityWarning, DiagOverrideNotMerged, "Override not merged",
-				fmt.Sprintf("iace does not merge overrides of %s blocks yet, so the settings in this block are not checked.", ov.Type),
+		case "moved", "import", "removed":
+			m.diag(SeverityError, DiagOverrideUnsupported, fmt.Sprintf("Cannot override '%s' blocks", ov.Type),
+				fmt.Sprintf("Terraform does not allow %s blocks in override files.", ov.Type),
 				ov.File, ov.DefRange.Start.Line, ov.DefRange.Start.Column)
 		}
+		// ephemeral, check and action blocks are not checked by iace, in an override file or
+		// anywhere else, so there is nothing of theirs to merge.
 	}
 	o.finish()
 	return nil
@@ -83,7 +88,7 @@ func newOverrideMerger(m *ParsedModule) *overrideMerger {
 	}
 	for i, b := range m.Blocks {
 		switch b.Type {
-		case "variable", "output", "module", "provider":
+		case "variable", "output", "module", "provider", "resource", "data":
 			if key := b.Type + "\x00" + blockIdentity(b); !o.hasNamed(key) {
 				o.named[key] = i
 			}
@@ -124,14 +129,38 @@ func (o *overrideMerger) block(ov Block) {
 		return
 	}
 	if ov.Type == "module" || ov.Type == "output" {
-		content, _, _ := ov.Body.PartialContent(dependsOnSchema)
-		if a, ok := content.Attributes["depends_on"]; ok {
-			o.m.diag(SeverityError, DiagOverrideUnsupported, "Unsupported override",
-				"The depends_on argument may not be overridden.",
-				ov.File, a.NameRange.Start.Line, a.NameRange.Start.Column)
-		}
+		o.dependsOn(ov)
 	}
 	o.overs[i] = append(o.overs[i], ov.Body)
+}
+
+// dependsOn reports depends_on in a module, output, resource or data override: Terraform does
+// not let an override change it and rejects the module.
+func (o *overrideMerger) dependsOn(ov Block) {
+	content, _, _ := ov.Body.PartialContent(dependsOnSchema)
+	if a, ok := content.Attributes["depends_on"]; ok {
+		o.m.diag(SeverityError, DiagOverrideUnsupported, "Unsupported override",
+			"The depends_on argument may not be overridden.",
+			ov.File, a.NameRange.Start.Line, a.NameRange.Start.Column)
+	}
+}
+
+// resource layers ov over the resource or data block of the same type and name; the resource
+// decoder merges them (overriddenBody).
+func (o *overrideMerger) resource(ov Block) {
+	i, ok := o.named[ov.Type+"\x00"+blockIdentity(ov)]
+	if !ok {
+		kind := "resource"
+		if ov.Type == "data" {
+			kind = "data source"
+		}
+		o.m.diag(SeverityError, DiagOverrideWithoutBase, "Missing base declaration to override",
+			fmt.Sprintf("There is no %s %q for this override to change.", kind, strings.Join(ov.Labels, ".")),
+			ov.File, ov.DefRange.Start.Line, ov.DefRange.Start.Column)
+		return
+	}
+	o.dependsOn(ov)
+	o.m.Blocks[i].overrides = append(o.m.Blocks[i].overrides, ov)
 }
 
 var dependsOnSchema = &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "depends_on"}}}
