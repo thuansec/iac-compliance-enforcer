@@ -21,9 +21,10 @@ type Limits struct {
 	MaxFiles int
 }
 
-// DefaultLimits returns the documented limits: 5 MiB per file and 10,000 files.
+// DefaultLimits returns the documented limits: 1 MiB per file (ADR 0016: lexing and parsing a
+// worst-case file holds about 110 times its size in memory) and 10,000 files.
 func DefaultLimits() Limits {
-	return Limits{MaxFileSize: 5 << 20, MaxFiles: 10_000}
+	return Limits{MaxFileSize: 1 << 20, MaxFiles: 10_000}
 }
 
 // Dir is a directory that holds Terraform files.

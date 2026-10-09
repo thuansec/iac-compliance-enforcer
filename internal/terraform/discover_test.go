@@ -81,15 +81,15 @@ func TestDiscoverListsTerraformFilesPerDirectory(t *testing.T) {
 func TestDiscoverSkipsOversizedFiles(t *testing.T) {
 	t.Parallel()
 	dir := tree(t, "main.tf", "big/huge.tf")
-	// A sparse file one byte over the default 5 MiB limit.
-	if err := os.Truncate(filepath.Join(dir, "big", "huge.tf"), 5<<20+1); err != nil {
+	// A sparse file one byte over the default 1 MiB limit.
+	if err := os.Truncate(filepath.Join(dir, "big", "huge.tf"), 1<<20+1); err != nil {
 		t.Fatal(err)
 	}
 	got := discover(t, dir, terraform.DefaultLimits())
 	want := &terraform.Discovery{
 		Dirs: []terraform.Dir{{Path: ".", Files: []string{"main.tf"}}},
 		Skipped: []terraform.Skip{{
-			Path: "big/huge.tf", Reason: terraform.SkipTooLarge, Detail: "5242881 bytes, limit 5242880",
+			Path: "big/huge.tf", Reason: terraform.SkipTooLarge, Detail: "1048577 bytes, limit 1048576",
 		}},
 		Entries: 2,
 	}
@@ -167,7 +167,7 @@ func TestDiscoverCountsSkippedEntriesTowardTheLimit(t *testing.T) {
 func TestDiscoverAcceptsAFileAtTheSizeLimit(t *testing.T) {
 	t.Parallel()
 	dir := tree(t, "exact.tf")
-	if err := os.Truncate(filepath.Join(dir, "exact.tf"), 5<<20); err != nil {
+	if err := os.Truncate(filepath.Join(dir, "exact.tf"), 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	got := discover(t, dir, terraform.DefaultLimits())

@@ -1422,3 +1422,50 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - All fixed.
   - Round 2: APPROVE. Its minors (a dead error result, a nil-subject diagnostic) are fixed.
 - Next: T-0111 or the next ready M1 task; T-0109 waits on T-0113, T-0115 and T-0116.
+
+## 2026-10-09 · T-0111a · done
+- What: per-file parse memory is bounded.
+  - T-0111 was split into a (per file), b (the trees a scan keeps), c (index chains) and d (the
+    holdsDynamicSource memo).
+  - DefaultLimits MaxFileSize is now 1 MiB instead of 5 MiB (ADR 0016). Larger files are
+    too_large skips, which become gaps.
+  - TestParseMemoryPerFile measures live heap (diagnostics included) for nine worst-case shapes
+    at the limit. Lexing must stay under 320 MB and parsing under 192 MB.
+  - Parsing keeps at most 100 diagnostics per file, then one too_many_diagnostics that is an
+    error once any dropped one is. This covers hcl syntax diagnostics, unsupported blocks and
+    arguments, and tfvars diagnostics, all through parseDiag. Evaluation diagnostics are not
+    counted.
+- Measurements (live heap at 1 MiB, lexer / parse; the 5 MiB figures in parentheses):
+
+  | shape | lexer | parse |
+  |---|---|---|
+  | distinct `aN=1` lines | 48 MB (229) | 47 MB (222) |
+  | one long list | 117 MB (560) | 84 MB (421) |
+  | duplicate `a=1` lines | 117 MB | 144 MB |
+  | operator chain | 117 MB | 131 MB |
+  | unary chain | 117 MB | 141 MB |
+  | empty blocks | 117 MB | 130 MB |
+  | negations | 117 MB | 122 MB |
+  | invalid characters | 286 MB | 168 MB |
+  | JSON list | — | 80 MB (401) |
+
+  - Realistic HCL keeps about 22 MB per MiB (89 bytes per token).
+  - Before the cap, diagnostic floods kept 118 MB (`@`), 45 MB (unsupported blocks) and
+    20 MB (top-level arguments) per file; tfvars floods kept 117 MB and 21 MB.
+- Files: internal/terraform/{discover.go,discover_test.go,parse.go,variables.go,
+  parse_memory_internal_test.go,locals_test.go}, docs/adr/0016-lower-the-file-size-limit-to-1-mib.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - TestParseMemoryPerFile failed at 5 MiB (560/421 MB) and passes at 1 MiB.
+  - Mutation checks each fail a test: no cap, no severity upgrade, unsupported() uncapped, the
+    tfvars undeclared warning uncapped.
+- Review: iace-reviewer, 4 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the shapes were not the worst cases. Major: diagnostics were unbounded.
+    - Minors: ADR figures, the tfvars cap, a uint64 wrap.
+  - Round 2: CHANGES_REQUIRED.
+    - Major: unsupported blocks and arguments bypassed the cap.
+    - Minors: evaluation diagnostics were counted; T-0109 mapping.
+  - Round 3: CHANGES_REQUIRED. Major: tfvars diagnostics were uncapped.
+  - Round 4: APPROVE. Its minor (per-name counting when a file is read twice) goes to T-0121.
+- Next: T-0111b (scan-wide parse budget).
