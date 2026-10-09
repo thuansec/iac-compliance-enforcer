@@ -20,6 +20,9 @@ type RootResult struct {
 	Orphan    bool
 	Tree      *ModuleTree
 	Instances []*ModuleInstance
+	// ProviderVersions are the exact provider versions of the root's .terraform.lock.hcl, by
+	// source address (ReadLockFile); its warnings are on the root instance.
+	ProviderVersions map[string]string
 }
 
 // EvaluateRoots loads and evaluates every root module of mods, in order, then scans as roots
@@ -84,7 +87,13 @@ func EvaluateRoots(ctx context.Context, root *fsutil.Root, d *Discovery, mods *M
 		for _, inst := range instances {
 			covered[inst.Dir] = true
 		}
-		out = append(out, RootResult{Dir: dir, Orphan: orphan, Tree: tree, Instances: instances})
+		versions, diags := ReadLockFile(root, dir)
+		if len(diags) > 0 {
+			m := instances[0].Module
+			m.Diagnostics = append(m.Diagnostics, diags...)
+			m.sortDiagnostics()
+		}
+		out = append(out, RootResult{Dir: dir, Orphan: orphan, Tree: tree, Instances: instances, ProviderVersions: versions})
 		return nil
 	}
 	for _, dir := range mods.Roots {

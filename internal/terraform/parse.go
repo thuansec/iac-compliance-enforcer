@@ -107,6 +107,8 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// required memoizes RequiredProviders.
+	required map[string]RequiredProvider
 	// addrPrefix is the instance's module address ("module.a[0]"), which qualifies the
 	// addresses it records; empty for a root module.
 	addrPrefix string

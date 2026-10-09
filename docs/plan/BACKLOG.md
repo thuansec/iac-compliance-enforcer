@@ -321,13 +321,14 @@ locations and without executing anything.
     - inside a module instance, references and depends_on addresses are qualified with the instance's module address; references that come through module inputs keep the caller's qualification
   - attempts: 1
   - result: resource attributes, outputs, module inputs and locals record module-qualified addresses (static index kept) through locals and variables (Variable/Input.References and ReferencesIncomplete); depends_on qualified; one per-module budget of 2^17 entries with an upper bound checked before any list is built, memoized by source range; dynamic blocks over references or invalid ones mark the resource incomplete; follow-up T-0121
-- [ ] T-0108b · Map providers and read their locked versions
+- [x] T-0108b · Map providers and read their locked versions
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0108a
   - accept:
     - provider local names are mapped to source addresses through required_providers (default namespace hashicorp, registry.terraform.io host), including aliases and the provider meta-argument; resources get their provider source and provider_config
     - .terraform.lock.hcl versions populate provider_versions (strict parsing with a size cap, never executed); tests cover each
-  - attempts: 0
+  - attempts: 1
+  - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
   - depends: T-0108b, T-0113, T-0115, T-0116
@@ -335,7 +336,7 @@ locations and without executing anything.
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
     - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
@@ -429,6 +430,13 @@ locations and without executing anything.
   - accept:
     - once the module's reference budget is full, expressions without traversals (literals) no longer mark their resource ReferencesIncomplete; a dynamic block over a literal for_each whose content uses the iterator is complete (T-0108a review: both over-flag today, which is safe but noisy)
     - tests cover both, and the budget-full case still marks expressions that do refer to something
+  - attempts: 0
+- [ ] T-0122 · Evaluate provider configuration values
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0108b
+  - accept:
+    - provider blocks are evaluated like resource bodies (values, unknown and sensitive paths, nested blocks such as assume_role, the same size limits and tree budgets) and recorded on ProviderConfig for the input document's providers array; credentials in provider blocks stay sensitive and redacted
+    - a module call's providers map (`providers = { aws = aws.eu }`) is recorded, so a child resource's provider configuration can be traced to the caller's
   - attempts: 0
 
 ## M2 · Policy engine and walking skeleton — status: planned
