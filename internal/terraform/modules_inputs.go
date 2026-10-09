@@ -28,6 +28,10 @@ var moduleMetaArguments = map[string]bool{
 // Input is one argument of a module call, evaluated in the caller's context.
 type Input struct {
 	Value cty.Value
+	// References are the addresses the argument refers to, qualified in the caller;
+	// ReferencesIncomplete reports that some may be missing.
+	References           []string
+	ReferencesIncomplete bool
 	// Range is the expression's range and NameRange the argument name's, in the caller's file.
 	Range, NameRange hcl.Range
 }
@@ -79,7 +83,9 @@ func (m *ParsedModule) moduleInputs(ctx context.Context, call *ModuleCall, vars 
 			continue
 		}
 		v, _ := d.evalBounded(a.Expr, a.Name, a.NameRange)
-		out[a.Name] = Input{Value: v, Range: a.Expr.Range(), NameRange: a.NameRange}
+		in := Input{Value: v, Range: a.Expr.Range(), NameRange: a.NameRange}
+		in.References, in.ReferencesIncomplete = d.references(a.Expr)
+		out[a.Name] = in
 	}
 	m.sortDiagnostics()
 	return out, nil
@@ -107,6 +113,7 @@ func (m *ParsedModule) EvaluateModuleVariables(ctx context.Context, call *Module
 			continue
 		}
 		v.set(in.Value, in.Range)
+		v.References, v.ReferencesIncomplete = in.References, in.ReferencesIncomplete
 	}
 	out := make(map[string]Variable, len(vars))
 	for _, name := range slices.Sorted(maps.Keys(vars)) {

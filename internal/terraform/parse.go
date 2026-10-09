@@ -107,6 +107,13 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// addrPrefix is the instance's module address ("module.a[0]"), which qualifies the
+	// addresses it records; empty for a root module.
+	addrPrefix string
+	// attrRefs counts the reference entries recorded for resources, outputs and module inputs,
+	// at most maxReferenceEntries; refsWarned records its warning.
+	attrRefs   int
+	refsWarned bool
 	// baseDir is the directory relative file paths resolve against and pathModule is
 	// path.module, for a child module instance (EvaluateTree); empty means the module is its own
 	// root: its directory and ".".

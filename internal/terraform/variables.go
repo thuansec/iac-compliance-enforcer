@@ -56,8 +56,13 @@ type Variable struct {
 	HasDefault bool
 	Sensitive  bool
 	// Value is unknown when no source sets it, and marked with SensitiveMark when Sensitive.
-	Value     cty.Value
-	DeclRange hcl.Range
+	Value cty.Value
+	// References are the addresses the module input that set the variable refers to,
+	// qualified in the caller (EvaluateModuleVariables); none for root variables.
+	// ReferencesIncomplete reports that some may be missing.
+	References           []string
+	ReferencesIncomplete bool
+	DeclRange            hcl.Range
 }
 
 var variableSchema = &hcl.BodySchema{

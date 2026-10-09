@@ -313,22 +313,30 @@ locations and without executing anything.
     - inside a child module instance, path.module is the child's path relative to the root module, path.root is ".", and file/fileexists/templatefile resolve relative paths against the root module directory as Terraform does (T-0105c resolves them against the module's own directory, which is right only for root modules)
   - attempts: 1
   - result: each instance has a base directory (the root module's) and path.module (its path from the root; "." for a root); path.root is "."; file, fileexists and templatefile resolve against the base and are confined to the scan root instead of the module directory (ADR 0015, reference updated); harness alignment recorded as T-0120 (needs-human)
-- [ ] T-0108 · Extract references and provider versions
-  - skills: iace-terraform-parsing
+- [x] T-0108a · Record per-attribute references
+  - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107e, T-0107f
   - accept:
-    - per-attribute references to resource addresses; provider local names are mapped to source addresses, including aliases
-    - inside a module instance, references and depends_on addresses are qualified with the instance's module address (EvaluateTree prefixes resource addresses only)
-    - .terraform.lock.hcl versions populate provider_versions; tests cover each
+    - each resource attribute and output records the addresses it refers to (resources, data sources, ephemeral resources and module calls, without the attribute suffix, with the index when it is statically known), propagated through locals and module input variables, and capped per module with a references_incomplete warning
+    - inside a module instance, references and depends_on addresses are qualified with the instance's module address; references that come through module inputs keep the caller's qualification
+  - attempts: 1
+  - result: resource attributes, outputs, module inputs and locals record module-qualified addresses (static index kept) through locals and variables (Variable/Input.References and ReferencesIncomplete); depends_on qualified; one per-module budget of 2^17 entries with an upper bound checked before any list is built, memoized by source range; dynamic blocks over references or invalid ones mark the resource incomplete; follow-up T-0121
+- [ ] T-0108b · Map providers and read their locked versions
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0108a
+  - accept:
+    - provider local names are mapped to source addresses through required_providers (default namespace hashicorp, registry.terraform.io host), including aliases and the provider meta-argument; resources get their provider source and provider_config
+    - .terraform.lock.hcl versions populate provider_versions (strict parsing with a size cap, never executed); tests cover each
   - attempts: 0
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108, T-0113, T-0115, T-0116
+  - depends: T-0108b, T-0113, T-0115, T-0116
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
     - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2); override_not_merged and unsupported_block → coverage gaps naming the file (ADR 0005); expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a)
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS
   - attempts: 0
 - [ ] T-0111 · Bound parse memory per file
@@ -415,6 +423,13 @@ locations and without executing anything.
     - .claude/skills/iace-security/references/threat-model.md (and the SKILL.md module rules) state: the file-function boundary is the scan root, and a module can read any repository file, `.git/config` (where actions/checkout may persist an auth header) and a committed `.terraform` included; the values reach outputs only through the existing redaction. The module manifest is trusted only by pipeline input (ADR 0013). Uninstantiated local modules are scanned as roots (ADR 0014)
   - attempts: 0
   - blocked: needs-human — these references live in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
+- [ ] T-0121 · Flag references incomplete only when something is missing
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0108a
+  - accept:
+    - once the module's reference budget is full, expressions without traversals (literals) no longer mark their resource ReferencesIncomplete; a dynamic block over a literal for_each whose content uses the iterator is complete (T-0108a review: both over-flag today, which is safe but noisy)
+    - tests cover both, and the budget-full case still marks expressions that do refer to something
+  - attempts: 0
 
 ## M2 · Policy engine and walking skeleton — status: planned
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.

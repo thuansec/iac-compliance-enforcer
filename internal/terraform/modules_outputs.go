@@ -30,8 +30,12 @@ type Output struct {
 	// Sensitive is the declared sensitive argument.
 	Sensitive bool
 	// Unknown lists the outermost unknown paths in Value, as Local.Unknown.
-	Unknown   []cty.Path
-	DeclRange hcl.Range
+	Unknown []cty.Path
+	// References are the addresses the value refers to (references); ReferencesIncomplete
+	// reports that some may be missing.
+	References           []string
+	ReferencesIncomplete bool
+	DeclRange            hcl.Range
 }
 
 // evaluateOutputs evaluates the module's output blocks with vars, locals and modules as
@@ -71,6 +75,7 @@ func (m *ParsedModule) evaluateOutputs(ctx context.Context, vars map[string]Vari
 		}
 		if attr, ok := content.Attributes["value"]; ok {
 			o.Value, _ = d.evalBounded(attr.Expr, name, attr.NameRange)
+			o.References, o.ReferencesIncomplete = d.references(attr.Expr)
 		} else {
 			m.diag(SeverityError, DiagMissingOutputValue, "Missing required argument",
 				fmt.Sprintf("The output %q has no value, so its value is unknown.", name),

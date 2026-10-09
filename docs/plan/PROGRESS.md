@@ -1348,3 +1348,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - All addressed; the harness part is T-0120.
   - Round 2: APPROVE, no findings.
 - Next: T-0108 (references and provider versions); T-0107 is complete.
+
+## 2026-10-09 · T-0108a · done
+- What: per-attribute references.
+  - T-0108 was split into a (references) and b (providers and lock file). T-0109 depends on
+    T-0108b.
+  - resourceDecoder.references records an expression's addresses:
+    - resources, data, ephemeral resources and module calls, with a literal index kept
+      (referenceWithIndex) and qualified with the instance's module address (addrPrefix);
+    - plus the references of the locals and variables it uses.
+  - Module inputs carry their references and incompleteness into the child's variables
+    (Input/Variable.References and ReferencesIncomplete). Locals inherit variables' references
+    within their budget.
+  - Resource.References (by dot-joined attribute path), Output.References and qualified
+    depends_on are recorded.
+  - One per-module budget (attrRefs, 2^17 entries; tree refs dimension) is checked against an
+    upper bound before any list is built, with results memoized by source range. inspect also
+    memoizes inspectExpr.
+  - Dynamic blocks whose for_each refers to anything, or that are invalid, mark the resource
+    incomplete. T-0109 must surface ReferencesIncomplete.
+- Files: internal/terraform/{references.go,references_test.go,resources.go,resources_json.go,
+  resources_dynamic.go,locals.go,locals_test.go,locals_internal_test.go,variables.go,
+  modules_inputs.go,modules_outputs.go,modules_eval.go,modules_eval_internal_test.go,parse.go},
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test:
+    - no qualify, no input references, no index, no depends_on qualify;
+    - no cap, iterator silent, no upper bound;
+    - dropping input incompleteness, locals ignoring variable incompleteness, no dynamic marking.
+  - Inspecting expressions twice had pushed TestDecodeResourcesManyReferences over 64 MB
+    under -race; memoizing inspectExpr fixed it.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: a var.x expanded its input's whole reference list into every local and resource
+      before any cap (3.7 GB live, 37 GB allocated).
+    - Major: input incompleteness was dropped (fail-open).
+    - Minors: boundary tests, dynamic for_each references, a stale doc.
+    - All fixed. The reviewer's repros now run in 0.45 s with a 145 MB heap.
+  - Round 2: APPROVE. Its minor, over-flagging incompleteness (safe), is follow-up T-0121.
+- Next: T-0108b (providers and locked versions).

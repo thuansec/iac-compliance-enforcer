@@ -66,11 +66,12 @@ func (u treeUsage) exhausted() bool {
 }
 
 // usageOf returns what m has used so far, apart from its source. Its calls' expansion work
-// counts as expansion work.
+// counts as expansion work, and its attributes' reference entries as reference entries.
 func usageOf(m *ParsedModule) treeUsage {
 	u := m.usage
 	u.expansion += u.callExpansion
 	u.callExpansion = 0
+	u.refs += m.attrRefs // the reference entries of attributes, outputs and module inputs
 	return treeUsage{function: m.fnWork, moduleUsage: u}
 }
 
@@ -165,6 +166,7 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 		// Paths resolve against the root module's directory, and path.module locates this
 		// module from there (T-0107f).
 		inst.Module.baseDir, inst.Module.pathModule = e.rootDir, pathFrom(e.rootDir, node.Dir)
+		inst.Module.addrPrefix = inst.Address
 	}
 	e.out = append(e.out, inst)
 	m := inst.Module
