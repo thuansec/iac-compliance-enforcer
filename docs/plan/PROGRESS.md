@@ -1317,3 +1317,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       inherited manifest trust. Both fixed.
   - Round 2: APPROVE. Its minor (ADR wrapping) is fixed.
 - Next: T-0107f (paths inside child module instances).
+
+## 2026-10-09 · T-0107f · done
+- What: paths inside child module instances resolve as in Terraform.
+  - ParsedModule gains baseDir and pathModule. EvaluateTree sets them for each child to the
+    tree's root directory and the child's path from it (pathFrom). A root module keeps its own
+    directory and ".".
+  - pathObject is per instance: path.module is the instance's path, path.root is "." (it was
+    unknown), and path.cwd is unknown.
+  - file, fileexists and templatefile join relative paths to the base directory (filePath). They
+    are confined to the scan root through os.Root rather than to a sub-root of the module
+    directory, because a child's path.module can leave the root module directory. Templates are
+    named by their scan-root path.
+  - ADR 0015 records the boundary change, and docs/reference/terraform-functions.md is
+    rewritten to match.
+  - T-0120 (needs-human) aligns the harness standards (hcl-evaluation reference, threat model)
+    with ADR 0013, ADR 0014 and ADR 0015.
+- Files: internal/terraform/{functions_files.go,resources.go,locals.go,parse.go,modules_eval.go,
+  modules_paths_test.go,functions_files_internal_test.go,functions_files_unix_test.go},
+  docs/adr/0015-resolve-file-paths-against-the-root-module.md,
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test: no instance paths, no base directory, path.root unknown,
+    no scan-root check.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the user-facing reference still described per-module confinement.
+    - Minors: stale comments; harness references needing a human; missing tests for a
+      manifest-resolved module's path.module and for a child template's diagnostic location.
+    - All addressed; the harness part is T-0120.
+  - Round 2: APPROVE, no findings.
+- Next: T-0108 (references and provider versions); T-0107 is complete.

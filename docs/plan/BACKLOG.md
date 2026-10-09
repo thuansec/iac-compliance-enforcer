@@ -306,12 +306,13 @@ locations and without executing anything.
     - a local child that no root instantiates (decoy call, `count = 0`, a source redirected by an override file) is scanned as a root or reported as a coverage gap, never silently skipped
   - attempts: 1
   - result: EvaluateRoots evaluates the roots, then scans as orphan roots (uninstantiated_module warning, own defaults only, no manifest trust) every local child that no tree instantiated, from ClassifyModules (with CalledBy) and every loaded tree's resolved calls; orphans called by orphans wait, and cycles start at a member (ADR 0014); also scales T-0107g's wall-clock check under -race (raceSlowdown)
-- [ ] T-0107f · Resolve paths inside child module instances as Terraform does
+- [x] T-0107f · Resolve paths inside child module instances as Terraform does
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107g
   - accept:
     - inside a child module instance, path.module is the child's path relative to the root module, path.root is ".", and file/fileexists/templatefile resolve relative paths against the root module directory as Terraform does (T-0105c resolves them against the module's own directory, which is right only for root modules)
-  - attempts: 0
+  - attempts: 1
+  - result: each instance has a base directory (the root module's) and path.module (its path from the root; "." for a root); path.root is "."; file, fileexists and templatefile resolve against the base and are confined to the scan root instead of the module directory (ADR 0015, reference updated); harness alignment recorded as T-0120 (needs-human)
 - [ ] T-0108 · Extract references and provider versions
   - skills: iace-terraform-parsing
   - depends: T-0107e, T-0107f
@@ -406,6 +407,14 @@ locations and without executing anything.
     - it states ADR 0006's amendment of rule 1: in .tf.json input a nested block written as one object stays an object (values and unknown/sensitive paths), and rules read nested blocks through the iace.lib.tf path helpers; and ADR 0007's amendment: a JSON property holding a dynamic block (or sharing a dynamic block's type) is decoded as an array of blocks, with ranges under its entry paths
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
+- [!] T-0120 · Align the harness standards with ADR 0013, ADR 0014 and ADR 0015
+  - skills: iace-terraform-parsing, iace-security
+  - depends: T-0107f
+  - accept:
+    - .claude/skills/iace-terraform-parsing/references/hcl-evaluation.md says the filesystem functions resolve relative paths against the root module directory, with path.module as the instance's path from the root and path.root ".", and read anywhere inside the scan root (ADR 0015), no longer "only inside the module directory"
+    - .claude/skills/iace-security/references/threat-model.md (and the SKILL.md module rules) state: the file-function boundary is the scan root, and a module can read any repository file, `.git/config` (where actions/checkout may persist an auth header) and a committed `.terraform` included; the values reach outputs only through the existing redaction. The module manifest is trusted only by pipeline input (ADR 0013). Uninstantiated local modules are scanned as roots (ADR 0014)
+  - attempts: 0
+  - blocked: needs-human — these references live in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 
 ## M2 · Policy engine and walking skeleton — status: planned
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.

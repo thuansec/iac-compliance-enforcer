@@ -3,6 +3,7 @@ package terraform
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
@@ -113,6 +114,8 @@ type ModuleInstance struct {
 
 // treeEvaluator evaluates one ModuleTree.
 type treeEvaluator struct {
+	// rootDir is the root module's directory.
+	rootDir string
 	// instances counts the module instances started (the root is not one), at most
 	// maxTreeModuleInstances.
 	instances int
@@ -136,7 +139,7 @@ type treeEvaluator struct {
 // its call. Unresolved calls have no instance. Problems in the files are diagnostics; a file
 // that cannot be read or a cancelled context is an error.
 func EvaluateTree(ctx context.Context, root *fsutil.Root, tree *ModuleTree, opts VarOptions, limits Limits) ([]*ModuleInstance, error) {
-	e := &treeEvaluator{root: root, opts: opts, limits: limits, charged: map[*ParsedModule]treeUsage{}}
+	e := &treeEvaluator{root: root, opts: opts, limits: limits, charged: map[*ParsedModule]treeUsage{}, rootDir: tree.Root.Dir}
 	if _, err := e.evaluate(ctx, tree.Root, nil, nil, instanceSpec{}, nil); err != nil {
 		return nil, fmt.Errorf("evaluate module tree: %w", err)
 	}
@@ -159,6 +162,9 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 		}
 		inst.ExpansionUnknown = spec.suffix == "[*]"
 		e.instances++
+		// Paths resolve against the root module's directory, and path.module locates this
+		// module from there (T-0107f).
+		inst.Module.baseDir, inst.Module.pathModule = e.rootDir, pathFrom(e.rootDir, node.Dir)
 	}
 	e.out = append(e.out, inst)
 	m := inst.Module
@@ -348,4 +354,14 @@ func (e *treeEvaluator) charge(m *ParsedModule) {
 	u.structure += now.structure - before.structure
 	u.instances += now.instances - before.instances
 	e.charged[m] = now
+}
+
+// pathFrom returns target relative to base, both slash-separated and relative to the scan
+// root, as Terraform writes path.module: "modules/net", "../shared" or ".".
+func pathFrom(base, target string) string {
+	rel, err := filepath.Rel(filepath.FromSlash(base), filepath.FromSlash(target))
+	if err != nil {
+		return target // both are relative to one root, so Rel cannot fail
+	}
+	return filepath.ToSlash(rel)
 }

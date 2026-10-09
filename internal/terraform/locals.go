@@ -500,7 +500,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 			ectx.Variables["module"] = cty.ObjectVal(mods)
 		}
 		if slices.Contains(s.roots, "path") {
-			ectx.Variables["path"] = pathObject()
+			ectx.Variables["path"] = m.pathObject()
 		}
 	}
 	val, diags := m.evalExpr(s.attr.Expr, ectx)

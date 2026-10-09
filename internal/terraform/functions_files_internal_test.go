@@ -99,8 +99,12 @@ func TestFileFunctions(t *testing.T) {
 		{`jsondecode(file("data.json")).a`, `1`, nil},
 		{`file("sub/../data.json")`, `"{\"a\": 1}"`, nil},
 		{`file("missing.txt")`, `unknown`, []string{"file_unreadable@mod/main.tf"}},
-		{`file("../secret.txt")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
-		{`file("sub/../../secret.txt")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
+		// Relative paths resolve against the root module (here mod) and may reach anything in
+		// the scan root, but never leave it (ADR 0015).
+		{`file("../secret.txt")`, `"outside the module"`, nil},
+		{`file("sub/../../secret.txt")`, `"outside the module"`, nil},
+		{`file("../../secret.txt")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
+		{`file("sub/../../../x")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
 		{`file("/etc/hostname")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
 		{`file("~/.ssh/id_rsa")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
 		{`file("C:/Windows/win.ini")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
@@ -112,7 +116,8 @@ func TestFileFunctions(t *testing.T) {
 		{`fileexists("data.json")`, `true`, nil},
 		{`fileexists("nope.txt")`, `false`, nil},
 		{`fileexists("${path.module}/sub/note.txt")`, `true`, nil},
-		{`fileexists("../secret.txt")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
+		{`fileexists("../secret.txt")`, `true`, nil},
+		{`fileexists("../../secret.txt")`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
 		{`fileexists("dir")`, `unknown`, []string{"file_unreadable@mod/main.tf"}},
 
 		{`templatefile("t.tftpl", { name = "x", items = ["a", "b"] })`, `"Hello X! [a] [b]"`, nil},
@@ -124,7 +129,8 @@ func TestFileFunctions(t *testing.T) {
 		{`templatefile("bad.tftpl", {})`, `unknown`, []string{"template_error@mod/bad.tftpl"}},
 		{`templatefile("complex.tftpl", {})`, `unknown`, []string{"expression_too_complex@mod/complex.tftpl"}},
 		{`templatefile("uuid.tftpl", {})`, `unknown`, []string{"unsupported_function@mod/uuid.tftpl"}},
-		{`templatefile("../secret.txt", {})`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
+		{`templatefile("../secret.txt", {})`, `"outside the module"`, nil},
+		{`templatefile("../../secret.txt", {})`, `unknown`, []string{"file_outside_module@mod/main.tf"}},
 		{`templatefile("t.tftpl", { "not an identifier" = 1 })`, `unknown`, []string{"evaluation@mod/main.tf"}},
 		{`templatefile("t.tftpl", "x")`, `unknown`, []string{"evaluation@mod/main.tf"}},
 	} {

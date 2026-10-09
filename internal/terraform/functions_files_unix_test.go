@@ -12,9 +12,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// TestFileFunctionsRefuseSymlinkEscapes: a symlink in the module that leaves the module
-// directory is refused, even when its target is inside the scan root; one that stays inside is
-// followed.
+// TestFileFunctionsRefuseSymlinkEscapes: a symlink that leaves the scan root is refused; one
+// whose target is inside the scan root, in the module directory or not, is followed (ADR 0015).
 func TestFileFunctionsRefuseSymlinkEscapes(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -22,10 +21,11 @@ func TestFileFunctionsRefuseSymlinkEscapes(t *testing.T) {
 		want  cty.Value
 		diags []DiagCode
 	}{
-		{`file("up.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
+		{`file("up.txt")`, cty.StringVal("outside the module"), nil},
 		{`file("abs.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
-		{`fileexists("up.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
-		{`templatefile("up.txt", {})`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
+		{`file("escape.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
+		{`fileexists("escape.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
+		{`templatefile("escape.txt", {})`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
 		{`file("inside.txt")`, cty.StringVal("nested"), nil},
 		{`file("linkdir/note.txt")`, cty.StringVal("nested"), nil},
 		{`file("outdir/x.txt")`, cty.DynamicVal, []DiagCode{DiagFileUnreadable}},
@@ -34,12 +34,17 @@ func TestFileFunctionsRefuseSymlinkEscapes(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "other"), 0o700); err != nil {
 			t.Fatal(err)
 		}
+		outside := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("not in the scan root"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		for name, target := range map[string]string{
 			"up.txt":     filepath.Join("..", "secret.txt"),
 			"abs.txt":    filepath.Join(dir, "secret.txt"),
 			"inside.txt": filepath.Join("sub", "note.txt"),
 			"linkdir":    "sub",
 			"outdir":     filepath.Join("..", "other"),
+			"escape.txt": filepath.Join("..", "..", filepath.Base(outside), "secret.txt"),
 		} {
 			if err := os.Symlink(target, filepath.Join(dir, "mod", name)); err != nil {
 				t.Fatal(err)

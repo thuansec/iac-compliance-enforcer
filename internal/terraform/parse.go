@@ -107,6 +107,10 @@ type ParsedModule struct {
 	// fileBytesRead counts the bytes the filesystem functions read, which never pass the work
 	// they were charged.
 	fileBytesRead int
+	// baseDir is the directory relative file paths resolve against and pathModule is
+	// path.module, for a child module instance (EvaluateTree); empty means the module is its own
+	// root: its directory and ".".
+	baseDir, pathModule string
 	// usage records what the last evaluation of locals and of resources used of their budgets,
 	// what all module inputs used together, and the unknown path steps of every evaluation
 	// (which accumulate, so a repeated evaluation over-counts and fails closed). EvaluateTree

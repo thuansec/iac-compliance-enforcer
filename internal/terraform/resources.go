@@ -548,7 +548,7 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 				sensitive = sensitive || d.isSensitive("local."+attr, l.Value)
 			}
 		case "path":
-			ectx.Variables["path"] = pathObject()
+			ectx.Variables["path"] = d.m.pathObject()
 			est++
 		case "module":
 			if d.modules == nil {
@@ -654,13 +654,17 @@ func (d *resourceDecoder) isSensitive(key string, v cty.Value) bool {
 	return s
 }
 
-// pathObject is path.* for a module evaluated on its own: paths resolve against the module
-// directory (see fileFunctions), so path.module is "."; the root module and working directory
-// are not known.
-func pathObject() cty.Value {
+// pathObject is path.* for this module instance: path.module locates the module from the root
+// module's directory ("." for a root module), path.root is "." and the working directory is not
+// known.
+func (m *ParsedModule) pathObject() cty.Value {
+	module := m.pathModule
+	if module == "" {
+		module = "."
+	}
 	return cty.ObjectVal(map[string]cty.Value{
-		"module": cty.StringVal("."),
-		"root":   cty.UnknownVal(cty.String),
+		"module": cty.StringVal(module),
+		"root":   cty.StringVal("."),
 		"cwd":    cty.UnknownVal(cty.String),
 	})
 }
