@@ -39,3 +39,6 @@ go.work.sum
 
 # python bytecode
 __pycache__/
+
+# materials
+/materials/
