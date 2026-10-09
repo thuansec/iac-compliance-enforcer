@@ -1828,3 +1828,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its minors are fixed: the key is no longer quoted in an error, and the
     ADR lists the error order.
 - Next: T-0113b or the next ready M1 task.
+
+## 2026-10-09 · T-0113b · done
+- What: for expressions in .tf.json template strings nested in objects and arrays are evaluated
+  and charged instead of being refused (ADR 0024, amending ADR 0020 and 0023).
+  - evalJSON evaluates a JSON value member by member, as hcl's decoder does:
+    - arrays become tuples, and objects keep keys as templates;
+    - invalid, null and duplicate keys are errors, and an unknown key makes the object unknown;
+    - each template string is parsed from the byte after its quote and rewritten
+      (jsonStringTemplate).
+  - Every JSON value evaluated with a context now goes through it. That also fixes an existing
+    crash: hcl's decoder panics on a sensitive object key, which untrusted input could
+    trigger, and evalJSON reports it as an error.
+  - lookup in JSON templates is rewritten too.
+- Files: internal/terraform/{forexpr.go,evalguard.go,forexpr_internal_test.go},
+  docs/adr/{0024-evaluate-json-values-member-by-member.md,0020 (header),0023},
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - TestJSONForExpressions: small nested fors evaluate exactly (object values, array elements,
+    keys); about 1e9 iterations at the top level and nested are limited.
+  - TestEvalJSONMatchesHCL matches hcl on values and errors, including templates that fail to
+    parse or evaluate.
+  - TestJSONSensitiveKeysAreErrors: restoring hcl's evaluation for plain values brings back the
+    panic (mutation-checked).
+- Review: iace-reviewer, 1 round: APPROVE. Both minors are done: the existing sensitive-key
+  crash (now fixed by routing every JSON value through evalJSON), and tests for the marked key
+  and the parse and evaluation failures.
+- Next: the next ready M1 task.

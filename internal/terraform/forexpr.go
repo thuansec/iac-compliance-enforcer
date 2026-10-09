@@ -2,7 +2,6 @@ package terraform
 
 import (
 	"encoding/json"
-	"errors"
 	"math/big"
 	"slices"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2/ext/customdecode"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	"github.com/zclconf/go-cty/cty/function"
 )
 
@@ -42,12 +42,6 @@ const (
 	forResultName    = "__iace_val"
 	forIterationWork = 64 // creating an iteration's scope and its result values: about 1.3 KB allocated (T-0113a)
 )
-
-// errForInJSONTemplate refuses a for expression in a .tf.json template string nested in an
-// object or array: hcl parses those templates only while it evaluates the whole value, so they
-// cannot be rewritten to charge their iterations. A value that is a single template string is
-// evaluated by iace instead (jsonStringTemplate), so its for expressions are charged.
-var errForInJSONTemplate = errors.New("for expression in a JSON template string, which iace cannot bound")
 
 // rewriteForExprs makes every for expression in node iterate over forFunctionName, and every
 // lookup call call lookupFunctionName (ADR 0023). It is idempotent, so a tree parsed once and
@@ -328,10 +322,11 @@ func (m *ParsedModule) forFunctions() map[string]function.Function {
 	}
 }
 
-// withForFunction returns ctx with the internal functions in scope, as a child so the caller's
-// context is not changed; nil becomes a context with only those functions.
+// withForFunction returns ctx with the internal functions in scope (for expressions and lookup),
+// as a child so the caller's context is not changed; nil becomes a context with only those
+// functions.
 func (m *ParsedModule) withForFunction(ctx *hcl.EvalContext) *hcl.EvalContext {
-	fns := m.forFunctions()
+	fns := m.forFunctionsAnd()
 	if ctx == nil {
 		return &hcl.EvalContext{Functions: fns}
 	}
@@ -367,4 +362,70 @@ func (m *ParsedModule) jsonStringTemplate(expr hcl.Expression) (hclsyntax.Expres
 func (m *ParsedModule) callsForFunctions(expr hcl.Expression) bool {
 	calls, _ := m.inspectExpr(expr)
 	return slices.ContainsFunc(calls, func(c functionCall) bool { return c.name == forFunctionName })
+}
+
+// evalJSON evaluates a .tf.json value as hcl's JSON decoder does, member by member, but parses
+// every template string itself (jsonStringTemplate), so the for expressions in templates nested
+// in objects and arrays are rewritten and charged like any other (T-0113b). Object keys are
+// templates too, as in hcl. ctx is never nil here: without a context, hcl keeps strings literal.
+func (m *ParsedModule) evalJSON(expr hcl.Expression, ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
+	pairs, elems, container := jsonContainer(expr)
+	switch {
+	case !container:
+		if tmpl, ok := m.jsonStringTemplate(expr); ok {
+			return tmpl.Value(ctx)
+		}
+		return expr.Value(ctx) // numbers, booleans, null, or a template hcl reports as invalid
+	case elems != nil:
+		vals := make([]cty.Value, 0, len(elems))
+		var diags hcl.Diagnostics
+		for _, e := range elems {
+			v, d := m.evalJSON(e, ctx)
+			vals, diags = append(vals, v), append(diags, d...)
+		}
+		return cty.TupleVal(vals), diags
+	}
+	var diags hcl.Diagnostics
+	attrs := map[string]cty.Value{}
+	known := true
+	for _, p := range pairs {
+		name, nameDiags := m.evalJSON(p.Key, ctx)
+		val, valDiags := m.evalJSON(p.Value, ctx)
+		diags = append(diags, nameDiags...)
+		diags = append(diags, valDiags...)
+		invalid := func(detail string) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError, Summary: "Invalid object key expression", Detail: detail,
+				Subject: p.Key.Range().Ptr(),
+			})
+		}
+		name, err := convert.Convert(name, cty.String)
+		switch {
+		case err != nil:
+			invalid("Cannot use this expression as an object key.")
+			continue
+		case name.IsNull():
+			invalid("Cannot use null value as an object key.")
+			continue
+		case !name.IsKnown():
+			known = false // the object's type cannot be known, as in hcl
+			continue
+		case name.IsMarked():
+			invalid("Cannot use a sensitive value as an object key.") // hcl would panic
+			continue
+		}
+		key := name.AsString()
+		if _, defined := attrs[key]; defined {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError, Summary: "Duplicate object attribute",
+				Detail: "An attribute of this name was already defined.", Subject: p.Key.Range().Ptr(),
+			})
+			continue
+		}
+		attrs[key] = val
+	}
+	if !known {
+		return cty.DynamicVal, diags
+	}
+	return cty.ObjectVal(attrs), diags
 }

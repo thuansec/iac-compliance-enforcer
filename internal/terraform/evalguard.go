@@ -40,11 +40,9 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	case ctx == nil && isJSON(expr):
 		val, diags = expr.Value(nil) // strings stay literal, as hcl's JSON decoder keeps them
 	case isJSON(expr):
-		if tmpl, ok := m.jsonStringTemplate(expr); ok && hasForExpr(tmpl) {
-			val, diags = tmpl.Value(m.withForFunction(ctx))
-			break
-		}
-		val, diags = expr.Value(ctx)
+		// iace evaluates every JSON value itself (ADR 0024): its template strings are rewritten
+		// like HCL's, and a sensitive object key is an error where hcl's decoder panics.
+		val, diags = m.evalJSON(expr, m.withForFunction(ctx))
 	case m.callsForFunctions(expr):
 		val, diags = expr.Value(m.withForFunction(ctx))
 	default:
@@ -180,8 +178,10 @@ func jsonTemplateCalls(name string, text []byte) ([]functionCall, error) {
 			return nil, err
 		}
 		if tmpl, diags := hclsyntax.ParseTemplate([]byte(s), name, hcl.InitialPos); !diags.HasErrors() {
-			if dec.StackDepth() > 0 && hasForExpr(tmpl) {
-				return nil, errForInJSONTemplate // nested: hcl evaluates it, so it cannot be charged
+			if hasForExpr(tmpl) {
+				// iace evaluates such a value itself (evalJSON), so its for expressions are
+				// charged; the marker makes callsForFunctions choose that path.
+				calls = append(calls, functionCall{name: forFunctionName})
 			}
 			calls = append(calls, syntaxCalls(tmpl)...)
 		}
