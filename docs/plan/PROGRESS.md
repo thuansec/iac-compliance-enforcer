@@ -1187,3 +1187,35 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its minor, that the truncation warning and the truncated-output
     unknowns were untested, is now covered by assertions; the two mutations fail.
 - Next: T-0107i (order locals and module calls by their dependencies).
+
+## 2026-10-09 · T-0107i · done
+- What: locals and module calls are evaluated in one dependency order.
+  - evaluateLocals builds one graph: locals keyed by name, calls keyed by `module.<name>`. Edges
+    come from local and module references in locals, and in each call's arguments
+    (callDependencies).
+  - dependencyComponents (Tarjan, explicit stack) replaces localsInDependencyOrder and returns
+    whole components. A call is evaluated through a callback with the locals and module values
+    evaluated so far.
+  - Locals, module inputs (moduleInputs), resources and outputs see `module.<name>` for the
+    module's own calls. Another name is an evaluation warning and unknown.
+  - Cycles: all members are unknown. Locals get local_cycle and calls get module_cycle. Calls in
+    a cycle get their placeholders first, are still evaluated (their resources are checked),
+    and their outputs stay unknown.
+  - A child instance charges and checks the tree budget before each local. Once a budget is used
+    up, its remaining locals are unknown and it is truncated (ADR 0010). The root never stops
+    (ADR 0011).
+- Files: internal/terraform/{locals.go,modules_eval.go,modules_inputs.go,modules_order_test.go,
+  modules_eval_internal_test.go}, docs/adr/0011-order-locals-and-module-calls-together.md,
+  docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test: no stop, stop at the root, cyclic outputs kept, no module
+    object in locals, no call dependencies, no module sensitivity in locals.
+  - Without stop, a chain of 30 modules with locals after their calls used 232M units of
+    function work against an 8.4M budget.
+- Review: iace-reviewer, APPROVE with five minors, all fixed:
+  - the exact instance order is now asserted;
+  - the EvaluateTree doc comment is corrected;
+  - call placeholders are set before a cycle's locals;
+  - the truncation warning and the root's locals are asserted;
+  - a cycle of two calls is tested.
+- Next: T-0107c (count and for_each on module calls).

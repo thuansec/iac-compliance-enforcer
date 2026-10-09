@@ -103,26 +103,30 @@ type treeEvaluator struct {
 	out     []*ModuleInstance
 }
 
-// EvaluateTree evaluates every resolved module of tree, depth first in call order: the root
+// EvaluateTree evaluates every resolved module of tree, depth first, in the dependency order of
+// each module's locals and calls: the root
 // with its variables from defaults, tfvars and opts (EvaluateVariables), each child with its
 // variables from its call's inputs evaluated in the caller (ModuleInputs), each in its own
-// instance with its locals, resources and outputs. A caller's resources and outputs see its
-// calls' outputs as module.<name>; its locals and module inputs do not yet (T-0107i). Once
+// instance with its locals, resources and outputs. A module's locals and calls are evaluated in
+// one dependency order, and its locals, module inputs, resources and outputs see its calls'
+// outputs as module.<name>. Instances are listed in the order they start. Once
 // the tree's budgets are used up, the remaining instances are Skipped, and child instances
 // whose calls used them up are Truncated (ADR 0010), each with a module_work_limit warning at
 // its call. Unresolved calls have no instance. Problems in the files are diagnostics; a file
 // that cannot be read or a cancelled context is an error.
 func EvaluateTree(ctx context.Context, root *fsutil.Root, tree *ModuleTree, opts VarOptions, limits Limits) ([]*ModuleInstance, error) {
 	e := &treeEvaluator{root: root, opts: opts, limits: limits, charged: map[*ParsedModule]treeUsage{}}
-	if _, err := e.evaluate(ctx, tree.Root, nil, nil); err != nil {
+	if _, err := e.evaluate(ctx, tree.Root, nil, nil, nil); err != nil {
 		return nil, fmt.Errorf("evaluate module tree: %w", err)
 	}
 	return e.out, nil
 }
 
-// evaluate evaluates node, loaded by call from caller (both nil for the root): its variables
-// and locals, then its calls, then its resources and outputs, which see the calls' outputs.
-func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *ModuleCall, caller *ModuleInstance) (*ModuleInstance, error) {
+// evaluate evaluates node, loaded by call from caller (both nil for the root), whose inputs
+// gives its call's arguments evaluated in the caller: its variables, then its locals and calls
+// in one dependency order (T-0107i), then its resources and outputs, which see the calls'
+// outputs.
+func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *ModuleCall, caller *ModuleInstance, inputs func() (map[string]Input, error)) (*ModuleInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -148,37 +152,44 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 	if caller == nil {
 		inst.Variables, err = m.EvaluateVariables(ctx, e.root, e.opts, e.limits)
 	} else {
-		var inputs map[string]Input
-		inputs, err = caller.Module.ModuleInputs(ctx, call, caller.Variables, caller.Locals)
-		e.charge(caller.Module)
-		if err == nil {
-			inst.Variables, err = m.EvaluateModuleVariables(ctx, call, inputs)
+		var in map[string]Input
+		if in, err = inputs(); err == nil {
+			inst.Variables, err = m.EvaluateModuleVariables(ctx, call, in)
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	if inst.Locals, err = m.EvaluateLocals(ctx, inst.Variables); err != nil {
+
+	evalCall := func(c *ModuleCall, locals map[string]Local, modules map[string]cty.Value) (cty.Value, error) {
+		if c.Child == nil {
+			return cty.DynamicVal, nil
+		}
+		e.charge(m) // the locals so far, before the child checks the budget
+		child, err := e.evaluate(ctx, c.Child, c, inst, func() (map[string]Input, error) {
+			in, err := m.moduleInputs(ctx, c, inst.Variables, locals, modules)
+			e.charge(m)
+			return in, err
+		})
+		if err != nil || child.Skipped || child.Truncated {
+			return cty.DynamicVal, err
+		}
+		return outputsObject(child.Outputs), nil
+	}
+	// A child stops evaluating locals once the tree budget is used up (ADR 0011); the root
+	// never does.
+	var stop func() bool
+	if caller != nil {
+		stop = func() bool {
+			e.charge(m)
+			return e.used.exhausted()
+		}
+	}
+	var modules map[string]cty.Value
+	if inst.Locals, modules, err = m.evaluateLocals(ctx, inst.Variables, node.Calls, evalCall, stop); err != nil {
 		return nil, err
 	}
 	e.charge(m)
-
-	// The calls come first, so that resources and outputs see their outputs (T-0107h). Locals
-	// and module inputs do not see them yet (T-0107i).
-	modules := map[string]cty.Value{}
-	for _, c := range node.Calls {
-		modules[c.Name] = cty.DynamicVal
-		if c.Child == nil {
-			continue
-		}
-		child, err := e.evaluate(ctx, c.Child, c, inst)
-		if err != nil {
-			return nil, err
-		}
-		if !child.Skipped && !child.Truncated {
-			modules[c.Name] = outputsObject(child.Outputs)
-		}
-	}
 
 	// The calls may have used up the tree's budget after this instance started: then its
 	// resources and outputs are not evaluated (ADR 0010). The root is always evaluated.

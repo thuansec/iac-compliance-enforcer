@@ -278,12 +278,13 @@ locations and without executing anything.
     - a caller's resources and outputs see `module.<name>.<output>`: values, sensitivity and unknowns flow through; outputs of unresolved or skipped modules, and names that are not called, are unknown; output values count toward the tree budgets
   - attempts: 1
   - result: output blocks are evaluated per instance after its calls (bounded, sensitive fail-closed, missing_output_value / duplicate_output errors) and recorded as ModuleInstance.Outputs; resources and outputs see module.<name> (unknown when unresolved, skipped or truncated); calls run before resources and outputs, and a child whose calls used up the tree budget is Truncated (ADR 0010); outputs budgeted as a tree dimension; T-0107h split into h and i
-- [ ] T-0107i · Order locals and module calls by their dependencies
+- [x] T-0107i · Order locals and module calls by their dependencies
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107h
   - accept:
     - locals and module inputs that reference `module.<name>.<output>` see the output (today unknown): locals and module calls of a module are evaluated in one dependency order, and a cycle through them makes its members unknown with a warning
-  - attempts: 0
+  - attempts: 1
+  - result: locals and module calls form one dependency graph (dependencyComponents, Tarjan with an explicit stack) evaluated in order, each call through a callback with the locals and module values so far, so locals and module inputs see module.<name> outputs; cycles make members unknown (local_cycle, module_cycle), and calls in a cycle are still evaluated; a child stops its remaining locals once the tree budget is used up, and the root never stops (ADR 0011)
 - [ ] T-0107c · Expand count and for_each on module calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107i

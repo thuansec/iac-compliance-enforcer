@@ -69,9 +69,10 @@ type Local struct {
 type localState struct {
 	attr *hcl.Attribute
 	file string
-	// deps are the locals this one refers to that exist, sorted and unique.
-	deps []string
-	refs []string
+	// deps are the locals this one refers to that exist, sorted and unique; mods are the
+	// module calls it refers to that exist, sorted and unique.
+	deps, mods []string
+	refs       []string
 	// vars are the variables it refers to; roots are the other root names it uses (resource
 	// types, data, module, path, ...), which evaluate as unknown.
 	vars, roots []string
@@ -90,7 +91,32 @@ type localState struct {
 // modules, and any expression that fails to evaluate, is unknown, never an error. Only a
 // cancelled context is an error.
 func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Variable) (map[string]Local, error) {
+	locals, _, err := m.evaluateLocals(ctx, vars, nil, nil, nil)
+	return locals, err
+}
+
+// DiagModuleCycle reports a module call whose inputs depend on its own outputs, through locals
+// or other calls. Terraform rejects the module.
+const DiagModuleCycle DiagCode = "module_cycle"
+
+// callEvaluator evaluates module call c once its dependencies are evaluated, with locals and
+// modules (module.<name> of the calls evaluated so far) as the caller's context, and returns
+// module.<c.Name>.
+type callEvaluator func(c *ModuleCall, locals map[string]Local, modules map[string]cty.Value) (cty.Value, error)
+
+// evaluateLocals evaluates the module's locals and calls in one dependency order (T-0107i): a
+// local can use module.<name> of a call, and a call's arguments can use locals and other calls.
+// Each call is evaluated by evalCall when its turn comes. Locals and calls in a cycle are
+// unknown with a warning (local_cycle, module_cycle); calls in a cycle are still evaluated, with
+// the cycle's values unknown, but their outputs are unknown to the module. stop, when set, is
+// asked before each local: once it reports true, the remaining locals are unknown (the tree
+// budget is used up, ADR 0011). It returns the locals and module.<name> of every call.
+func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Variable, calls []*ModuleCall, evalCall callEvaluator, stop func() bool) (map[string]Local, map[string]cty.Value, error) {
 	states, order := m.declareLocals()
+	byName := make(map[string]*ModuleCall, len(calls))
+	for _, c := range calls {
+		byName[c.Name] = c
+	}
 	for _, name := range order {
 		s := states[name]
 		calls, safe := m.inspectExpr(s.attr.Expr)
@@ -114,15 +140,39 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 					s.vars = append(s.vars, name)
 				}
 			default:
-				s.otherUses++
 				s.roots = append(s.roots, root)
 				if ref, ok := referenceAddress(tr); ok {
 					s.refs = append(s.refs, ref)
 				}
+				if name, ok := traversalAttr(tr, 1); ok && root == "module" && byName[name] != nil {
+					s.uses["module."+name]++
+					s.mods = append(s.mods, name)
+					break
+				}
+				s.otherUses++
 			}
 		}
 		slices.Sort(s.deps)
 		s.deps = slices.Compact(s.deps)
+		slices.Sort(s.mods)
+		s.mods = slices.Compact(s.mods)
+	}
+
+	// The graph: a local is its name, a call is "module.<name>" (local names have no dots).
+	deps := make(map[string][]string, len(states)+len(calls))
+	nodes := slices.Clone(order)
+	for _, name := range order {
+		s := states[name]
+		d := slices.Clone(s.deps)
+		for _, mod := range s.mods {
+			d = append(d, "module."+mod)
+		}
+		deps[name] = d
+	}
+	for _, c := range calls {
+		key := "module." + c.Name
+		nodes = append(nodes, key)
+		deps[key] = m.callDependencies(c, states, byName)
 	}
 
 	b := &localsBudget{
@@ -131,13 +181,14 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 		varSizes:  map[string]int{},
 		sensitive: map[string]bool{},
 	}
+	if evalCall != nil {
+		b.modules = make(map[string]cty.Value, len(calls))
+	}
 	out := make(map[string]Local, len(states))
-	refEntries, refsWarned := 0, false
-	for _, name := range localsInDependencyOrder(states, order) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	refEntries, refsWarned, stopped := 0, false, false
+	local := func(name string, cyclic bool) {
 		s := states[name]
+		s.cyclic = cyclic
 		r := s.attr.NameRange
 		l := Local{Name: name, DeclRange: s.attr.Range}
 		var capped bool
@@ -150,6 +201,7 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 				s.file, r.Start.Line, r.Start.Column)
 		}
 		sensitive := s.safe && b.inputsSensitive(s)
+		stopped = stopped || (!cyclic && stop != nil && stop())
 		switch {
 		case s.cyclic:
 			l.Value = cty.DynamicVal
@@ -158,8 +210,14 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 				l.Value = l.Value.Mark(SensitiveMark)
 			}
 			m.diag(SeverityWarning, DiagLocalCycle, "Cycle in local values",
-				fmt.Sprintf("The local value %q depends on itself through other locals, so its value is unknown.", name),
+				fmt.Sprintf("The local value %q depends on itself through other locals or module calls, so its value is unknown.", name),
 				s.file, r.Start.Line, r.Start.Column)
+		case stopped:
+			// The tree's budget is used up; the instance is truncated and reported at its call.
+			l.Value = cty.DynamicVal
+			if sensitive {
+				l.Value = l.Value.Mark(SensitiveMark)
+			}
 		default:
 			l.Value = m.evalLocal(s, b, out, sensitive)
 		}
@@ -167,10 +225,88 @@ func (m *ParsedModule) EvaluateLocals(ctx context.Context, vars map[string]Varia
 		m.usage.unknown += pathSteps(l.Unknown)
 		b.sensitive["local."+name] = l.Value.ContainsMarked()
 		out[name] = l
+		m.usage.locals, m.usage.refs = b.total, refEntries
+	}
+	call := func(c *ModuleCall, cyclic bool) error {
+		v, err := evalCall(c, out, b.modules)
+		if err != nil {
+			return err
+		}
+		if cyclic {
+			r := c.DefRange
+			m.diag(SeverityWarning, DiagModuleCycle, "Cycle through a module call",
+				fmt.Sprintf("The inputs of the module call %q depend on its own outputs, so its outputs are unknown.", c.Name),
+				c.File, r.Start.Line, r.Start.Column)
+			v = cty.DynamicVal
+		}
+		b.modules[c.Name] = v
+		return nil
+	}
+	for _, members := range dependencyComponents(nodes, deps) {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		cyclic := len(members) > 1 || slices.Contains(deps[members[0]], members[0])
+		// In a cycle, every call member is unknown before any member is evaluated, so the
+		// locals in it see unknown modules, not missing ones.
+		var cycleCalls []*ModuleCall
+		if cyclic {
+			for _, key := range members {
+				if name, isCall := strings.CutPrefix(key, "module."); isCall {
+					b.modules[name] = cty.DynamicVal
+					cycleCalls = append(cycleCalls, byName[name])
+				}
+			}
+		}
+		for _, key := range members {
+			name, isCall := strings.CutPrefix(key, "module.")
+			switch {
+			case !isCall:
+				local(name, cyclic)
+			case !cyclic:
+				if err := call(byName[name], false); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		for _, c := range cycleCalls {
+			if err := call(c, true); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	m.sortDiagnostics()
-	m.usage.locals, m.usage.refs = b.total, refEntries
-	return out, nil
+	return out, b.modules, nil
+}
+
+// callDependencies returns the locals and calls that call c's arguments refer to, as graph keys.
+// Arguments that are not safe to inspect add none; evaluating them reports them.
+func (m *ParsedModule) callDependencies(c *ModuleCall, states map[string]*localState, calls map[string]*ModuleCall) []string {
+	attrs, _ := c.Body.JustAttributes() // ModuleInputs reports these diagnostics
+	var out []string
+	for _, a := range sortedAttributes(attrs) {
+		if _, safe := m.inspectExpr(a.Expr); !safe {
+			continue
+		}
+		for _, tr := range a.Expr.Variables() {
+			name, ok := traversalAttr(tr, 1)
+			if !ok {
+				continue
+			}
+			switch tr.RootName() {
+			case "local":
+				if _, exists := states[name]; exists {
+					out = append(out, name)
+				}
+			case "module":
+				if calls[name] != nil {
+					out = append(out, "module."+name)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // declareLocals collects the locals blocks' attributes, keeping the first of duplicates. order
@@ -227,6 +363,17 @@ func (b *localsBudget) inputsSensitive(s *localState) bool {
 			return true
 		}
 	}
+	for _, name := range s.mods {
+		key := "module." + name
+		marked, ok := b.sensitive[key]
+		if !ok {
+			marked = b.modules[name].ContainsMarked()
+			b.sensitive[key] = marked
+		}
+		if marked {
+			return true
+		}
+	}
 	for _, name := range s.vars {
 		key := "var." + name
 		marked, ok := b.sensitive[key]
@@ -252,6 +399,9 @@ type localsBudget struct {
 	total     int
 	// totalWarned: a warning already says the locals together reached maxLocalsSize.
 	totalWarned bool
+	// modules holds module.<name> of the calls evaluated so far; nil when the module's calls
+	// are not evaluated (EvaluateLocals), and module references are unknown.
+	modules map[string]cty.Value
 }
 
 // estimate bounds the size of s's value from above before it is evaluated: its source plus
@@ -269,10 +419,22 @@ func (b *localsBudget) estimate(s *localState, limit int) int {
 	return est
 }
 
-// size is the size of "local.<name>" or "var.<name>"; anything else counts as one.
+// size is the size of "local.<name>", "module.<name>" or "var.<name>"; anything else counts as
+// one.
 func (b *localsBudget) size(key string) int {
 	if name, ok := strings.CutPrefix(key, "local."); ok {
 		return max(b.sizes[name], 1)
+	}
+	if name, ok := strings.CutPrefix(key, "module."); ok {
+		if n, ok := b.varSizes[key]; ok {
+			return n
+		}
+		n, ok := valueSize(b.modules[name], maxLocalValueSize, maxNesting)
+		if !ok {
+			n = maxLocalValueSize + 1
+		}
+		b.varSizes[key] = n // module values never change once set, and no variable has a dot
+		return n
 	}
 	name, _ := strings.CutPrefix(key, "var.")
 	if n, ok := b.varSizes[name]; ok {
@@ -328,6 +490,14 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 		ectx.Functions = m.functions(s.attr.Expr, s.calls)
 		for _, root := range s.roots {
 			ectx.Variables[root] = cty.DynamicVal
+		}
+		if b.modules != nil && slices.Contains(s.roots, "module") {
+			// Only the calls s uses: another name is an unsupported attribute, as in resources.
+			mods := make(map[string]cty.Value, len(s.mods))
+			for _, name := range s.mods {
+				mods[name] = b.modules[name]
+			}
+			ectx.Variables["module"] = cty.ObjectVal(mods)
 		}
 		if slices.Contains(s.roots, "path") {
 			ectx.Variables["path"] = pathObject()
@@ -407,18 +577,24 @@ func valueSize(v cty.Value, limit, depth int) (int, bool) {
 	return size, true
 }
 
-// localsInDependencyOrder returns the locals so that each comes after the locals it depends
-// on, and marks those in a cycle. It is Tarjan's strongly connected components algorithm with
-// an explicit stack, so a long chain of locals cannot exhaust the goroutine stack. Components
-// come out dependencies first; order makes the result deterministic.
-func localsInDependencyOrder(states map[string]*localState, order []string) []string {
+// dependencyComponents returns the strongly connected components of the graph of nodes and
+// deps, each after the components it depends on: a node in a component of more than one
+// node, or that depends on itself, is in a cycle. It is Tarjan's algorithm with an explicit
+// stack, so a long chain cannot exhaust the goroutine stack; nodes makes the result
+// deterministic. Dependencies that are not nodes are ignored.
+func dependencyComponents(nodes []string, deps map[string][]string) [][]string {
 	type frame struct {
 		name string
 		next int
 	}
-	// pos is a name's position in component while it is on that stack.
+	isNode := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		isNode[n] = true
+	}
+	// pos is a node's position in component while it is on that stack.
 	index, low, pos := map[string]int{}, map[string]int{}, map[string]int{}
-	var component, out []string
+	var component []string
+	var out [][]string
 	var calls []frame
 	visit := func(name string) {
 		index[name], low[name] = len(index), len(index)
@@ -426,17 +602,20 @@ func localsInDependencyOrder(states map[string]*localState, order []string) []st
 		component = append(component, name)
 		calls = append(calls, frame{name: name})
 	}
-	for _, start := range order {
+	for _, start := range nodes {
 		if _, seen := index[start]; seen {
 			continue
 		}
 		visit(start)
 		for len(calls) > 0 {
 			f := &calls[len(calls)-1]
-			deps := states[f.name].deps
-			if f.next < len(deps) {
-				dep := deps[f.next]
+			d := deps[f.name]
+			if f.next < len(d) {
+				dep := d[f.next]
 				f.next++
+				if !isNode[dep] {
+					continue
+				}
 				if _, seen := index[dep]; !seen {
 					visit(dep)
 				} else if _, on := pos[dep]; on {
@@ -453,14 +632,12 @@ func localsInDependencyOrder(states map[string]*localState, order []string) []st
 			if low[name] != index[name] {
 				continue
 			}
-			members := component[pos[name]:]
+			members := slices.Clone(component[pos[name]:])
 			component = component[:pos[name]]
-			cyclic := len(members) > 1 || slices.Contains(states[name].deps, name)
 			for _, mem := range members {
 				delete(pos, mem)
-				states[mem].cyclic = cyclic
 			}
-			out = append(out, members...)
+			out = append(out, members)
 		}
 	}
 	return out
