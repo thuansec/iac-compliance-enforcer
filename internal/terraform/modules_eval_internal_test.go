@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestTreeUsageExhausted(t *testing.T) {
 	below := treeUsage{
 		source: maxTreeSource - 1, function: maxTreeFunctionWork - 1,
 		moduleUsage: moduleUsage{
-			locals: maxTreeLocals - 1, resources: maxTreeResources - 1, inputs: maxTreeInputs - 1,
+			locals: maxTreeLocals - 1, resources: maxTreeResources - 1, inputs: maxTreeInputs - 1, outputs: maxTreeOutputs - 1,
 			refs: maxTreeReferences - 1, unknown: maxTreeUnknownSteps - 1,
 			expansion: maxTreeExpansionWork - 1, structure: maxTreeStructure - 1, instances: maxTreeInstances - 1,
 		},
@@ -34,6 +35,7 @@ func TestTreeUsageExhausted(t *testing.T) {
 		"locals":    func(u *treeUsage) { u.locals = maxTreeLocals },
 		"resources": func(u *treeUsage) { u.resources = maxTreeResources },
 		"inputs":    func(u *treeUsage) { u.inputs = maxTreeInputs },
+		"outputs":   func(u *treeUsage) { u.outputs = maxTreeOutputs },
 		"refs":      func(u *treeUsage) { u.refs = maxTreeReferences },
 		"unknown":   func(u *treeUsage) { u.unknown = maxTreeUnknownSteps },
 		"expansion": func(u *treeUsage) { u.expansion = maxTreeExpansionWork },
@@ -54,14 +56,14 @@ func TestChargeAddsDeltas(t *testing.T) {
 	t.Parallel()
 	e := &treeEvaluator{charged: map[*ParsedModule]treeUsage{}}
 	m := &ParsedModule{fnWork: 10, usage: moduleUsage{
-		locals: 1, resources: 2, inputs: 3, refs: 4, unknown: 5, expansion: 6, structure: 7, instances: 8,
+		locals: 1, resources: 2, inputs: 3, outputs: 10, refs: 4, unknown: 5, expansion: 6, structure: 7, instances: 8,
 	}}
 	e.charge(m)
 	m.fnWork, m.usage.inputs = 15, 9
 	e.charge(m)
 	e.charge(m)
 	want := treeUsage{function: 15, moduleUsage: moduleUsage{
-		locals: 1, resources: 2, inputs: 9, refs: 4, unknown: 5, expansion: 6, structure: 7, instances: 8,
+		locals: 1, resources: 2, inputs: 9, outputs: 10, refs: 4, unknown: 5, expansion: 6, structure: 7, instances: 8,
 	}}
 	if e.used != want {
 		t.Errorf("used = %+v, want %+v", e.used, want)
@@ -198,5 +200,117 @@ func TestEvaluateTreeBoundsUnknownPaths(t *testing.T) {
 	if evaluated == MaxModuleCalls+1 || unknown > maxTreeUnknownSteps+maxUnknown {
 		t.Errorf("%d instances evaluated with %d unknown path steps; want at most %d + %d",
 			evaluated, unknown, maxTreeUnknownSteps, maxUnknown)
+	}
+}
+
+// Evaluating outputs records their value size and unknown path steps.
+func TestOutputsRecordUsage(t *testing.T) {
+	t.Parallel()
+	m := parseLocalsModule(t, `output "a" {
+  value = "abcdef"
+}
+output "b" {
+  value = [aws_vpc.v.id]
+}
+`)
+	outputs, err := m.evaluateOutputs(t.Context(), map[string]Variable{}, map[string]Local{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 2 || m.usage.outputs == 0 || m.usage.unknown != 2 {
+		t.Errorf("%d outputs, usage %+v; want outputs above zero and 2 unknown steps", len(outputs), m.usage)
+	}
+}
+
+// T-0107h review: with calls evaluated before resources, every ancestor on the call stack
+// decoded its resources after the tree budget was used up (a chain of 30 resource-heavy modules
+// used 29 times the budget). An ancestor whose calls used up the budget is Truncated, so each
+// kind stays within the tree budget plus one instance's use plus the root's.
+func TestEvaluateTreeBoundsAncestorsOfDeepChains(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, content string) {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.tf", "module \"m1\" {\n  source = \"./m1\"\n}\nresource \"aws_s3_bucket\" \"r\" {\n  o = module.m1.o\n}\n")
+	const depth = 30
+	for i := 1; i <= depth; i++ {
+		var b strings.Builder
+		fmt.Fprintf(&b, "variable \"big\" {\n  default = %q\n}\nresource \"aws_s3_bucket\" \"b\" {\n", strings.Repeat("x", 200_000))
+		for j := range 25 {
+			fmt.Fprintf(&b, "  a%d = upper(var.big)\n", j)
+		}
+		b.WriteString("}\noutput \"o\" {\n  value = \"x\"\n}\n")
+		if i < depth {
+			fmt.Fprintf(&b, "module \"m%d\" {\n  source = \"../m%d\"\n}\n", i+1, i+1)
+		}
+		write(fmt.Sprintf("m%d/main.tf", i), b.String())
+	}
+	r, err := fsutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	d, err := Discover(t.Context(), r, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := LoadModuleTree(t.Context(), r, d, ".", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances, err := EvaluateTree(t.Context(), r, tree, VarOptions{}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fn, res, maxFn, maxRes, truncated int
+	for _, inst := range instances {
+		u := inst.Module.usage
+		fn, res = fn+inst.Module.fnWork, res+u.resources
+		maxFn, maxRes = max(maxFn, inst.Module.fnWork), max(maxRes, u.resources)
+		if inst.Truncated {
+			truncated++
+			if inst.Resources != nil || inst.Outputs != nil {
+				t.Errorf("%s is truncated but has resources or outputs", inst.Address)
+			}
+		}
+	}
+	// The root here is light, so one instance's use bounds both the overshoot and the root.
+	if fn > maxTreeFunctionWork+2*maxFn || res > maxTreeResources+2*maxRes {
+		t.Errorf("function work %d (budget %d, one module %d), resources %d (budget %d, one module %d)",
+			fn, maxTreeFunctionWork, maxFn, res, maxTreeResources, maxRes)
+	}
+	if truncated == 0 {
+		t.Error("no ancestor was truncated")
+	}
+	// Each truncated instance is reported at its call, on its caller.
+	for i, inst := range instances {
+		if !inst.Truncated {
+			continue
+		}
+		caller := instances[i-1] // a chain: the previous instance is the caller
+		line := inst.Call.DefRange.Start.Line
+		if !slices.ContainsFunc(caller.Module.Diagnostics, func(d Diagnostic) bool {
+			return d.Code == DiagModuleWorkLimit && d.File == inst.Call.File && d.Line == line
+		}) {
+			t.Errorf("%s is truncated without a module_work_limit warning at %s:%d", inst.Address, inst.Call.File, line)
+		}
+	}
+	// The root sees a truncated child's outputs as unknown, without an evaluation warning.
+	root := instances[0]
+	if !instances[1].Truncated {
+		t.Fatal("module.m1 is not truncated")
+	}
+	if v := root.Resources[0].Value.GetAttr("o"); v.IsKnown() {
+		t.Errorf("module.m1.o = %#v, want unknown", v)
+	}
+	if slices.ContainsFunc(root.Module.Diagnostics, func(d Diagnostic) bool { return d.Code == DiagEvaluation }) {
+		t.Error("evaluation warning for a truncated module's output")
 	}
 }

@@ -1151,3 +1151,39 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. The probes now run at 8 MiB and 387 MiB live; the 387 MiB is one module,
     tracked in T-0118. The minor about the usage doc for accumulating unknown steps is fixed.
 - Next: T-0107h (expose module outputs to callers).
+
+## 2026-10-09 · T-0107h · done
+- What: module outputs reach their callers' resources and outputs.
+  - T-0107h was split into h (resources and outputs) and i (locals and module inputs, with one
+    dependency order and cycles). T-0107c now depends on T-0107i.
+  - evaluateOutputs evaluates output blocks through evalBounded, in their own value budget.
+    - `sensitive` is evaluated fail-closed and marks the value.
+    - A missing value gives missing_output_value and a duplicate gives duplicate_output; both
+      are errors.
+    - Unknown steps are charged.
+  - resourceDecoder.modules gives resources and outputs `module.<name>`: an object of the
+    call's outputs, or unknown when the call is unresolved, skipped or truncated. A name that
+    is not called is an evaluation warning, and its value is unknown. With nil modules
+    (DecodeResources, ModuleInputs) the module is unknown as before.
+  - EvaluateTree runs variables, locals, calls, then resources and outputs. A child whose calls
+    used up the tree budget is Truncated: its resources and outputs are not evaluated, and it
+    gets module_work_limit at its call. The root is exempt (ADR 0010, extending 0009). Outputs
+    are a tree budget dimension.
+- Files: internal/terraform/{modules_outputs.go,modules_outputs_test.go,modules_eval.go,
+  modules_eval_internal_test.go,resources.go},
+  docs/adr/0010-evaluate-module-calls-before-resources-and-outputs.md, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - Mutation checks each fail a test:
+    - modules not passed to resources, no sensitive mark, always or never sensitive;
+    - skipped or truncated outputs used, no outputs usage, no module sensitivity;
+    - no truncation, no truncation warning.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: with calls before resources, every ancestor on a call chain decoded its
+      resources after the tree budget was gone (a chain of 30 used 29 times the budget).
+      Fixed by truncating such ancestors, with the probe as a regression test.
+    - Minors: untested `sensitive = false` and non-constant `sensitive`; an in-place edit of
+      ADR 0009, reverted in favour of ADR 0010. Both fixed.
+  - Round 2: APPROVE. Its minor, that the truncation warning and the truncated-output
+    unknowns were untested, is now covered by assertions; the two mutations fail.
+- Next: T-0107i (order locals and module calls by their dependencies).
