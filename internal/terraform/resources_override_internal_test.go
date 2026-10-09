@@ -296,3 +296,47 @@ func TestResourceOverridesReplaceJSONDynamicBlocks(t *testing.T) {
 		})
 	}
 }
+
+// A resource or data source declared twice is an error where the second copy is, as in
+// Terraform; the first copy, into which overrides merge, is the one decoded.
+func TestDuplicateResourcesAreErrors(t *testing.T) {
+	t.Parallel()
+	m := parseFilesModule(t, map[string]string{
+		"a.tf": "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"private\"\n}\ndata \"aws_caller_identity\" \"c\" {}\n",
+		"b.tf": "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"public-read\"\n}\ndata \"aws_caller_identity\" \"c\" {}\nresource \"aws_caller_identity\" \"c\" {}\n",
+		// The override merges into the first copy, the one decoded.
+		"c_override.tf": "resource \"aws_s3_bucket\" \"b\" {\n  bucket = \"logs\"\n}\n",
+	})
+	res, err := m.DecodeResources(context.Background(), map[string]Variable{}, map[string]Local{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type at struct {
+		file string
+		line int
+	}
+	var got []at
+	for _, d := range m.Diagnostics {
+		if d.Code == DiagDuplicateResource {
+			got = append(got, at{d.File, d.Line})
+		}
+	}
+	if want := []at{{"b.tf", 1}, {"b.tf", 4}}; !slices.Equal(got, want) {
+		t.Errorf("duplicate_resource at %v, want %v", got, want)
+	}
+	if !m.HasErrors() {
+		t.Error("a duplicate resource must make the module an error")
+	}
+	var addrs []string
+	for _, r := range res {
+		addrs = append(addrs, r.Address)
+		want := cty.ObjectVal(map[string]cty.Value{"acl": cty.StringVal("private"), "bucket": cty.StringVal("logs")})
+		if r.Address == "aws_s3_bucket.b" && !r.Value.RawEquals(want) {
+			t.Errorf("the decoded copy is %#v, want the first copy with the override: %#v", r.Value, want)
+		}
+	}
+	// A managed resource and a data source may share a type and name.
+	if want := []string{"aws_s3_bucket.b", "data.aws_caller_identity.c", "aws_caller_identity.c"}; !slices.Equal(addrs, want) {
+		t.Errorf("resources %v, want %v", addrs, want)
+	}
+}
