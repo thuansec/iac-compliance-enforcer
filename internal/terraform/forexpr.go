@@ -39,7 +39,8 @@ const (
 	forFunctionName  = "__iace_for"
 	forRefsName      = "__iace_refs"
 	forElementsName  = "__iace_elems"
-	forIterationWork = 16 // creating an iteration's scope and its result values
+	forResultName    = "__iace_val"
+	forIterationWork = 64 // creating an iteration's scope and its result values: about 1.3 KB allocated (T-0113a)
 )
 
 // errForInJSONTemplate refuses a for expression in a .tf.json template string nested in an
@@ -51,7 +52,14 @@ var errForInJSONTemplate = errors.New("for expression in a JSON template string,
 // rewriteForExprs makes every for expression in node iterate over forFunctionName. It is
 // idempotent, so a tree parsed once and rewritten twice is unchanged.
 func rewriteForExprs(node hclsyntax.Node) {
+	directives := map[*hclsyntax.ForExpr]bool{}
 	_ = hclsyntax.VisitAll(node, func(n hclsyntax.Node) hcl.Diagnostics {
+		if j, ok := n.(*hclsyntax.TemplateJoinExpr); ok {
+			if f, ok := j.Tuple.(*hclsyntax.ForExpr); ok {
+				directives[f] = true // visited before its for expression
+			}
+			return nil
+		}
 		f, ok := n.(*hclsyntax.ForExpr)
 		if !ok {
 			return nil
@@ -79,6 +87,16 @@ func rewriteForExprs(node hclsyntax.Node) {
 		}
 		f.CollExpr = call(forFunctionName, f.CollExpr, number(body), number(uses),
 			call(forRefsName, whole...), call(forElementsName, indexed...))
+		if directives[f] {
+			// A %{ for } directive joins the strings its iterations produce, and a directive
+			// nested in its body hands it strings that grow with each level, which the
+			// iterations do not bound: each string is charged as it is produced.
+			vr := f.ValExpr.Range()
+			f.ValExpr = &hclsyntax.FunctionCallExpr{
+				Name: forResultName, Args: []hclsyntax.Expression{f.ValExpr},
+				NameRange: vr, OpenParenRange: vr, CloseParenRange: vr,
+			}
+		}
 		return nil
 	})
 }
@@ -196,6 +214,29 @@ func (m *ParsedModule) forFunction() function.Function {
 	return f
 }
 
+// forResultFunction is forResultName for m: an iteration's result, unchanged, if the module can
+// pay for its size, measured only up to the work left; an unknown value otherwise, with
+// m.forLimited set. Directive results are strings, whose size is their length.
+func (m *ParsedModule) forResultFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "result", Type: cty.DynamicPseudoType, AllowUnknown: true, AllowNull: true, AllowMarked: true, AllowDynamicType: true},
+		},
+		Type: func(args []cty.Value) (cty.Type, error) { return args[0].Type(), nil },
+		Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+			left := maxFunctionWork - m.fnWork
+			n, ok := valueSize(args[0], max(left, 0), maxNesting)
+			if ok && m.chargeFunctionWork(n) {
+				return args[0], nil
+			}
+			m.spendFunctionWork(n)
+			m.forLimited = true
+			_, marks := args[0].Unmark()
+			return cty.UnknownVal(retType).WithMarks(marks), nil
+		},
+	})
+}
+
 // forReferencesFunction is forRefsName (whole) or forElementsName: the total size of the
 // values its argument expressions refer to, or of their largest elements. A reference that
 // cannot be evaluated counts nothing: the body may never evaluate it (an empty collection), and
@@ -274,6 +315,7 @@ func (m *ParsedModule) forFunctions() map[string]function.Function {
 		forFunctionName: m.forFunction(),
 		forRefsName:     m.forReferencesFunction(false),
 		forElementsName: m.forReferencesFunction(true),
+		forResultName:   m.forResultFunction(),
 	}
 }
 

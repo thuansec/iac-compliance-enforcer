@@ -108,22 +108,6 @@ func TestSmallForExpressionsEvaluate(t *testing.T) {
 	}
 }
 
-// templatefile templates nest %{ for } directives the same way, and are bounded the same way.
-func TestTemplateForDirectivesAreBounded(t *testing.T) {
-	t.Parallel()
-	m := parseFilesModule(t, map[string]string{
-		"main.tf": "locals {\n  xs = range(1000)\n  v  = templatefile(\"t.tftpl\", { xs = local.xs })\n}\n",
-		"t.tftpl": "%{ for a in xs }%{ for b in xs }%{ for c in xs }${c}%{ endfor }%{ endfor }%{ endfor }",
-	})
-	locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if locals["v"].Value.IsKnown() || !forLimitedIn(m) {
-		t.Errorf("known %v, diagnostics %v; want unknown with a for-expression limit", locals["v"].Value.IsKnown(), m.Diagnostics)
-	}
-}
-
 // The instances of a resource charge every evaluation of its for expressions: a for over 100
 // elements in a block with count = 10,000 reaches the module's limit, and the later instances
 // are unknown.
@@ -317,5 +301,88 @@ func TestRefusedForExpressionLeavesTheRestOfTheWork(t *testing.T) {
 	}
 	if got, _ := after.Value(ctx); !got.RawEquals(cty.StringVal("X")) {
 		t.Errorf("upper(\"x\") = %#v after the refused loop, want \"X\": the loop spent the module's work", got)
+	}
+}
+
+// templatefile templates nest %{ for } directives the same way, and are bounded the same way:
+// three nested directives over 1,000 elements (about 1e9 iterations) stop at the limit. hcl
+// allocates about 1.3 KB per iteration, so at forIterationWork 16 this took 583 MB in total
+// (0.7 s); at 64 it is about 220 MB (0.3 s): the weight bounds time, not memory, since the live
+// heap stays at a few MB either way (T-0113a). Not parallel: it measures allocation.
+func TestTemplateDirectiveResultsAreCharged(t *testing.T) {
+	m := parseFilesModule(t, map[string]string{
+		"main.tf": "locals {\n  xs = range(1000)\n  v  = templatefile(\"t.tftpl\", { xs = local.xs })\n}\n",
+		"t.tftpl": "%{ for a in xs }%{ for b in xs }%{ for c in xs }${c}%{ endfor }%{ endfor }%{ endfor }",
+	})
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{})
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.TotalAlloc - before.TotalAlloc; got > 300<<20 {
+		t.Errorf("allocated %d MB, want at most 300", got>>20)
+	}
+	if locals["v"].Value.IsKnown() || !forLimitedIn(m) {
+		t.Errorf("known %v, diagnostics %v; want unknown with a for-expression limit", locals["v"].Value.IsKnown(), m.Diagnostics)
+	}
+}
+
+// The string a %{ for } directive produces is charged on every iteration, so deep nesting over
+// one element, whose iterations cost almost nothing, cannot copy a large string at every level:
+// 300 levels around a 200 KB string allocated 290 MB and were evaluated in full (T-0113a review).
+func TestTemplateDirectiveStringsAreCharged(t *testing.T) { // not parallel: it measures allocation
+	m := parseFilesModule(t, map[string]string{
+		"main.tf": "locals {\n  big = \"" + strings.Repeat("x", 200_000) + "\"\n  v   = templatefile(\"t.tftpl\", { one = [1], big = local.big })\n}\n",
+		"t.tftpl": strings.Repeat("%{ for a in one }", 300) + "${big}" + strings.Repeat("%{ endfor }", 300),
+	})
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	locals, err := m.EvaluateLocals(context.Background(), map[string]Variable{})
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.TotalAlloc - before.TotalAlloc; got > 150<<20 {
+		t.Errorf("allocated %d MB, want at most 150", got>>20)
+	}
+	if locals["v"].Value.IsKnown() || !forLimitedIn(m) {
+		t.Errorf("known %v, diagnostics %v; want unknown with a for-expression limit", locals["v"].Value.IsKnown(), m.Diagnostics)
+	}
+}
+
+// forResultFunction charges a result's size exactly, up to the work left, and keeps its marks.
+func TestForResultFunctionChargesItsSize(t *testing.T) {
+	t.Parallel()
+	s := cty.StringVal(strings.Repeat("x", 99)).Mark(SensitiveMark)
+	size := 1 + 99
+	for name, tc := range map[string]struct {
+		left    int
+		limited bool
+	}{
+		"below": {size + 1, false},
+		"at":    {size, false},
+		"above": {size - 1, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m := &ParsedModule{fnWork: maxFunctionWork - tc.left}
+			got, err := m.forResultFunction().Call([]cty.Value{s})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m.forLimited != tc.limited || got.IsKnown() == tc.limited {
+				t.Errorf("limited %v, known %v; want limited %v", m.forLimited, got.IsKnown(), tc.limited)
+			}
+			if !got.HasMark(SensitiveMark) {
+				t.Error("the result's marks were lost")
+			}
+			if !tc.limited && m.fnWork != maxFunctionWork-tc.left+size {
+				t.Errorf("charged %d, want %d", m.fnWork-(maxFunctionWork-tc.left), size)
+			}
+		})
 	}
 }
