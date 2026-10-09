@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // Diagnostic codes for local evaluation.
@@ -78,8 +80,11 @@ type localState struct {
 	// vars are the variables it refers to; roots are the other root names it uses (resource
 	// types, data, module, path, ...), which evaluate as unknown.
 	vars, roots []string
-	// uses counts each use of "local.<name>" and "var.<name>"; otherUses counts the rest.
+	// uses counts each use of "local.<name>", "var.<name>" and "module.<name>" as a whole value;
+	// paths are the uses with static steps after the name (local.cfg.env), which the estimate
+	// charges only the sub-value they reach; otherUses counts the rest.
 	uses      map[string]int
+	paths     []usePath
 	otherUses int
 	// safe: the expression passed safeToEvaluate, so its traversals were read.
 	safe   bool
@@ -132,14 +137,14 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 			switch root := tr.RootName(); root {
 			case "local":
 				if dep, ok := traversalAttr(tr, 1); ok {
-					s.uses["local."+dep]++
+					s.addUse("local."+dep, tr)
 					if _, exists := states[dep]; exists {
 						s.deps = append(s.deps, dep)
 					}
 				}
 			case "var":
 				if name, ok := traversalAttr(tr, 1); ok {
-					s.uses["var."+name]++
+					s.addUse("var."+name, tr)
 					s.vars = append(s.vars, name)
 				}
 			default:
@@ -148,7 +153,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 					s.refs = append(s.refs, m.qualify(ref))
 				}
 				if name, ok := traversalAttr(tr, 1); ok && root == "module" && byName[name] != nil {
-					s.uses["module."+name]++
+					s.addUse("module."+name, tr)
 					s.mods = append(s.mods, name)
 					break
 				}
@@ -179,6 +184,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 	}
 
 	b := &localsBudget{
+		m:         m,
 		vars:      variablesObject(vars),
 		sizes:     map[string]int{},
 		varSizes:  map[string]int{},
@@ -401,10 +407,16 @@ func (b *localsBudget) inputsSensitive(s *localState) bool {
 
 // localsBudget tracks the sizes of evaluated locals and variables against the limits.
 type localsBudget struct {
+	// m is the module: measuring a path into a value is charged to its function work.
+	m    *ParsedModule
 	vars cty.Value
 	// sizes are the evaluated locals' sizes; total is their sum.
 	sizes    map[string]int
 	varSizes map[string]int
+	// pathSizes caches the size of each static path into a value (usePath.cacheKey), measured
+	// once up to maxLocalValueSize: the values never change once set, and many locals reading
+	// one path into a large value must not walk it each time.
+	pathSizes map[string]int
 	// sensitive caches whether "local.<name>" or "var.<name>" contains a sensitive value.
 	sensitive map[string]bool
 	total     int
@@ -416,18 +428,189 @@ type localsBudget struct {
 }
 
 // estimate bounds the size of s's value from above before it is evaluated: its source plus
-// every use of a local or variable at that value's full size. It stops counting past limit. It
-// does not account for for expressions, which can repeat a value per element (T-0113).
-func (b *localsBudget) estimate(s *localState, limit int) int {
+// every use of a local, variable or module at that value's full size, or, for a use with static
+// steps (local.cfg.env), the size of the sub-value they reach. It stops counting past limit.
+// For expressions charge their own repetition (ADR 0020).
+func (b *localsBudget) estimate(s *localState, limit int, done map[string]Local) int {
 	r := s.attr.Expr.Range()
 	est := r.End.Byte - r.Start.Byte + s.otherUses
 	for _, key := range slices.Sorted(maps.Keys(s.uses)) {
 		est += s.uses[key] * b.size(key)
 		if est > limit {
-			break
+			return est
+		}
+	}
+	for _, p := range s.paths {
+		est += b.pathSize(p, done)
+		if est > limit {
+			return est
 		}
 	}
 	return est
+}
+
+// usePath is a use of a local, variable or module with static steps after its name.
+type usePath struct {
+	key   string // "local.<name>", "var.<name>" or "module.<name>"
+	steps hcl.Traversal
+}
+
+// addUse records a use of key by tr: with the static steps after the name, if there are any,
+// else as a whole value. Variables() ends a traversal at its first dynamic step (an index by an
+// expression, a splat), so those uses are whole values.
+func (s *localState) addUse(key string, tr hcl.Traversal) {
+	if len(tr) > 2 {
+		s.paths = append(s.paths, usePath{key: key, steps: tr[2:]})
+		return
+	}
+	s.uses[key]++
+}
+
+// pathSize is the size of the sub-value p reaches, or the whole value's size when it cannot be
+// resolved here (a local not evaluated yet, a step that does not apply). A path into a value that
+// is set is measured once (pathSizes).
+func (b *localsBudget) pathSize(p usePath, done map[string]Local) int {
+	key, cacheable := p.cacheKey()
+	if n, ok := b.pathSizes[key]; ok && cacheable {
+		return n
+	}
+	n, final := b.measurePath(p, done)
+	if cacheable && final {
+		if b.pathSizes == nil {
+			b.pathSizes = map[string]int{}
+		}
+		b.pathSizes[key] = n
+	}
+	return n
+}
+
+// cacheKey identifies p: its key and its steps. ok is false for a step that has no plain text
+// form (an index by a value other than a known string or number), which is then not cached.
+func (p usePath) cacheKey() (string, bool) {
+	var sb strings.Builder
+	sb.WriteString(p.key)
+	for _, step := range p.steps {
+		switch s := step.(type) {
+		case hcl.TraverseAttr:
+			sb.WriteString("." + s.Name)
+		case hcl.TraverseIndex:
+			k := s.Key
+			switch {
+			case !k.IsKnown() || k.IsNull() || k.IsMarked():
+				return "", false
+			case k.Type() == cty.String:
+				sb.WriteString("[" + strconv.Quote(k.AsString()) + "]")
+			case k.Type() == cty.Number:
+				sb.WriteString("[" + k.AsBigFloat().Text('g', -1) + "]")
+			default:
+				return "", false
+			}
+		default:
+			return "", false
+		}
+	}
+	return sb.String(), true
+}
+
+// measurePath measures the sub-value p reaches, up to maxLocalValueSize (past it, the size is
+// maxLocalValueSize + 1, which no local fits). final is false when the base value is not set yet,
+// so the result may not be cached.
+func (b *localsBudget) measurePath(p usePath, done map[string]Local) (n int, final bool) {
+	kind, name, _ := strings.Cut(p.key, ".")
+	var base cty.Value
+	switch kind {
+	case "local":
+		l, ok := done[name]
+		if !ok {
+			return b.size(p.key), false
+		}
+		base = l.Value
+	case "var":
+		if !b.vars.Type().HasAttribute(name) {
+			return b.size(p.key), true
+		}
+		base = b.vars.GetAttr(name)
+	default:
+		base = b.modules[name]
+	}
+	sub, ok := staticSteps(base, p.steps)
+	if !ok {
+		return b.size(p.key), true
+	}
+	// Measuring is charged to the module's function work, as every measurement is (ADR 0020,
+	// ADR 0025):
+	// different paths can reach the same data (l["0"], l["00"], nested attributes), so the cache
+	// alone does not bound the walking. With no work left, the whole value's size is charged,
+	// which bounds the sub-value's from above and is measured once (size).
+	left := maxFunctionWork - b.m.fnWork
+	limit := min(left, maxLocalValueSize)
+	if limit <= 0 {
+		return b.size(p.key), false
+	}
+	n, ok = valueSize(sub, limit, maxNesting)
+	if !ok {
+		b.m.spendFunctionWork(limit)
+		if limit < maxLocalValueSize {
+			return b.size(p.key), false // the work ran out first
+		}
+		return maxLocalValueSize + 1, true
+	}
+	b.m.spendFunctionWork(n)
+	return n, true
+}
+
+// staticSteps applies attribute and literal index steps to v, as evaluation would, unmarking
+// each level (marks do not change a size). ok is false for a step that does not apply, so the
+// caller charges the whole value.
+func staticSteps(v cty.Value, steps hcl.Traversal) (cty.Value, bool) {
+	for _, step := range steps {
+		v, _ = v.Unmark()
+		if !v.IsKnown() || v.IsNull() {
+			return v, true // evaluation yields an unknown or an error: nothing larger
+		}
+		var key cty.Value
+		switch s := step.(type) {
+		case hcl.TraverseAttr:
+			key = cty.StringVal(s.Name)
+		case hcl.TraverseIndex:
+			key = s.Key
+		default:
+			return cty.NilVal, false
+		}
+		ty := v.Type()
+		switch {
+		case ty.IsObjectType():
+			k, err := convert.Convert(key, cty.String)
+			if err != nil || !k.IsKnown() || k.IsNull() || !ty.HasAttribute(k.AsString()) {
+				return cty.NilVal, false
+			}
+			v = v.GetAttr(k.AsString())
+		case ty.IsMapType() || ty.IsListType() || ty.IsTupleType():
+			if !key.IsKnown() || key.IsNull() {
+				return cty.NilVal, false
+			}
+			if ty.IsMapType() {
+				k, err := convert.Convert(key, cty.String)
+				if err != nil {
+					return cty.NilVal, false
+				}
+				key = k
+			} else {
+				k, err := convert.Convert(key, cty.Number)
+				if err != nil {
+					return cty.NilVal, false
+				}
+				key = k
+			}
+			if has := v.HasIndex(key); !has.IsKnown() || !has.True() {
+				return cty.NilVal, false
+			}
+			v = v.Index(key)
+		default:
+			return cty.NilVal, false
+		}
+	}
+	return v, true
 }
 
 // size is the size of "local.<name>", "module.<name>" or "var.<name>"; anything else counts as
@@ -488,7 +671,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 	remaining := maxLocalsSize - b.total
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": b.vars}}
 	if s.safe {
-		if est := b.estimate(s, maxLocalValueSize); est > maxLocalValueSize {
+		if est := b.estimate(s, maxLocalValueSize, done); est > maxLocalValueSize {
 			return tooLarge(false)
 		} else if est > remaining {
 			return tooLarge(true)
