@@ -269,34 +269,53 @@ type sourceKey struct {
 // holdsDynamicSource reports whether the JSON value expr holds, at any depth, an object with a
 // "dynamic" key whose value is an object or an array: a nested block holding a dynamic block. It
 // reads the source without evaluating it, so iterators that are not yet in scope do not matter.
-// Results are memoized by source range for every value walked: each nesting level of a block
-// asks again about the values below it, which would otherwise cost depth times size. The
-// recursion is bounded by the nesting guard.
+// A scalar is data at once. Results for objects and arrays are memoized by source range: each
+// nesting level of a block asks again about the values below it, which would otherwise cost
+// depth times size. The recursion is bounded by the nesting guard.
 func (d *resourceDecoder) holdsDynamicSource(expr hcl.Expression) bool {
+	pairs, elems, ok := jsonContainer(expr)
+	if !ok {
+		return false
+	}
 	r := expr.Range()
 	key := sourceKey{r.Filename, r.Start.Byte, r.End.Byte}
 	if v, ok := d.dynamicSource[key]; ok {
 		return v
 	}
 	found := false
-	if pairs, diags := hcl.ExprMap(expr); !diags.HasErrors() {
-		for _, p := range pairs {
-			if k, kd := p.Key.Value(nil); !kd.HasErrors() && k.Type() == cty.String && k.IsKnown() && !k.IsNull() && k.AsString() == "dynamic" {
-				_, md := hcl.ExprMap(p.Value)
-				_, ld := hcl.ExprList(p.Value)
-				found = found || !md.HasErrors() || !ld.HasErrors()
-			}
-			// Walk every child, even after a find, so each is memoized once.
-			found = d.holdsDynamicSource(p.Value) || found
+	for _, p := range pairs {
+		if k, kd := p.Key.Value(nil); !kd.HasErrors() && k.Type() == cty.String && k.IsKnown() && !k.IsNull() && k.AsString() == "dynamic" {
+			_, _, isContainer := jsonContainer(p.Value)
+			found = found || isContainer
 		}
-	} else if elems, diags := hcl.ExprList(expr); !diags.HasErrors() {
-		for _, e := range elems {
-			found = d.holdsDynamicSource(e) || found
-		}
+		// Walk every child, even after a find, so each is memoized once.
+		found = d.holdsDynamicSource(p.Value) || found
+	}
+	for _, e := range elems {
+		found = d.holdsDynamicSource(e) || found
 	}
 	if d.dynamicSource == nil {
 		d.dynamicSource = map[sourceKey]bool{}
 	}
 	d.dynamicSource[key] = found
 	return found
+}
+
+// jsonContainer returns the properties of a JSON object or the elements of a JSON array, and
+// whether expr is either. It calls the expression's own ExprMap and ExprList, which return nil
+// for anything else, rather than hcl.ExprMap and hcl.ExprList, which build an error diagnostic
+// for every value that is not one. Like those, it looks through wrapping expressions.
+func jsonContainer(expr hcl.Expression) ([]hcl.KeyValuePair, []hcl.Expression, bool) {
+	expr = hcl.UnwrapExpression(expr)
+	if m, ok := expr.(interface{ ExprMap() []hcl.KeyValuePair }); ok {
+		if pairs := m.ExprMap(); pairs != nil {
+			return pairs, nil, true
+		}
+	}
+	if l, ok := expr.(interface{ ExprList() []hcl.Expression }); ok {
+		if elems := l.ExprList(); elems != nil {
+			return nil, elems, true
+		}
+	}
+	return nil, nil, false
 }

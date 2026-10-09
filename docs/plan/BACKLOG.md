@@ -362,12 +362,13 @@ locations and without executing anything.
     - index chains (`x[k][k]...`, not bounded by the nesting guard because brackets close) are bounded: in a 5 MiB file they evaluated but used about 2.4 GB (measured in the T-0104a review); re-measure at the T-0111a limit and bound the chain length or its evaluation work, with tests at, below and above the bound
   - attempts: 1
   - result: checkChains (scanTokens, every evaluated expression) refuses more than 1,024 nested postfix steps, counted through parentheses, index keys, call arguments and splats, as expression_too_complex; a refused 1 MiB chain uses no measurable stack (128 MB before) but still allocates about 1.1 GB from lexing twice (T-0111e) (ADR 0018)
-- [ ] T-0111d · Memoize only containers in holdsDynamicSource
+- [x] T-0111d · Memoize only containers in holdsDynamicSource
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0111a
   - accept:
     - holdsDynamicSource (JSON resource decoding) memoizes only objects and arrays and returns false for scalars before trying ExprMap/ExprList: a flat 2.4 MB array allocated about 2.4 GB in total and kept one memo entry per element (T-0106e review); a test bounds the allocation
-  - attempts: 0
+  - attempts: 1
+  - result: jsonContainer calls the JSON expression's own ExprMap/ExprList (no error diagnostic per scalar); holdsDynamicSource returns false for scalars before the memo, so only objects and arrays are memoized; a flat 2.4 MB array stays under 32 B per source byte with one memo entry (was 643 MB and 1,200,002 entries)
 - [ ] T-0111e · Lex an evaluated expression once
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0111c
