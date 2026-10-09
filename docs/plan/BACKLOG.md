@@ -285,12 +285,13 @@ locations and without executing anything.
     - locals and module inputs that reference `module.<name>.<output>` see the output (today unknown): locals and module calls of a module are evaluated in one dependency order, and a cycle through them makes its members unknown with a warning
   - attempts: 1
   - result: locals and module calls form one dependency graph (dependencyComponents, Tarjan with an explicit stack) evaluated in order, each call through a callback with the locals and module values so far, so locals and module inputs see module.<name> outputs; cycles make members unknown (local_cycle, module_cycle), and calls in a cycle are still evaluated; a child stops its remaining locals once the tree budget is used up, and the root never stops (ADR 0011)
-- [ ] T-0107c · Expand count and for_each on module calls
+- [x] T-0107c · Expand count and for_each on module calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107i
   - accept:
     - module calls with count or for_each produce `module.x[0]` / `module.x["k"]` instance prefixes with count.index/each.* in the inputs; unknown or invalid expansions are one `module.x[*]` placeholder with unknown inputs, as T-0106b does for resources; instances count toward the tree's limits
-  - attempts: 0
+  - attempts: 1
+  - result: module calls expand by count and for_each through the resource expand() in the caller (sorted keys, [*] placeholder, 10,000 per call); instances are addressed module.a[0].module.b["k"] with Key/ExpansionUnknown and count/each in their inputs; callers see a tuple, an object by key, or unknown for placeholders and cut expansions; the tree is capped at 10,000 module instances, and argument source re-evaluated per instance is charged as expansion work (ADR 0012)
 - [ ] T-0107d · Resolve remote modules through .terraform/modules/modules.json
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0107a

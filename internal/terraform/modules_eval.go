@@ -3,10 +3,12 @@ package terraform
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/fsutil"
+	"github.com/thuansec/iac-compliance-enforcer/internal/model"
 )
 
 // DiagModuleWorkLimit reports a module instance that is not evaluated because the module tree
@@ -34,12 +36,18 @@ const (
 	maxTreeExpansionWork = maxExpansionWork
 	maxTreeStructure     = maxInstanceStructure
 	maxTreeInstances     = maxInstancesPerModule
+	// maxTreeModuleInstances bounds the module instances of a tree: count and for_each on
+	// nested calls multiply, and each instance holds its own state.
+	maxTreeModuleInstances = 10_000
 )
 
 // moduleUsage is what a module instance used of its value, reference and expansion budgets,
 // and the steps of its unknown paths.
 type moduleUsage struct {
 	locals, resources, inputs, outputs, refs, unknown, expansion, structure, instances int
+	// callExpansion is the source of module call arguments evaluated again per instance, at
+	// most maxExpansionWork (evaluateCall).
+	callExpansion int
 }
 
 // treeUsage is what the instances of a tree used together.
@@ -56,9 +64,13 @@ func (u treeUsage) exhausted() bool {
 		u.expansion >= maxTreeExpansionWork || u.structure >= maxTreeStructure || u.instances >= maxTreeInstances
 }
 
-// usageOf returns what m has used so far, apart from its source.
+// usageOf returns what m has used so far, apart from its source. Its calls' expansion work
+// counts as expansion work.
 func usageOf(m *ParsedModule) treeUsage {
-	return treeUsage{function: m.fnWork, moduleUsage: m.usage}
+	u := m.usage
+	u.expansion += u.callExpansion
+	u.callExpansion = 0
+	return treeUsage{function: m.fnWork, moduleUsage: u}
 }
 
 // pathSteps counts the steps of paths, plus one per path.
@@ -72,8 +84,14 @@ func pathSteps(paths []cty.Path) int {
 
 // ModuleInstance is one evaluated module: the root or one resolved call.
 type ModuleInstance struct {
-	// Address is "" for the root, else the call's address; Dir is the module directory.
+	// Address is "" for the root, else the instance's address: the caller's, then
+	// "module.<name>" and its key ("module.a[0].module.b[\"k\"]"), or "[*]" for the placeholder
+	// of an unknown or invalid count or for_each. Dir is the module directory.
 	Address, Dir string
+	// Key is the instance's count index or for_each key; NoKey without count or for_each and
+	// for a placeholder, which sets ExpansionUnknown.
+	Key              model.InstanceKey
+	ExpansionUnknown bool
 	// Call is the module call, nil for the root.
 	Call *ModuleCall
 	// Module is the instance, which holds its evaluation diagnostics; parse diagnostics stay on
@@ -95,12 +113,15 @@ type ModuleInstance struct {
 
 // treeEvaluator evaluates one ModuleTree.
 type treeEvaluator struct {
-	root    *fsutil.Root
-	opts    VarOptions
-	limits  Limits
-	used    treeUsage
-	charged map[*ParsedModule]treeUsage
-	out     []*ModuleInstance
+	// instances counts the module instances started (the root is not one), at most
+	// maxTreeModuleInstances.
+	instances int
+	root      *fsutil.Root
+	opts      VarOptions
+	limits    Limits
+	used      treeUsage
+	charged   map[*ParsedModule]treeUsage
+	out       []*ModuleInstance
 }
 
 // EvaluateTree evaluates every resolved module of tree, depth first, in the dependency order of
@@ -116,7 +137,7 @@ type treeEvaluator struct {
 // that cannot be read or a cancelled context is an error.
 func EvaluateTree(ctx context.Context, root *fsutil.Root, tree *ModuleTree, opts VarOptions, limits Limits) ([]*ModuleInstance, error) {
 	e := &treeEvaluator{root: root, opts: opts, limits: limits, charged: map[*ParsedModule]treeUsage{}}
-	if _, err := e.evaluate(ctx, tree.Root, nil, nil, nil); err != nil {
+	if _, err := e.evaluate(ctx, tree.Root, nil, nil, instanceSpec{}, nil); err != nil {
 		return nil, fmt.Errorf("evaluate module tree: %w", err)
 	}
 	return e.out, nil
@@ -126,11 +147,19 @@ func EvaluateTree(ctx context.Context, root *fsutil.Root, tree *ModuleTree, opts
 // gives its call's arguments evaluated in the caller: its variables, then its locals and calls
 // in one dependency order (T-0107i), then its resources and outputs, which see the calls'
 // outputs.
-func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *ModuleCall, caller *ModuleInstance, inputs func() (map[string]Input, error)) (*ModuleInstance, error) {
+func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *ModuleCall, caller *ModuleInstance, spec instanceSpec, inputs func() (map[string]Input, error)) (*ModuleInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	inst := &ModuleInstance{Address: node.Address, Dir: node.Dir, Call: call, Module: node.Module.NewInstance()}
+	inst := &ModuleInstance{Dir: node.Dir, Call: call, Module: node.Module.NewInstance(), Key: spec.key}
+	if caller != nil {
+		inst.Address = "module." + call.Name + spec.suffix
+		if caller.Address != "" {
+			inst.Address = caller.Address + "." + inst.Address
+		}
+		inst.ExpansionUnknown = spec.suffix == "[*]"
+		e.instances++
+	}
 	e.out = append(e.out, inst)
 	m := inst.Module
 	if caller != nil && e.used.exhausted() {
@@ -165,16 +194,7 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 		if c.Child == nil {
 			return cty.DynamicVal, nil
 		}
-		e.charge(m) // the locals so far, before the child checks the budget
-		child, err := e.evaluate(ctx, c.Child, c, inst, func() (map[string]Input, error) {
-			in, err := m.moduleInputs(ctx, c, inst.Variables, locals, modules)
-			e.charge(m)
-			return in, err
-		})
-		if err != nil || child.Skipped || child.Truncated {
-			return cty.DynamicVal, err
-		}
-		return outputsObject(child.Outputs), nil
+		return e.evaluateCall(ctx, inst, c, locals, modules)
 	}
 	// A child stops evaluating locals once the tree budget is used up (ADR 0011); the root
 	// never does.
@@ -208,9 +228,9 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 	if call != nil {
 		for i := range inst.Resources {
 			r := &inst.Resources[i]
-			r.Module, r.CallFile, r.CallRange = node.Address, call.File, call.DefRange
-			r.Address = node.Address + "." + r.Address
-			r.BaseAddress = node.Address + "." + r.BaseAddress
+			r.Module, r.CallFile, r.CallRange = inst.Address, call.File, call.DefRange
+			r.Address = inst.Address + "." + r.Address
+			r.BaseAddress = inst.Address + "." + r.BaseAddress
 		}
 	}
 	if inst.Outputs, err = m.evaluateOutputs(ctx, inst.Variables, inst.Locals, modules); err != nil {
@@ -218,6 +238,99 @@ func (e *treeEvaluator) evaluate(ctx context.Context, node *ModuleNode, call *Mo
 	}
 	e.charge(m)
 	return inst, nil
+}
+
+// evaluateCall evaluates the instances of call c of caller: one per count index or for_each key
+// (expanded as for resources, at most maxInstancesPerResource), one placeholder for an unknown
+// or invalid expansion, or one without count or for_each. It returns module.<name> for the
+// caller: an object of the outputs, a tuple of them by index (count), an object of them by key
+// (for_each), or unknown for a placeholder, an expansion cut at a limit, or an instance that was
+// skipped or truncated.
+func (e *treeEvaluator) evaluateCall(ctx context.Context, caller *ModuleInstance, c *ModuleCall, locals map[string]Local, modules map[string]cty.Value) (cty.Value, error) {
+	m := caller.Module
+	attrs, _ := c.Body.JustAttributes() // moduleInputs reports these diagnostics
+	r := Resource{DefRange: c.DefRange}
+	if a, ok := attrs["count"]; ok {
+		r.Count = a.Expr
+	}
+	if a, ok := attrs["for_each"]; ok {
+		r.ForEach = a.Expr
+	}
+	d, done := m.callDecoder(caller.Variables, locals, modules)
+	specs := d.expand(&r)
+	done()
+	limited := d.instancesLimited
+
+	// Each instance after the first evaluates the call's arguments again: their source is
+	// charged to the caller's expansion work, as a resource body is (maxExpansionWork).
+	cost := 1
+	for name, a := range attrs {
+		if moduleMetaArguments[name] {
+			continue
+		}
+		ar := a.Expr.Range()
+		n := ar.End.Byte - ar.Start.Byte
+		if strings.HasSuffix(ar.Filename, ".json") {
+			n *= jsonEvalFactor
+		}
+		cost += n
+	}
+
+	outputs := make([]cty.Value, 0, len(specs))
+	for i, spec := range specs {
+		if i > 0 && m.usage.callExpansion+cost > maxExpansionWork {
+			limited = true
+			at := c.DefRange
+			m.diag(SeverityWarning, DiagExpansionLimit, "Too many module instances",
+				"The module call's arguments, evaluated again for each instance, pass the limit for a module, so the rest of its instances are not checked.",
+				c.File, at.Start.Line, at.Start.Column)
+			m.sortDiagnostics()
+			break
+		}
+		if i > 0 {
+			m.usage.callExpansion += cost
+		}
+		if e.instances >= maxTreeModuleInstances {
+			limited = true
+			at := c.DefRange
+			m.diag(SeverityWarning, DiagExpansionLimit, "Too many module instances",
+				fmt.Sprintf("The module tree has %d module instances, so the rest of this module call's instances are not checked.", maxTreeModuleInstances),
+				c.File, at.Start.Line, at.Start.Column)
+			m.sortDiagnostics()
+			break
+		}
+		e.charge(m) // the caller's work so far, before the child checks the budget
+		child, err := e.evaluate(ctx, c.Child, c, caller, spec, func() (map[string]Input, error) {
+			in, err := m.moduleInputs(ctx, c, caller.Variables, locals, modules, spec.vars)
+			e.charge(m)
+			return in, err
+		})
+		if err != nil {
+			return cty.DynamicVal, err
+		}
+		v := cty.DynamicVal
+		if !child.Skipped && !child.Truncated {
+			v = outputsObject(child.Outputs)
+		}
+		outputs = append(outputs, v)
+	}
+	switch {
+	case r.CountUnknown || r.ForEachUnknown || limited:
+		return cty.DynamicVal, nil
+	case r.Count != nil:
+		return cty.TupleVal(outputs), nil
+	case r.ForEach != nil:
+		byKey := make(map[string]cty.Value, len(specs))
+		for i, spec := range specs {
+			k, _ := spec.key.Str()
+			byKey[k] = outputs[i]
+		}
+		return cty.ObjectVal(byKey), nil
+	case len(outputs) == 0:
+		return cty.DynamicVal, nil // the tree was already full
+	default:
+		return outputs[0], nil
+	}
 }
 
 // charge adds what m used since it was last charged to the tree.

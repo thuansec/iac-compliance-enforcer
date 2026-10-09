@@ -133,6 +133,8 @@ type resourceDecoder struct {
 	// modules holds module.<name> for the module's calls: each an object of the called
 	// instance's outputs, or unknown. nil means every module reference is unknown.
 	modules map[string]cty.Value
+	// instancesLimited records that expand cut an expansion at maxInstancesPerResource.
+	instancesLimited bool
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.

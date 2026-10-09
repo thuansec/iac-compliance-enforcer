@@ -21,7 +21,7 @@ func (d *resourceDecoder) expand(r *Resource) []instanceSpec {
 	switch {
 	case r.Count != nil && r.ForEach != nil:
 		d.expansionDiag(DiagInvalidExpansion, r.Count, "Invalid count and for_each",
-			"Terraform rejects a resource that sets both count and for_each, so iace checks one placeholder instance with unknown values for them.")
+			"Terraform rejects a resource or module call that sets both count and for_each, so iace checks one placeholder instance with unknown values for them.")
 		r.CountUnknown, r.ForEachUnknown = true, true
 		return []instanceSpec{placeholder()}
 	case r.Count != nil:
@@ -169,10 +169,12 @@ func (d *resourceDecoder) setInstance(vars map[string]cty.Value) {
 	}
 }
 
-// instanceLimit reports a resource with more than maxInstancesPerResource instances.
+// instanceLimit reports a resource or module call with more than maxInstancesPerResource
+// instances.
 func (d *resourceDecoder) instanceLimit(expr hcl.Expression) {
+	d.instancesLimited = true
 	d.expansionDiag(DiagExpansionLimit, expr, "Too many instances",
-		fmt.Sprintf("The resource has more than %d instances; iace checks the first %d.", maxInstancesPerResource, maxInstancesPerResource))
+		fmt.Sprintf("The resource or module call has more than %d instances; iace checks the first %d.", maxInstancesPerResource, maxInstancesPerResource))
 }
 
 // moduleLimit reports a resource whose instances are cut short by maxInstancesPerModule,
