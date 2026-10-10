@@ -518,12 +518,13 @@ locations and without executing anything.
     - a conditional's results are not walked for marks by its wrappers (ADR 0030), or the walk is not charged as an input walk (ADR 0026, ADR 0027), since plain hcl does not walk them: today `var.enabled ? local.cidrs : null` over 3,000 elements still costs about 144k units per evaluation, so about 58 instances spend a module's function work (T-0114e review); for example declare the wrappers' result parameter so cty skips ContainsMarked, or exempt them in walksArguments, keeping marks on results, with a test of the per-evaluation charge
   - attempts: 1
   - result: the conditional wrappers take their results as capsules whose customdecode decoder evaluates them eagerly as hcl would, so cty walks nothing for marks and walksArguments exempts the wrappers; `var.c ? local.cidrs : null` over 3,000 elements costs 0 units instead of 144k per evaluation, and costly shapes (sets, scalars) and deep nesting, which took 15 to 71 s through the walk, finish in under a second (ADR 0033)
-- [ ] T-0114j · Charge the argument walk in the type pass of bounded calls
+- [x] T-0114j · Charge the argument walk in the type pass of bounded calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114h
   - accept:
     - the bounded wrapper's Type hook measures every argument (valueSize) on its affordable path without charging that walk (T-0114h review), so a call whose Impl does not run (an unknown argument, which cty skips) walks large arguments for free on every evaluation; charge the measured size in the type pass, or skip measuring when the call will not run, without double-charging calls that do run, with a test of repeated calls over a large argument and an unknown one
-  - attempts: 0
+  - attempts: 1
+  - result: the bounded wrapper's type pass charges the arguments it measured, once, when Impl will not run: cty skips the call (an unknown argument its parameter does not allow, skipsCall) or the pass fails (conversion or the function's own type check, which can and try catch); calls that run are still charged once, in the call; over the size limit a skipped call pays the limit
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0105b

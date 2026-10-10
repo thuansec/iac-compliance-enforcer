@@ -767,8 +767,10 @@ func TestSetBuildWithUnknownArgumentIsCharged(t *testing.T) {
 	m := &ParsedModule{}
 	arg := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
 	got, err := m.functions(nil, nil)["setunion"].Call([]cty.Value{cty.UnknownVal(cty.Set(cty.String)), arg})
-	if err != nil || got.IsKnown() || m.fnWork != 2*(1+5) {
-		t.Fatalf("setunion(unknown, [a, b]) = %#v, %v, work %d; want unknown and 12 charged", got, err, m.fnWork)
+	// The set build (2 × (1 + 5)) and, since cty skips the call, the arguments the type pass
+	// measured: 2 for the unknown set(string), 5 for the tuple (T-0114j).
+	if err != nil || got.IsKnown() || m.fnWork != 2*(1+5)+2+5 {
+		t.Fatalf("setunion(unknown, [a, b]) = %#v, %v, work %d; want unknown and 19 charged", got, err, m.fnWork)
 	}
 	vars := map[string]Variable{"u": {Value: cty.UnknownVal(cty.Set(cty.Number))}}
 	nums := collidingNumbers(128)
