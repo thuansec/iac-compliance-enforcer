@@ -290,14 +290,25 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 			// which can build sets, is charged here: a call with an unknown argument would
 			// otherwise repeat it for free.
 			_, total, pre, measured, affordable := measure(args)
+			// When Impl will not run (cty skips it, or this pass fails), the walk measure just
+			// made is all that is done: it is charged here, once, or such calls would walk
+			// their arguments for free (T-0114j). Impl charges it otherwise.
+			paid := false
+			payWalk := func() {
+				if paid {
+					return
+				}
+				paid = true
+				m.spendFunctionWork(total)
+				if !measured {
+					m.spendFunctionWork(m.functionArgsLimit())
+				}
+			}
+			if skipsCall(params, varParam, args) || !affordable && before != nil {
+				payWalk()
+			}
 			if !affordable {
 				m.fnLimited = true // Impl may not run: cty skips it when an argument is unknown
-				if before != nil {
-					m.spendFunctionWork(total)
-					if !measured {
-						m.spendFunctionWork(m.functionArgsLimit())
-					}
-				}
 				// The conversion estimate walked the arguments' types, which an unknown
 				// argument does not bound: a refusal pays for it, so it cannot repeat for free.
 				m.spendFunctionWork(pre)
@@ -306,9 +317,14 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 			m.spendFunctionWork(pre)
 			conv, err := convertArgs(f, args)
 			if err != nil {
+				payWalk() // an error stops the call; can and try catch it, so it can repeat
 				return cty.DynamicPseudoType, err
 			}
-			return f.ReturnTypeForValues(conv)
+			ty, err := f.ReturnTypeForValues(conv)
+			if err != nil {
+				payWalk()
+			}
+			return ty, err
 		},
 		Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
 			limited := func() (cty.Value, error) {
@@ -362,6 +378,23 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 			return val, nil
 		},
 	})
+}
+
+// skipsCall reports whether cty will return an unknown result for a call with args without
+// calling Impl (function.Function.Call): an argument is unknown and its parameter does not
+// allow unknown values. cty decides the other cases in which it does not call Impl (too many
+// arguments, a dynamic-typed argument its parameter does not allow) before the type pass runs.
+func skipsCall(params []function.Parameter, varParam *function.Parameter, args []cty.Value) bool {
+	for i, a := range args {
+		spec := varParam
+		if i < len(params) {
+			spec = &params[i]
+		}
+		if spec != nil && !a.IsKnown() && !spec.AllowUnknown {
+			return true
+		}
+	}
+	return false
 }
 
 // functionArgsLimit is the largest total argument size a call may have: maxFunctionValueSize,

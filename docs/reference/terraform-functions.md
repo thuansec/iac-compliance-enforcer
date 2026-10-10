@@ -71,7 +71,10 @@ types. Converting a number to a string, for example, costs as much as its digits
 | work across a module | 2^23 units (about 1.5s of evaluation at worst, except for conversions into set types outside the set functions, which are not bounded yet: T-0116, and numbers with many fractional bits outside the set functions: T-0117): the size of every call's arguments and result |
 
 A refused call still spends module work: as much as was measured of its arguments, so refused
-calls cannot repeat for free. A call over a bound is unknown, keeps the sensitivity of its
+calls cannot repeat for free. So does a call cty skips because an argument is unknown and its
+parameter does not allow that, and a call whose arguments do not fit its parameters (which
+`can` and `try` can catch and repeat): its type is decided, which measures the arguments, but the
+call itself never runs to charge them (T-0114j). A call over a bound is unknown, keeps the sensitivity of its
 arguments, and adds a `function_limit` warning at the expression. The input document reports it as a
 `limit_exceeded` coverage gap.
 

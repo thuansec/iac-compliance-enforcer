@@ -2236,3 +2236,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 2: APPROVE. Its minors were done: mark tests, a clearer test source, a reflowed
     comment.
 - Next: the next ready M1 task.
+
+## 2026-10-10 · T-0114j · done
+- What: the bounded wrapper's type pass charges the arguments it measured whenever the call
+  itself will not run.
+  - skipsCall mirrors cty's skip rule: an unknown argument whose parameter does not allow it,
+    variadic positions included.
+  - The type pass also pays when it fails, in conversion or in the function's own type check,
+    since can and try catch those failures and can repeat them.
+  - A once-only payWalk spends the measured total, plus the size limit when the arguments did not
+    fit. Calls that run are still charged once, in Impl.
+- Files: internal/terraform/{functions.go,typepass_internal_test.go,functions_internal_test.go},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Repeated element(60k tuple, unknown) calls each pay the arguments' size; they paid 0 before.
+  - Calls whose arguments pass the size limit pay the limit each time.
+  - Variadic unknowns (concat) and failing calls (element with an object index, concat with a
+    string) pay their measured arguments.
+  - A call that runs pays exactly its arguments and result.
+  - Every path is mutation-checked.
+  - TestSetBuildWithUnknownArgumentIsCharged now expects 19: the skipped setunion also pays its
+    7 units of arguments.
+  - End to end, existing charges (the locals input walk, for-body references) already bounded
+    repeated skipped calls. This is the call-level layer under them.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the over-limit skip was untested.
+    - Minors: the variadic branch untested, unreachable branches, failing calls unpaid. All
+      fixed, the last one now rather than as a follow-up.
+  - Round 2: APPROVE. Its minor (a test of the function's own type check failing) was added.
+- Next: the next ready M1 task.
