@@ -308,7 +308,7 @@ func (m *ParsedModule) applyVarFlag(i int, kv string, vars map[string]*varState)
 		return fmt.Errorf("--var %q: the module declares no such variable", name)
 	}
 	if !v.parseFlag {
-		return v.setFlag(cty.StringVal(raw))
+		return m.setFlag(v, cty.StringVal(raw))
 	}
 	file := "--var " + name
 	src := []byte(raw)
@@ -327,13 +327,14 @@ func (m *ParsedModule) applyVarFlag(i int, kv string, vars map[string]*varState)
 	if diags.HasErrors() {
 		return fmt.Errorf("--var %q: %s", name, diags[0].Summary)
 	}
-	return v.setFlag(val)
+	return m.setFlag(v, val)
 }
 
 // setFlag applies a command-line value, converted to the declared type now so that a mismatch
-// is an error for the pipeline rather than a warning without a location.
-func (v *varState) setFlag(val cty.Value) error {
-	if v.ty != cty.DynamicPseudoType && val.IsWhollyKnown() {
+// is an error for the pipeline rather than a warning without a location. A value too large to
+// convert is kept as given, and finishVariable makes it unknown.
+func (m *ParsedModule) setFlag(v *varState, val cty.Value) error {
+	if v.ty != cty.DynamicPseudoType && val.IsWhollyKnown() && m.chargeConversion(v, val) {
 		converted, err := v.convert(val)
 		if err != nil {
 			return fmt.Errorf("--var %q: not a valid %s", v.Name, typeexpr.TypeString(v.ty))
@@ -342,6 +343,22 @@ func (v *varState) setFlag(val cty.Value) error {
 	}
 	v.set(val, hcl.Range{})
 	return nil
+}
+
+// chargeConversion charges the module's function work for applying v's optional-attribute
+// defaults to val and converting it to v's type constraint, which unify element types in
+// quadratic time where the constraint holds a collection type (ADR 0029), and reports whether
+// it fit.
+func (m *ParsedModule) chargeConversion(v *varState, val cty.Value) bool {
+	if !typeHasCollection(v.ty) {
+		return true
+	}
+	cost := conversionCost(val, v.ty, v.defaults != nil, maxFunctionWork-m.fnWork)
+	if cost == 0 || m.chargeFunctionWork(cost) {
+		return true
+	}
+	m.spendFunctionWork(cost)
+	return false
 }
 
 // convert applies optional-attribute defaults, then converts to the declared type.
@@ -366,6 +383,13 @@ func (m *ParsedModule) finishVariable(v *varState) Variable {
 		// A module input can hold sensitive values. Conversion can change the value's shape,
 		// so marks are taken off and, failing closed, put back on the whole value.
 		val, marks := out.Value.UnmarkDeep()
+		if !m.chargeConversion(v, val) {
+			m.diag(SeverityWarning, DiagValueTooLarge, "Variable value too large to convert",
+				fmt.Sprintf("Converting the value of variable %q to %s would take too long, so it is unknown.", v.Name, out.Type),
+				v.from.Filename, v.from.Start.Line, v.from.Start.Column)
+			out.Value = cty.UnknownVal(v.ty).WithMarks(marks)
+			break
+		}
 		converted, err := v.convert(val)
 		if len(marks) > 0 {
 			converted = converted.WithMarks(marks)

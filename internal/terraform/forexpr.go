@@ -443,8 +443,8 @@ func (m *ParsedModule) evalJSON(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 // diagnostics are reported, and none when the condition is unknown.
 const condBranchName = "__iace_cond_branch"
 
-// largeTuple is the length from which a conditional result that is a tuple is charged its
-// unification: below it, unifying takes well under a millisecond.
+// largeTuple is the length from which a tuple, or the attribute count from which an object, is
+// charged its unification or conversion: below it, unifying takes well under a millisecond.
 const largeTuple = 1024
 
 // unifyWorkDivisor converts length² of a tuple into function work: unifying costs about 6 ns per
@@ -493,16 +493,18 @@ func (m *ParsedModule) condBranchFunction() function.Function {
 			if cost == 0 || m.chargeFunctionWork(cost) {
 				return v, nil
 			}
+			m.spendFunctionWork(cost) // a refusal pays for the walk, so it cannot repeat for free
 			m.condLimited = true
 			return cty.DynamicVal.WithMarks(marks), nil
 		},
 	})
 }
 
-// unifyCost is the work of unifying ty with another type, as cty does, recursively through tuple
-// element types, object attribute types and collection element types: length × length /
-// unifyWorkDivisor for every tuple type longer than largeTuple, plus the number of types walked
-// when there is one; other types unify in linear time, and cost 0. It stops counting past limit,
+// unifyCost is the work of unifying ty with another type, or of converting it to a collection
+// type, as cty does, recursively through tuple element types, object attribute types and
+// collection element types: length × length / unifyWorkDivisor for every tuple type longer than
+// largeTuple and every object type with more attributes, plus the number of types walked when
+// there is one; other types unify in linear time, and cost 0. It stops counting past limit,
 // and a type that takes more than limit steps to walk costs more than limit.
 func unifyCost(ty cty.Type, limit int) int {
 	cost, walked := 0, 0
@@ -523,7 +525,12 @@ func unifyCost(ty cty.Type, limit int) int {
 			}
 			stack = append(stack, elems...)
 		case t.IsObjectType():
-			for _, at := range t.AttributeTypes() {
+			attrs := t.AttributeTypes()
+			if n := len(attrs); n > largeTuple {
+				// Unified as a map, an object's attribute types are sorted like a tuple's.
+				cost = min(cost+saturatingMul(n, n/unifyWorkDivisor), maxFunctionWork+1)
+			}
+			for _, at := range attrs {
 				stack = append(stack, at)
 			}
 		case t.IsCollectionType():

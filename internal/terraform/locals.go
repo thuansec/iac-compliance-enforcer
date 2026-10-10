@@ -25,7 +25,8 @@ const (
 	// invalid reference, for example), so its value is unknown.
 	DiagEvaluation DiagCode = "evaluation"
 	// DiagValueTooLarge: a local's value would pass the size or nesting limit for evaluated
-	// values, so it is unknown.
+	// values, or converting a variable's value to its type would pass the function work
+	// (ADR 0029), so it is unknown.
 	DiagValueTooLarge DiagCode = "value_too_large"
 	// DiagReferencesIncomplete: the locals together refer to more resources than iace records,
 	// so some locals' References are incomplete.

@@ -60,6 +60,19 @@ func (m *ParsedModule) lookupFunction() function.Function {
 				}
 				vals[i] = v
 			}
+			if len(vals) == 3 {
+				// The default is converted to a map's element type, unifying a large tuple or
+				// object in quadratic time (ADR 0029); charged whether or not it is used.
+				if ty := vals[0].Type(); ty.IsMapType() && typeHasCollection(ty.ElementType()) {
+					cost := conversionCost(vals[2], ty.ElementType(), false, maxFunctionWork-m.fnWork)
+					if cost > 0 && !m.chargeFunctionWork(cost) {
+						m.spendFunctionWork(cost)
+						m.fnLimited = true
+						_, marks := cty.TupleVal(vals).UnmarkDeep() // fail closed: any argument's marks
+						return cty.DynamicVal.WithMarks(marks), nil
+					}
+				}
+			}
 			result, marks, err := lookupValue(vals)
 			if err != nil || !result.IsKnown() {
 				return result.WithMarks(marks), err
