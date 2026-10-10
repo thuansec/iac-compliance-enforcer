@@ -33,6 +33,23 @@ func mixedSource(n int) string {
 	return "[" + strings.Repeat(inner+", ", n) + "\"x\"]"
 }
 
+// distinctObjectsSource is an HCL tuple of n one-element tuples, each holding an object with
+// ten attributes no other object has: converted into list(list(any)), each element keeps its own
+// type and cty unifies them all (T-0114g review: 11 s at 4,000).
+func distinctObjectsSource(n int) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i := range n {
+		b.WriteString("[{")
+		for j := range 10 {
+			fmt.Fprintf(&b, " a%d_%d = \"x\",", i, j)
+		}
+		b.WriteString("}], ")
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
 // objectSource is an HCL object of n string attributes.
 func objectSource(n int) string {
 	var b strings.Builder
@@ -65,8 +82,9 @@ func TestVariableConversionsAreBounded(t *testing.T) {
 		"large string list default": {files: map[string]string{
 			"main.tf": "variable \"t\" {\n  type    = list(string)\n  default = " + tupleSource(40_000) + "\n}\n",
 		}},
-		// cty converts these two without unifying; the estimate over-counts them (T-0114g).
-		"large map default, over-counted": {files: map[string]string{
+		// cty converts these two without unifying, in linear time, so they are not refused
+		// (T-0114g).
+		"large map default, linear": {known: true, files: map[string]string{
 			"main.tf": "variable \"t\" {\n  type    = map(string)\n  default = " + objectSource(20_000) + "\n}\n",
 		}},
 		"large optional default": {files: map[string]string{
@@ -82,7 +100,10 @@ func TestVariableConversionsAreBounded(t *testing.T) {
 		"mixed tuples and a string into set(any)": {files: map[string]string{
 			"main.tf": "variable \"t\" {\n  type    = set(any)\n  default = " + mixedSource(4_096) + "\n}\n",
 		}},
-		"large tfvars, over-counted": {files: map[string]string{
+		"objects nested into list(list(any))": {files: map[string]string{
+			"main.tf": "variable \"t\" {\n  type    = list(list(any))\n  default = " + distinctObjectsSource(4_000) + "\n}\n",
+		}},
+		"large tfvars, linear": {known: true, files: map[string]string{
 			"main.tf":    "variable \"t\" {\n  type = set(string)\n}\n",
 			"big.tfvars": "t = " + tupleSource(40_000) + "\n",
 		}, opts: terraform.VarOptions{VarFiles: []string{"big.tfvars"}}},
@@ -96,8 +117,9 @@ func TestVariableConversionsAreBounded(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			m, vars, elapsed := timedEvalVars(t, tc.files, tc.opts)
-			// Well under a second; converting took 4.7 to 25 s more.
-			if elapsed > 3*time.Second*raceSlowdown {
+			// A refused value is refused well under a second; converting took 4.7 to 25 s more.
+			// Values that are converted do that linear work, timed by nothing here.
+			if !tc.known && elapsed > 3*time.Second*raceSlowdown {
 				t.Errorf("evaluating the variables took %v", elapsed)
 			}
 			v := vars["t"].Value

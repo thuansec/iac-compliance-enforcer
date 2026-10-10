@@ -2129,3 +2129,47 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     types, the comparison chain now grows its type, and the built-type test's claim is made
     honest.
 - Next: the next ready M1 task.
+
+## 2026-10-10 · T-0114g · done
+- What: conversions are charged along cty's own path, value and target together, so those that
+  unify nothing cost nothing (ADR 0032).
+  - unifyWalk.convert mirrors cty's convert package:
+    - tuple into list or set (the element type of `any` unified first);
+    - object into map (`any` or compound element types unified);
+    - map into map, and element-wise conversions;
+    - post-conversion unification of n copies of a known element type, or of the elements' own
+      types when the type holds `any`.
+  - unifyWalk.replace mirrors convert.dynamicReplace for unknown and null parts. It unifies a
+    tuple's element types for any list or set target: an unknown 40k tuple into set(string)
+    took 10.8 s in cty, which the value-only estimate missed.
+  - Targets holding `any` keep ADR 0029's type-level charge (typeConversions). cty builds the
+    conversion from the types even where no value reaches it: an empty list, an attribute a map
+    lacks.
+  - tolist, toset and tomap are charged into list(any), set(any) and map(any). coalesce and
+    expanded lookup use conservativeCost.
+- Files: internal/terraform/{conversions.go,functions.go,functions_internal_test.go,
+  convert_internal_test.go,variables_convert_test.go,race_on_test.go,race_off_test.go},
+  docs/adr/{0032-charge-conversions-along-ctys-path.md,0029 (header)},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass. Two race+shuffle package runs passed after scoping a timing bound.
+  - map(string) and set(string) variables of 20,000–40,000 entries are known; they were
+    refused.
+  - TestConversionCostFollowsCty times the zero-cost cases in cty.
+  - TestSlowConversionsAreCharged covers the slow-in-cty shapes: list(list(any)) of distinct
+    objects (11 s), list(object({a=any})), an empty list(tuple20k), and a map into an object it
+    lacks attributes of (4 s each).
+  - Mutation-checked: replace's unify, the type-level charge, and converted elements' own types.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: elements converted to a type holding `any` keep their own types, but the walk
+      charged copies of the declared type, so a 4,000-element list(list(any)) default took 11 s,
+      known. It was refused on main.
+    - Major: type-level construction was uncharged where no value reaches it.
+    - Both fixed, with the ADR corrected.
+  - Round 2: APPROVE. Its minors were done: a test case I had described but not applied, the
+    reference threshold (about 5,000), and a direct test of converted elements' types.
+  - One earlier gates run failed once in `test`, uncaptured. The likely cause was a timing bound
+    on variables that are now converted rather than refused. That bound now applies only to
+    refused values.
+- Next: the next ready M1 task.

@@ -141,14 +141,16 @@ var setBuildCosts = map[string]callCost{
 	"toset":           setBuildCost,
 }
 
-// unifyingFunctions unify or convert their arguments inside the call, beyond the conversion to
-// their parameter types, so every argument is charged its unification (conversionWork, ADR 0029).
-var unifyingFunctions = map[string]bool{
-	"coalesce": true, // unifies the arguments' types, then converts each to the result
-	"lookup":   true, // converts the default to a map's element type (only expanded calls reach it: ADR 0023)
-	"tolist":   true,
-	"tomap":    true,
-	"toset":    true,
+// unifyingFunctions convert or unify their arguments inside the call, beyond the conversion to
+// their parameter types: each argument is charged its conversion to the type given, or, for the
+// dynamic type, to a type not known before the call (conservativeCost), with the arguments'
+// types unified together (ADR 0029, ADR 0032).
+var unifyingFunctions = map[string]cty.Type{
+	"coalesce": cty.DynamicPseudoType, // unifies the arguments' types, then converts each to the result
+	"lookup":   cty.DynamicPseudoType, // converts the default to a map's element type (only expanded calls reach it: ADR 0023)
+	"tolist":   cty.List(cty.DynamicPseudoType),
+	"tomap":    cty.Map(cty.DynamicPseudoType),
+	"toset":    cty.Set(cty.DynamicPseudoType),
 }
 
 // unknownFunction stands in for every function iace does not evaluate. Its parameters do not
@@ -200,15 +202,15 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 			m.fns[name] = f
 		}
 		for name, f := range m.fileFunctions() {
-			m.fns[name] = m.bounded(f, nil, nil, false)
+			m.fns[name] = m.bounded(f, nil, nil, cty.NilType)
 		}
 		for name, f := range m.forFunctions() {
 			m.fns[name] = f
 		}
 		m.fns[lookupFunctionName] = m.lookupFunction()
-		m.fns["replace"] = m.bounded(m.replaceFunc(), nil, nil, false)
-		m.fns["regex"] = m.bounded(m.regexFunc(false), nil, nil, false)
-		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil, nil, false)
+		m.fns["replace"] = m.bounded(m.replaceFunc(), nil, nil, cty.NilType)
+		m.fns["regex"] = m.bounded(m.regexFunc(false), nil, nil, cty.NilType)
+		m.fns["regexall"] = m.bounded(m.regexFunc(true), nil, nil, cty.NilType)
 		m.unsupportedSeen = map[string]bool{}
 	}
 	fns := m.fns
@@ -246,12 +248,12 @@ func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[
 // sets m.fnLimited so evalExpr reports it. cost, if not nil, bounds f's result; before, if not
 // nil, bounds work that converting the arguments or calling f can do, and is checked before
 // they are converted. Converting an argument to a parameter type that holds a collection
-// type, or any argument when unifies is set, is charged its unification (conversionWork).
+// type, or to unify when it is not cty.NilType, is charged its unification (conversionWork).
 // The wrapper keeps f's parameters but takes any type: hcl converts arguments to the
 // parameter types before a call, and converting a large number to a string,
 // for example, costs as much as the number's digits, so the wrapper converts them itself once
 // their size is checked. cty then handles unknown, null and marked arguments exactly as for f.
-func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unifies bool) function.Function {
+func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify cty.Type) function.Function {
 	params := slices.Clone(f.Params())
 	for i := range params {
 		params[i].Type = cty.DynamicPseudoType
@@ -276,7 +278,7 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unifi
 		if before != nil {
 			_, pre = before(args, sizes)
 		}
-		pre = min(pre+m.conversionWork(f, args, unifies), maxFunctionWork+1)
+		pre = min(pre+m.conversionWork(f, args, unify), maxFunctionWork+1)
 		return sizes, total, pre, true, m.canChargeFunctionWork(total, pre)
 	}
 	return function.New(&function.Spec{
@@ -385,14 +387,16 @@ func measureArgs(args []cty.Value, limit int) (sizes []int, ok bool) {
 	return sizes, true
 }
 
-// conversionWork is the work of the conversions f makes of args (ADR 0029): an argument is
-// charged its conversionCost to its parameter type when that type holds a collection type. When
-// unifies is set, every argument is charged as if converted to any, and the arguments' types
-// unifying together (coalesce) too.
-func (m *ParsedModule) conversionWork(f function.Function, args []cty.Value, unifies bool) int {
+// conversionWork is the work of the conversions f makes of args (ADR 0029, ADR 0032): an
+// argument is charged its conversionCost to its parameter type when that type holds a
+// collection type. When unify is not cty.NilType, every argument is charged its conversion to
+// unify instead, or, for the dynamic type, conservativeCost and the arguments' types unified
+// together (coalesce).
+func (m *ParsedModule) conversionWork(f function.Function, args []cty.Value, unify cty.Type) int {
 	params, varParam := f.Params(), f.VarParam()
 	work := 0
 	for i, a := range args {
+		left := maxFunctionWork - m.fnWork
 		want := cty.DynamicPseudoType
 		switch {
 		case i < len(params):
@@ -400,15 +404,18 @@ func (m *ParsedModule) conversionWork(f function.Function, args []cty.Value, uni
 		case varParam != nil:
 			want = varParam.Type
 		}
+		var n int
 		switch {
-		case unifies:
-			want = cty.DynamicPseudoType
-		case !typeHasCollection(want):
-			continue
+		case unify == cty.DynamicPseudoType:
+			n = conservativeCost(a, left)
+		case unify != cty.NilType:
+			n = conversionCost(a, unify, false, left)
+		case typeHasCollection(want):
+			n = conversionCost(a, want, false, left)
 		}
-		work = min(work+conversionCost(a, want, false, maxFunctionWork-m.fnWork), maxFunctionWork+1)
+		work = min(work+n, maxFunctionWork+1)
 	}
-	if unifies && len(args) > 1 {
+	if unify == cty.DynamicPseudoType && len(args) > 1 {
 		types := make([]cty.Type, len(args))
 		for i, a := range args {
 			types[i] = a.Type()
