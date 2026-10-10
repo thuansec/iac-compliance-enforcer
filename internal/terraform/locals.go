@@ -90,6 +90,8 @@ type localState struct {
 	// safe: the expression passed safeToEvaluate, so its traversals were read.
 	safe   bool
 	cyclic bool
+	// allVars: it refers to var as a whole, or by a dynamic index, so every variable is in reach.
+	allVars bool
 	// walks: the expression calls functions or applies operators, which cty runs as functions
 	// that walk every argument in full (checking it for marks) before iace can refuse them, so
 	// evaluating it walks the values it uses.
@@ -149,9 +151,12 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 					}
 				}
 			case "var":
-				if name, ok := traversalAttr(tr, 1); ok {
+				if name, ok := variableName(tr); ok {
 					s.addUse("var."+name, tr)
 					s.vars = append(s.vars, name)
+				} else {
+					s.uses["var"]++ // var, or var[expr]: every variable is in reach (ADR 0027)
+					s.allVars = true
 				}
 			default:
 				s.roots = append(s.roots, root)
@@ -381,6 +386,16 @@ func localReferences(s *localState, done map[string]Local, vars map[string]Varia
 // inputsSensitive reports whether any local or variable s uses is, or contains, a sensitive
 // value. Each value is checked once, so many locals using one large value stay cheap.
 func (b *localsBudget) inputsSensitive(s *localState) bool {
+	if s.allVars {
+		marked, ok := b.sensitive["var"]
+		if !ok {
+			marked = b.vars.ContainsMarked()
+			b.sensitive["var"] = marked
+		}
+		if marked {
+			return true
+		}
+	}
 	for _, dep := range s.deps {
 		if b.sensitive["local."+dep] {
 			return true
@@ -622,6 +637,17 @@ func staticSteps(v cty.Value, steps hcl.Traversal) (cty.Value, bool) {
 // size is the size of "local.<name>", "module.<name>" or "var.<name>"; anything else counts as
 // one.
 func (b *localsBudget) size(key string) int {
+	if key == "var" { // the whole var object
+		if n, ok := b.varSizes["\x00all"]; ok {
+			return n
+		}
+		n, ok := valueSize(b.vars, maxLocalValueSize, maxNesting)
+		if !ok {
+			n = maxLocalValueSize + 1
+		}
+		b.varSizes["\x00all"] = n
+		return n
+	}
 	if name, ok := strings.CutPrefix(key, "local."); ok {
 		return max(b.sizes[name], 1)
 	}
@@ -687,11 +713,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 		// source bounds them, so that is charged before they are walked, where nothing else can
 		// stop it (ADR 0026).
 		used := est - (s.attr.Expr.Range().End.Byte - s.attr.Expr.Range().Start.Byte) - s.otherUses
-		if s.walks && used > 0 && !m.chargeFunctionWork(saturatingMul(used, argumentWalkWork)) {
-			r := s.attr.Expr.Range()
-			m.diag(SeverityWarning, DiagFunctionLimit, "Function call too large",
-				"The functions and operators of this local value would walk more of its inputs than the work left for function calls, so its value is unknown.",
-				s.file, r.Start.Line, r.Start.Column)
+		if s.walks && !m.chargeWalk(used, s.attr.Expr.Range()) {
 			return unknown
 		}
 		locals := make(map[string]cty.Value, len(s.deps))
@@ -972,6 +994,37 @@ func numberDigits(v cty.Value) int {
 	return (exp + int(f.MinPrec())) * 30103 / 100000 // log10(2)
 }
 
+// chargeWalk charges the walk of an expression's inputs, used units, before it is evaluated
+// (ADR 0026, ADR 0027). Over the module's function work it reports a function_limit warning at r
+// and returns false: the expression must not be evaluated, so nothing is walked.
+func (m *ParsedModule) chargeWalk(used int, r hcl.Range) bool {
+	if used <= 0 || m.chargeFunctionWork(saturatingMul(used, argumentWalkWork)) {
+		return true
+	}
+	m.diag(SeverityWarning, DiagFunctionLimit, "Function call too large",
+		"The functions and operators of this expression would walk more of its inputs than the work left for function calls, so its value is unknown.",
+		r.Filename, r.Start.Line, r.Start.Column)
+	return false
+}
+
+// variableName is the variable a var traversal names: var.<name>, or var["<name>"], which hcl
+// also evaluates. ok is false for a bare var or an index that is not a known string.
+func variableName(tr hcl.Traversal) (string, bool) {
+	if len(tr) < 2 {
+		return "", false
+	}
+	switch s := tr[1].(type) {
+	case hcl.TraverseAttr:
+		return s.Name, true
+	case hcl.TraverseIndex:
+		k := s.Key
+		if k.IsKnown() && !k.IsNull() && !k.IsMarked() && k.Type() == cty.String {
+			return k.AsString(), true
+		}
+	}
+	return "", false
+}
+
 // argumentWalkWork is the work charged per unit of the values a walking local uses: cty walks
 // each argument of a call or operator several times (checking marks, unmarking, checking it is
 // known), about 400 ns per unit in all, against about 100 ns per unit of function work
@@ -979,9 +1032,10 @@ func numberDigits(v cty.Value) int {
 const argumentWalkWork = 4
 
 // walksArguments reports whether evaluating expr calls functions or applies operators: cty
-// walks every argument of those in full. A for expression counts: its rewrite calls
-// forFunctionName, which walks its collection. A .tf.json expression may hold either in its
-// template strings, so it is assumed to.
+// walks every argument of those in full. The internal functions that take their arguments as
+// expression closures (for expressions, lookup) walk nothing in cty and charge their own work
+// (ADR 0020, ADR 0023), so they do not count, but what their arguments call does. A .tf.json
+// expression may hold calls or operators in its template strings, so it is assumed to.
 func walksArguments(expr hcl.Expression) bool {
 	se, ok := expr.(hclsyntax.Expression)
 	if !ok {
@@ -989,8 +1043,14 @@ func walksArguments(expr hcl.Expression) bool {
 	}
 	found := false
 	_ = hclsyntax.VisitAll(se, func(n hclsyntax.Node) hcl.Diagnostics {
-		switch n.(type) {
-		case *hclsyntax.FunctionCallExpr, *hclsyntax.BinaryOpExpr, *hclsyntax.UnaryOpExpr:
+		switch n := n.(type) {
+		case *hclsyntax.FunctionCallExpr:
+			switch n.Name {
+			case forFunctionName, forRefsName, forElementsName, lookupFunctionName:
+			default:
+				found = true
+			}
+		case *hclsyntax.BinaryOpExpr, *hclsyntax.UnaryOpExpr:
 			found = true
 		}
 		return nil

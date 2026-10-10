@@ -35,7 +35,8 @@ func evalManyLocals(t *testing.T, n int, expr string, size int) (*ParsedModule, 
 // it for free (T-0114a). Now the module's function work bounds how many are evaluated.
 func TestWalkingLocalsAreCharged(t *testing.T) {
 	t.Parallel()
-	for _, expr := range []string{"var.c.l != null", "length(var.c.l)"} {
+	// var["c"] and a bare var reach every variable, and are charged it (ADR 0027).
+	for _, expr := range []string{"var.c.l != null", "length(var.c.l)", `var["c"] != null`, "var != null"} {
 		t.Run(expr, func(t *testing.T) {
 			t.Parallel()
 			m, locals := evalManyLocals(t, 3000, expr, 120_000)
@@ -116,7 +117,9 @@ func TestWalkingLocalChargeIsExact(t *testing.T) {
 	}
 }
 
-// For expressions and .tf.json expressions count as walking their inputs.
+// Calls and operators walk their inputs, also inside a for expression; a for expression or a
+// lookup alone does not (their internal functions take expression closures); .tf.json
+// expressions are assumed to.
 func TestWalksArguments(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
@@ -125,7 +128,9 @@ func TestWalksArguments(t *testing.T) {
 	}{
 		"reference": {map[string]string{"main.tf": "locals {\n  v = [var.c.l]\n}\n"}, false},
 		"operator":  {map[string]string{"main.tf": "locals {\n  v = var.c.l != null\n}\n"}, true},
-		"for":       {map[string]string{"main.tf": "locals {\n  v = [for x in var.c.l : x]\n}\n"}, true},
+		"for":       {map[string]string{"main.tf": "locals {\n  v = [for x in var.c.l : x]\n}\n"}, false},
+		"for call":  {map[string]string{"main.tf": "locals {\n  v = [for x in var.c.l : upper(x)]\n}\n"}, true},
+		"lookup":    {map[string]string{"main.tf": "locals {\n  v = lookup(var.c, \"l\", null)\n}\n"}, false},
 		"json":      {map[string]string{"main.tf.json": `{"locals": {"v": "${var.c.l}"}}`}, true},
 	} {
 		m := parseFilesModule(t, tc.files)

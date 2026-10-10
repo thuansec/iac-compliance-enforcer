@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114a
 - Extends: ADR 0020, ADR 0025
+- Extended by: ADR 0027 (resources, outputs and module inputs; var index forms; internal functions)
 
 ## Context
 cty runs function calls and operators (`length(x)`, `x != null`, `a + b`) as functions, and

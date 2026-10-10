@@ -460,13 +460,14 @@ locations and without executing anything.
     - many locals that each use a large input once take time in proportion to their source, not to the input's size per local: today 3,000 locals `aN = length(var.c.l)` over a 120,000-element list take about 140 s, and 1,000 locals `aN = var.c.l != null` about 44 s (T-0114 review), because each evaluation walks the whole input somewhere (cty's argument checks for function calls, and an unidentified walk for operators); find the walks with a profile, charge or remove them, and add a test that bounds both shapes
   - attempts: 1
   - result: profiled: cty walks every argument of a call or operator (ContainsMarked and more) before iace can refuse it; a local with calls, operators or for expressions is now charged its inputs' size × 4 to the module's function work before evaluation, and is unknown with function_limit, unwalked, over the limit; 3,000 locals over a 120,000-element list take 0.8 to 1.7 s (minutes before) (ADR 0026); follow-ups T-0114b (resources, outputs, module inputs) and T-0114c (tuple unification in conditionals)
-- [ ] T-0114b · Charge input walks in resource, output and module-input expressions
+- [x] T-0114b · Charge input walks in resource, output and module-input expressions
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114a
   - accept:
     - an expression with calls or operators evaluated for a resource attribute (per instance of count and for_each), an output or a module input is charged its inputs' size × argumentWalkWork before it is evaluated, as locals are (ADR 0026), ideally through a helper shared with evalLocal; over the limit it is unknown with function_limit and nothing is walked
     - today 300 resources, or one resource with count = 300, each `bucket = length(var.c.l)` over a 120,000-element list take about 20 s (T-0114a review); regression tests for many resources and for count bound the work deterministically
-  - attempts: 0
+  - attempts: 1
+  - result: evalBounded (resource attributes per instance, count, for_each, dynamic for_each, outputs, module inputs) charges its inputs' size × 4 before an expression that walks them, through the chargeWalk helper shared with locals; var["c"] resolves like var.c and a bare var or var[expr] counts every variable (sensitive if any is); the closure-taking internal functions no longer count as walking (ADR 0027)
 - [ ] T-0114c · Bound type unification of large tuples in conditionals
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114a
