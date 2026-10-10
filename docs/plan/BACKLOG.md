@@ -504,17 +504,24 @@ locations and without executing anything.
     - the conversion charge (ADR 0029) follows cty's conversion path, value and target type together, so conversions that do not unify cost nothing: a tuple into `set(string)`, an object into `map(string)`, a list of tuples into a list of tuples; today a `map(string)` or `set(string)` variable of about 11,000 entries is unknown although converting it is linear (T-0114d); keep charging every path that unifies (nested values each, `any` targets twice), with parity tests against cty
   - attempts: 1
   - result: conversionCost walks the value and the target together as cty's convert does (unifyWalk.convert), with replace mirroring dynamicReplace for unknown and null parts; conversions that unify nothing cost nothing (tuple into set(string), object into map(string), list of tuples into lists), so such variables of tens of thousands of entries are known again; targets holding any keep the type-level charge, and converted elements keep their own types; tolist/toset/tomap charged into list/set/map(any), coalesce and lookup conservatively; an unknown tuple into set(string) (10.8 s in cty) is now charged (ADR 0032)
-- [ ] T-0114h · Bound contains and index over large compound values
+- [x] T-0114h · Bound contains and index over large compound values
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114d
   - accept:
     - `contains(list, value)` and `index(list, value)` compare the value with each element, and cty walks the value for marks and known-ness on every comparison, so `contains(var.t, var.t)` over a 10,000-element tuple takes 21 s (T-0114d probe); charge elements × the value's size (setComparisonCost today charges that only when sets are involved), or compare without re-walking, with a test across sizes that finishes within the per-module time budget
-  - attempts: 0
+  - attempts: 1
+  - result: contains and index are charged (elements × the value's size + the list's size) × (the value's nesting depth + 1), with the set comparison as a floor, since cty walks both sides at every level it recurses; contains(var.t, var.t) over 10,000 elements (28.6 s) and 500-deep values (20 to 46 s) are refused at once with function_limit; follow-up T-0114j (the type pass's uncharged argument walk)
 - [ ] T-0114i · Stop charging conditional results as input walks
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114e
   - accept:
     - a conditional's results are not walked for marks by its wrappers (ADR 0030), or the walk is not charged as an input walk (ADR 0026, ADR 0027), since plain hcl does not walk them: today `var.enabled ? local.cidrs : null` over 3,000 elements still costs about 144k units per evaluation, so about 58 instances spend a module's function work (T-0114e review); for example declare the wrappers' result parameter so cty skips ContainsMarked, or exempt them in walksArguments, keeping marks on results, with a test of the per-evaluation charge
+  - attempts: 0
+- [ ] T-0114j · Charge the argument walk in the type pass of bounded calls
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114h
+  - accept:
+    - the bounded wrapper's Type hook measures every argument (valueSize) on its affordable path without charging that walk (T-0114h review), so a call whose Impl does not run (an unknown argument, which cty skips) walks large arguments for free on every evaluation; charge the measured size in the type pass, or skip measuring when the call will not run, without double-charging calls that do run, with a test of repeated calls over a large argument and an unknown one
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing
