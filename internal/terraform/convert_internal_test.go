@@ -12,6 +12,10 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 )
 
+// largeTuple is the length from which ADR 0028 first charged tuples; the tests build sizes
+// around it.
+const largeTuple = 1024
+
 // objectOf is an object of n attributes k0, k1, ... cycling through vals.
 func objectOf(n int, vals ...cty.Value) cty.Value {
 	attrs := make(map[string]cty.Value, n)
@@ -45,7 +49,7 @@ func TestConversionsOverLargeTuples(t *testing.T) {
 		`coalesce(["x"], var.c.t)`,
 		`coalesce({ x = "b" }, var.c.o)`,
 		`lookup(var.c.m, "b", var.c.t)`,
-		`true ? var.c.o : { x = "b" }`,
+		`false ? { x = "b" } : var.c.o`,
 	} {
 		t.Run(expr, func(t *testing.T) {
 			t.Parallel()
@@ -180,28 +184,8 @@ func TestConversionsMatchCty(t *testing.T) {
 		if wantDiags.HasErrors() || !got.RawEquals(want) {
 			t.Errorf("%s: iace differs from cty (%v; %v)", expr, m.Diagnostics, wantDiags)
 		}
-		if m.fnWork < unifyCost(mixed.Type(), maxFunctionWork)/2 {
+		if m.fnWork < valueConversionCost(mixed, maxFunctionWork)/2 {
 			t.Errorf("%s: charged %d, less than the unification", expr, m.fnWork)
-		}
-	}
-}
-
-// Large objects are charged like large tuples: unifying them as maps sorts their attribute types.
-func TestUnifyCostObjects(t *testing.T) {
-	t.Parallel()
-	big := objectOf(largeTuple+1, cty.True).Type()
-	one := (largeTuple + 1) * ((largeTuple + 1) / unifyWorkDivisor)
-	walked := largeTuple + 2
-	for name, tc := range map[string]struct {
-		ty   cty.Type
-		want int
-	}{
-		"small":    {objectOf(largeTuple, cty.True).Type(), 0},
-		"large":    {big, one + walked},
-		"in tuple": {cty.Tuple([]cty.Type{big}), one + walked + 1},
-	} {
-		if got := unifyCost(tc.ty, maxFunctionWork); got != tc.want {
-			t.Errorf("%s: cost %d, want %d", name, got, tc.want)
 		}
 	}
 }

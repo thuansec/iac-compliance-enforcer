@@ -142,7 +142,7 @@ var setBuildCosts = map[string]callCost{
 }
 
 // unifyingFunctions unify or convert their arguments inside the call, beyond the conversion to
-// their parameter types, so every argument is charged its unification (unifyCost, ADR 0029).
+// their parameter types, so every argument is charged its unification (conversionWork, ADR 0029).
 var unifyingFunctions = map[string]bool{
 	"coalesce": true, // unifies the arguments' types, then converts each to the result
 	"lookup":   true, // converts the default to a map's element type (only expanded calls reach it: ADR 0023)

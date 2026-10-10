@@ -44,6 +44,10 @@ func (w *unifyWalk) total() int {
 	return min(w.cost+w.walked, maxFunctionWork+1)
 }
 
+// unifyWorkDivisor converts pairs of types compared into function work: unifying costs about
+// 6 ns per pair, against about 100 ns per unit of function work (T-0114c).
+const unifyWorkDivisor = 16
+
 // pairs is the cost of sorting k types.
 func pairs(k int) int {
 	return saturatingMul(k, k/unifyWorkDivisor)
@@ -306,6 +310,13 @@ func typeHasDynamic(ty cty.Type) bool {
 		}
 	}
 	return false
+}
+
+// valueConversionCost is the work of converting v to a type unified with another, beyond the
+// unification itself: cty converts each nested value on its own and unifies the elements of each
+// tuple, object or map it converts (conversionCost to a type without the dynamic type).
+func valueConversionCost(v cty.Value, limit int) int {
+	return conversionCost(v, cty.String, false, limit)
 }
 
 // unifyTypesCost is the work of unifying types together, as coalesce does with its arguments'.
