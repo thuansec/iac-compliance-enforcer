@@ -1041,9 +1041,10 @@ const argumentWalkWork = 4
 
 // walksArguments reports whether evaluating expr calls functions or applies operators: cty
 // walks every argument of those in full. The internal functions that take their arguments as
-// expression closures (for expressions, lookup) walk nothing in cty and charge their own work
-// (ADR 0020, ADR 0023), so they do not count, but what their arguments call does. A .tf.json
-// expression may hold calls or operators in its template strings, so it is assumed to.
+// expression closures (for expressions, lookup) or as capsules (the conditional wrappers) walk
+// nothing in cty and charge their own work (ADR 0020, ADR 0023, ADR 0033), so they do not
+// count, but what their arguments call does. A .tf.json expression may hold calls or operators
+// in its template strings, so it is assumed to.
 func walksArguments(expr hcl.Expression) bool {
 	se, ok := expr.(hclsyntax.Expression)
 	if !ok {
@@ -1054,7 +1055,8 @@ func walksArguments(expr hcl.Expression) bool {
 		switch n := n.(type) {
 		case *hclsyntax.FunctionCallExpr:
 			switch n.Name {
-			case forFunctionName, forRefsName, forElementsName, lookupFunctionName:
+			case forFunctionName, forRefsName, forElementsName, lookupFunctionName,
+				condBeginName, condTrueName, condFalseName:
 			default:
 				found = true
 			}

@@ -511,12 +511,13 @@ locations and without executing anything.
     - `contains(list, value)` and `index(list, value)` compare the value with each element, and cty walks the value for marks and known-ness on every comparison, so `contains(var.t, var.t)` over a 10,000-element tuple takes 21 s (T-0114d probe); charge elements × the value's size (setComparisonCost today charges that only when sets are involved), or compare without re-walking, with a test across sizes that finishes within the per-module time budget
   - attempts: 1
   - result: contains and index are charged (elements × the value's size + the list's size) × (the value's nesting depth + 1), with the set comparison as a floor, since cty walks both sides at every level it recurses; contains(var.t, var.t) over 10,000 elements (28.6 s) and 500-deep values (20 to 46 s) are refused at once with function_limit; follow-up T-0114j (the type pass's uncharged argument walk)
-- [ ] T-0114i · Stop charging conditional results as input walks
+- [x] T-0114i · Stop charging conditional results as input walks
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114e
   - accept:
     - a conditional's results are not walked for marks by its wrappers (ADR 0030), or the walk is not charged as an input walk (ADR 0026, ADR 0027), since plain hcl does not walk them: today `var.enabled ? local.cidrs : null` over 3,000 elements still costs about 144k units per evaluation, so about 58 instances spend a module's function work (T-0114e review); for example declare the wrappers' result parameter so cty skips ContainsMarked, or exempt them in walksArguments, keeping marks on results, with a test of the per-evaluation charge
-  - attempts: 0
+  - attempts: 1
+  - result: the conditional wrappers take their results as capsules whose customdecode decoder evaluates them eagerly as hcl would, so cty walks nothing for marks and walksArguments exempts the wrappers; `var.c ? local.cidrs : null` over 3,000 elements costs 0 units instead of 144k per evaluation, and costly shapes (sets, scalars) and deep nesting, which took 15 to 71 s through the walk, finish in under a second (ADR 0033)
 - [ ] T-0114j · Charge the argument walk in the type pass of bounded calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114h

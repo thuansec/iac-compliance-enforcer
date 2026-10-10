@@ -302,6 +302,7 @@ func TestConditionalRecordIsReset(t *testing.T) {
 	fns := m.forFunctions()
 	state := newCondState()
 	big := tupleOf(3_000, cty.StringVal("a"))
+	result := func(v cty.Value) cty.Value { return cty.CapsuleVal(condResultType, &v) }
 	call := func(name string, args ...cty.Value) cty.Value {
 		t.Helper()
 		v, err := fns[name].Call(args)
@@ -310,15 +311,15 @@ func TestConditionalRecordIsReset(t *testing.T) {
 		}
 		return v
 	}
-	call(condTrueName, call(condBeginName, state), big)
-	call(condFalseName, state, tupleOf(1, cty.StringVal("x")))
+	call(condTrueName, call(condBeginName, state), result(big))
+	call(condFalseName, state, result(tupleOf(1, cty.StringVal("x"))))
 	if m.fnWork == 0 {
 		t.Fatal("a unifying pair was not charged")
 	}
 	charged := m.fnWork
-	call(condTrueName, call(condBeginName, state), big) // a true result recorded...
-	call(condBeginName, state)                          // ...then one that failed before the call
-	call(condFalseName, state, tupleOf(1, cty.StringVal("x")))
+	call(condTrueName, call(condBeginName, state), result(big)) // a true result recorded...
+	call(condBeginName, state)                                  // ...then one that failed before the call
+	call(condFalseName, state, result(tupleOf(1, cty.StringVal("x"))))
 	if m.fnWork != charged {
 		t.Errorf("charged %d for a pair without a true result", m.fnWork-charged)
 	}

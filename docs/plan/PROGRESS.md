@@ -2204,3 +2204,35 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Follow-ups: T-0114j. The bounded wrapper's type pass measures arguments without charging
   that walk.
 - Next: the next ready M1 task.
+
+## 2026-10-10 · T-0114i · done
+- What: conditional results are passed to their wrappers as capsules, so cty never walks them
+  (ADR 0033).
+  - Before a call, cty walks each argument for marks (ContainsMarked over cty.DeepValues). That
+    costs 10 to 1,300 ns per unit depending on shape (sets are sorted to iterate), and every
+    enclosing conditional walks the taken result again. Plain hcl walks nothing.
+  - The result parameter is condResultType, a capsule whose customdecode decoder evaluates the
+    argument eagerly with `expr.Value(ctx)` and returns the diagnostics. hcl appends those like
+    plain argument diagnostics, evaluates arguments in order and skips the call on errors, so
+    its semantics are unchanged.
+  - The wrappers unwrap and return the value unchanged, marks included.
+  - walksArguments exempts the three wrappers.
+- Files: internal/terraform/{forexpr.go,locals.go,condwalk_internal_test.go,
+  conditional_internal_test.go}, docs/adr/{0033-pass-conditional-results-as-capsules.md,0026,0027,
+  0030 (headers)}, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - `var.c ? var.t : null` over 3,000 elements: 0 units per evaluation, against 144k before.
+  - 300 instances over a set of 20k numbers, 50k bools, or 100 nested conditionals finish within
+    the bound with no function_limit. With results passed as plain values they took 71 s and
+    15 s (mutation check).
+  - Marks survive deep in a result, on the result not taken and through nesting
+    (TestConditionalsKeepMarks). TestConditionalsMatchHCL passes unchanged.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED. My first fix charged a per-byte rate for a marks-only walk.
+    - Blocker: the walk costs per node, 10 to 100 times that rate for scalars and sets.
+    - Blocker: each nested conditional walks the result again (22 s and 51 s, undercharged).
+    - The reviewer proposed the eager capsule decoder, which removes the walk.
+  - Round 2: APPROVE. Its minors were done: mark tests, a clearer test source, a reflowed
+    comment.
+- Next: the next ready M1 task.
