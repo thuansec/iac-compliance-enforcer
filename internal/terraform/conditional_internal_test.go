@@ -216,7 +216,9 @@ func TestConditionalsChargedOnlyWhenHCLUnifies(t *testing.T) {
 			switch {
 			case charged && m.fnWork < 1_000_000:
 				t.Errorf("charged %d, want the unification charged", m.fnWork)
-			case !charged && m.fnWork > 300_000:
+			case !charged && m.fnWork > 320_000:
+				// Equal types are also charged walking them as cty unifies them (T-0114f):
+				// about 12k units here, with no sort.
 				t.Errorf("charged %d, want only the walks", m.fnWork)
 			}
 		})

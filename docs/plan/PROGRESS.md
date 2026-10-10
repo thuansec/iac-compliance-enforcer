@@ -2091,3 +2091,41 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Follow-ups: T-0114i. The wrappers' arguments are walked for marks and charged as input walks,
   about 144k units per 3,000-element result, which plain hcl does not pay.
 - Next: the next ready M1 task.
+
+## 2026-10-10 · T-0114f · done
+- What: types are counted in value sizes, so values built from unknowns cannot carry types far
+  larger than themselves (ADR 0031).
+  - typeSize counts a type expanded. It stops past the limit, and a type nested past the nesting
+    limit counts as over.
+  - valueSize counts an unknown or null value as its type's size, and an empty collection adds
+    its element type. Every value-size limit now bounds types. So does the locals reference
+    estimate, which reads the recorded sizes; in the doubling chain it is what refuses u16.
+  - A profile showed cty's unifyTupleTypes calling Type.Equals at every level, so unifyWalk
+    weights the types it walks by their depth.
+  - unifyTypesCost charges the walk even when nothing is sorted. Conditionals whose results have
+    the same primitive type are exempt.
+- Files: internal/terraform/{conversions.go,locals.go,forexpr.go,typesize_internal_test.go,
+  conditional_internal_test.go}, docs/adr/{0031-count-types-in-value-sizes.md,0029 (header),
+  0030 (header)}, docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - The 40-local doubling chain is refused with value_too_large in about 0.1 s. Before, 20 locals
+    took 3.5 s and 22 took 14 s.
+  - 3,000-local deep chains (conditional and `==`) finish within the bound. On main they took
+    95 s and 65 s.
+  - 40 conditionals over the largest type allowed reach "Conditional too large".
+  - TestValueSizeLimitsTypes checks at, below and above the limit, plus over-depth.
+  - Mutation-checked: the limit argument, the depth tracking, the valueSize type count and the
+    depth weighting.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: `typeSize(ty, limit-size) - 1` left an oversized type exactly at the limit, which
+      passed. Fixed with `limit-size+1`, plus boundary tests.
+    - Major: the ADR claimed the type-size limit stops the chain, but it is the reference
+      estimate. Corrected.
+    - Minors fixed: nesting depth, allocation, the dead branch with the primitive exemption, and
+      a deep-chain test.
+  - Round 2: APPROVE. Its minors were also done: the exemption is narrowed to equal primitive
+    types, the comparison chain now grows its type, and the built-type test's claim is made
+    honest.
+- Next: the next ready M1 task.

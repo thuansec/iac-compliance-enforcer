@@ -490,12 +490,13 @@ locations and without executing anything.
     - with both results in hand, charge their unification with ADR 0029's unifyWalk: today a result's nested tuples of different lengths, each within 1,024 elements, escape the per-result charge, so `true ? var.n : [["x"]]` over 36 such tuples takes about 8.5 s (T-0114d review)
   - attempts: 1
   - result: each conditional's results are wrapped in a pair (`__iace_cond_true(__iace_cond_begin(S), a)`, `__iace_cond_false(S, b)`) sharing a capsule state only the rewrite can create; the false wrapper sees both results and charges what hcl is about to do: nothing for null or dynamic results, ADR 0029's unifyWalk over the two types, plus both values' conversion when the types differ; over the limit the expression is unknown (marks kept) with "Conditional too large"; `cond ? x : null` over 3,000 elements no longer pays 560k units per evaluation, and nested tuples or maps of lists stop in milliseconds instead of 2.7 to 8.5 s (ADR 0030); follow-up T-0114i (the wrappers' walk charge)
-- [ ] T-0114f · Bound the type size of values built from unknowns
+- [x] T-0114f · Bound the type size of values built from unknowns
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114c
   - accept:
     - a value whose type grows faster than its size is bounded: a chain of locals `u_k = var.c ? [local.u_{k-1}, local.u_{k-1}] : [local.u_{k-1}, local.u_{k-1}]` with c unknown yields small unknown values whose type doubles per local, and cty's unification and type comparisons walk the expanded type (22 locals: 14 s, doubling per local; T-0114c review, existing before T-0114c); add a type-size limit next to the value-size limit (counting the expanded type) so such a local is unknown with a limit diagnostic, with a test on the chain
-  - attempts: 0
+  - attempts: 1
+  - result: valueSize counts an unknown or null value as its expanded type (typeSize, bounded by size and nesting) and an empty collection's element type, so every value-size limit and the locals estimate also bound types; unifyWalk weights types by depth (cty's Equals at every level) and conditionals and coalesce pay the walk even for equal types (equal primitive types exempt); the doubling chain is refused in about 0.1 s instead of 3.5 to 14 s, and 3,000-local deep chains no longer take 65 to 95 s (ADR 0031)
 - [ ] T-0114g · Charge conversions only where cty unifies
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114d

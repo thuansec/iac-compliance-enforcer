@@ -46,8 +46,12 @@ argument is sensitive, the unknown result stays sensitive.
 
 Scanned Terraform is untrusted, so every call to a supported function is bounded. Sizes are
 measured as for local values: one unit per value, plus one per string byte, map key, attribute
-name and decimal digit of a number's magnitude. cty formats, converts and compares numbers in
-decimal, so `tostring(1e6000000)` costs as much as six million digits.
+name and decimal digit of a number's magnitude. An unknown or null value is as large as its
+type expanded (a type used in several places counts each time), and an empty collection adds
+its element type, because cty walks types when it compares or unifies them and a type built from
+unknowns can double per step while the value stays small
+([ADR 0031](../adr/0031-count-types-in-value-sizes.md)). cty formats, converts and compares
+numbers in decimal, so `tostring(1e6000000)` costs as much as six million digits.
 
 Argument sizes are checked before the arguments are converted to the function's parameter
 types. Converting a number to a string, for example, costs as much as its digits.
