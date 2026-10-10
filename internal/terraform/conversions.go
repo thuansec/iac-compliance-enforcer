@@ -200,30 +200,179 @@ func (w *unifyWalk) typeConversions(ty cty.Type) {
 	}
 }
 
-// conversionCost is the work of converting v to want, as cty does (ADR 0029), in the units of
-// unifyWalk:
-//   - each known tuple, object or map value in v costs unifying its element types: cty converts
-//     every value nested in v on its own, and unifies the elements of a tuple converted to a
-//     list, of an object converted to a map, and of a map whose elements it converts;
-//   - when want holds the dynamic type (any), cty first unifies the element types of every tuple
-//     and object type in v to find the target element type (typeConversions);
-//   - with defaults (a type constraint with optional attributes), typeexpr also unifies the
-//     elements of every list, set and map it rebuilds, attribute by attribute: each costs k × k
-//     / unifyWorkDivisor per attribute of the constraint's widest object, plus one.
-//
-// The values and types walked are added once there is a cost. The cost over-counts where cty
-// does not unify (a tuple converted to a set of strings, an object to a map of strings:
-// T-0114g). It stops counting past limit, and a value that takes more than limit steps to walk
-// costs more.
+// conversionCost is the work of converting v to want, as cty does (ADR 0029, ADR 0032), in the
+// units of unifyWalk, following cty's conversion path for the value and the target together
+// (convert): conversions that unify nothing cost nothing, such as a tuple into a set of strings
+// or an object into a map of strings. With defaults (a type constraint with optional attributes),
+// typeexpr also unifies the elements of every list, set and map it rebuilds, attribute by
+// attribute: each costs k × k / unifyWorkDivisor per attribute of the constraint's widest
+// object, plus one. The values and types walked are added once there is a cost. It stops
+// counting past limit, and a value that takes more than limit steps to walk costs more.
 func conversionCost(v cty.Value, want cty.Type, defaults bool, limit int) int {
 	w := &unifyWalk{limit: limit}
-	if typeHasDynamic(want) {
+	if want != cty.DynamicPseudoType && typeHasDynamic(want) {
+		// cty builds the conversion from the types before it touches a value, unifying to find
+		// every element type a dynamic target leaves open, even where no value reaches it (an
+		// empty list, a target attribute a map lacks): charged as ADR 0029 did.
 		w.typeConversions(v.Type())
 	}
-	columns := 1
+	w.convert(v, want)
 	if defaults {
-		columns += widestObject(want)
+		w.defaults(v, 1+widestObject(want))
 	}
+	if w.over() {
+		return limit + 1
+	}
+	return w.total()
+}
+
+// convert charges converting v to want as cty's convert package does:
+//   - nothing when want is the dynamic type or v already has type want (the type-level work
+//     for targets holding the dynamic type is charged by conversionCost);
+//   - an unknown or null value is converted from its type alone (replace);
+//   - a tuple converted to a list or set of any first unifies its element types to find the
+//     element type; each element is then converted to that type (charged as valuePart, since
+//     the type is not known here), and for a list the converted elements are unified again;
+//   - a tuple converted to a list or set of a known element type converts each element, and for
+//     a list unifies the converted elements: n copies of that type, or, when it holds the
+//     dynamic type, the elements' own types (converted);
+//   - an object converted to a map of any unifies its attribute types first, and again after
+//     converting when they are not all primitive; to a map of a known element type it converts
+//     each attribute, then unifies them when that type is a collection or an object;
+//   - a map converted to a map converts each element, then unifies them when the element type
+//     is a collection or an object;
+//   - tuples, objects, lists and sets converted to their own kinds convert element by element.
+func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
+	if w.over() {
+		return
+	}
+	w.walked++
+	val, _ := v.Unmark()
+	ty := val.Type()
+	if want == cty.DynamicPseudoType || ty.Equals(want) {
+		return
+	}
+	if !val.IsKnown() || val.IsNull() {
+		w.replace(ty, want)
+		return
+	}
+	compound := func(t cty.Type) bool { return t.IsCollectionType() || t.IsObjectType() }
+	// converted charges unifying the converted elements: all of type ety, unless ety holds the
+	// dynamic type, which leaves each element its own type; then their own types are unified,
+	// as estimated from the elements before conversion (T-0114g review).
+	converted := func(ety cty.Type) {
+		if typeHasDynamic(ety) {
+			w.unify(elementTypes(val))
+			return
+		}
+		w.unify(slices.Repeat([]cty.Type{ety}, val.LengthInt()))
+	}
+	switch {
+	case ty.IsTupleType() && (want.IsListType() || want.IsSetType()):
+		ety, types := want.ElementType(), elementTypes(val)
+		if ety == cty.DynamicPseudoType {
+			w.unify(types)
+			w.eachElement(val, w.valuePart)
+			if want.IsListType() {
+				w.unify(types)
+			}
+			return
+		}
+		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+		if want.IsListType() {
+			converted(ety)
+		}
+	case ty.IsTupleType() && want.IsTupleType():
+		if wants := want.TupleElementTypes(); len(wants) == val.LengthInt() {
+			i := 0
+			w.eachElement(val, func(e cty.Value) { w.convert(e, wants[i]); i++ })
+		}
+	case ty.IsObjectType() && want.IsMapType():
+		ety, types := want.ElementType(), elementTypes(val)
+		if ety == cty.DynamicPseudoType {
+			w.unify(types)
+			w.eachElement(val, w.valuePart)
+			if slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
+				w.unify(types)
+			}
+			return
+		}
+		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+		if compound(ety) {
+			converted(ety)
+		}
+	case ty.IsMapType() && want.IsMapType():
+		ety := want.ElementType()
+		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+		if compound(ety) {
+			converted(ety)
+		}
+	case (ty.IsObjectType() || ty.IsMapType()) && want.IsObjectType():
+		for name, at := range want.AttributeTypes() {
+			switch {
+			case ty.IsObjectType() && ty.HasAttribute(name):
+				w.convert(val.GetAttr(name), at)
+			case ty.IsMapType() && val.HasIndex(cty.StringVal(name)).True():
+				w.convert(val.Index(cty.StringVal(name)), at)
+			}
+		}
+	case (ty.IsListType() || ty.IsSetType()) && (want.IsListType() || want.IsSetType()):
+		ety := want.ElementType()
+		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+	}
+}
+
+// replace charges the type cty gives an unknown or null value converted to want
+// (convert.dynamicReplace): it unifies a tuple's element types for a list or set, and an
+// object's attribute types for a map, whatever the target element type.
+func (w *unifyWalk) replace(in, want cty.Type) {
+	if w.over() || in == cty.DynamicPseudoType || want == cty.DynamicPseudoType || want.IsPrimitiveType() {
+		return
+	}
+	w.walked++
+	switch {
+	case want.IsMapType() && in.IsMapType():
+		w.replace(in.ElementType(), want.ElementType())
+	case want.IsMapType() && in.IsObjectType(), (want.IsListType() || want.IsSetType()) && in.IsTupleType():
+		children := childTypes([]cty.Type{in})
+		w.unify(children)
+		for _, c := range children {
+			w.replace(c, want.ElementType())
+		}
+	case (want.IsListType() || want.IsSetType()) && (in.IsListType() || in.IsSetType()):
+		w.replace(in.ElementType(), want.ElementType())
+	case want.IsObjectType() && in.IsMapType():
+		for _, at := range want.AttributeTypes() {
+			w.replace(in.ElementType(), at)
+		}
+	case want.IsObjectType() && in.IsObjectType():
+		for name, at := range want.AttributeTypes() {
+			if in.HasAttribute(name) {
+				w.replace(in.AttributeType(name), at)
+			}
+		}
+	case want.IsTupleType() && in.IsTupleType():
+		ins := in.TupleElementTypes()
+		for i, et := range want.TupleElementTypes() {
+			if i < len(ins) {
+				w.replace(ins[i], et)
+			}
+		}
+	}
+}
+
+// eachElement calls f with each element of the known collection, tuple or object v.
+func (w *unifyWalk) eachElement(v cty.Value, f func(cty.Value)) {
+	for it := v.ElementIterator(); it.Next() && !w.over(); {
+		_, e := it.Element()
+		f(e)
+	}
+}
+
+// valuePart charges converting v to a type the walk does not know (a unified type), counting
+// as if every tuple, object or map value in v were converted to a collection: each costs
+// unifying its element types (ADR 0029). It can only over-count.
+func (w *unifyWalk) valuePart(v cty.Value) {
 	stack := []cty.Value{v}
 	for len(stack) > 0 && !w.over() {
 		val, _ := stack[len(stack)-1].Unmark()
@@ -231,19 +380,12 @@ func conversionCost(v cty.Value, want cty.Type, defaults bool, limit int) int {
 		w.walked++
 		ty := val.Type()
 		if !val.IsKnown() || val.IsNull() {
-			continue // converted from its type alone, charged above when that unifies
+			continue
 		}
 		switch {
 		case ty.IsTupleType() || ty.IsObjectType() || ty.IsMapType():
 			w.unify(elementTypes(val))
-			if defaults && ty.IsMapType() {
-				w.add(saturatingMul(pairs(val.LengthInt()), columns))
-			}
-		case ty.IsListType() || ty.IsSetType():
-			if defaults {
-				w.add(saturatingMul(pairs(val.LengthInt()), columns))
-			}
-		default:
+		case !ty.IsListType() && !ty.IsSetType():
 			continue
 		}
 		for it := val.ElementIterator(); it.Next(); {
@@ -251,6 +393,40 @@ func conversionCost(v cty.Value, want cty.Type, defaults bool, limit int) int {
 			stack = append(stack, e)
 		}
 	}
+}
+
+// defaults charges typeexpr unifying the elements of every list, set and map in v while it
+// applies optional-attribute defaults, columns comparisons per pair.
+func (w *unifyWalk) defaults(v cty.Value, columns int) {
+	stack := []cty.Value{v}
+	for len(stack) > 0 && !w.over() {
+		val, _ := stack[len(stack)-1].Unmark()
+		stack = stack[:len(stack)-1]
+		w.walked++
+		ty := val.Type()
+		if !val.IsKnown() || val.IsNull() {
+			continue
+		}
+		switch {
+		case ty.IsCollectionType():
+			w.add(saturatingMul(pairs(val.LengthInt()), columns))
+		case !ty.IsTupleType() && !ty.IsObjectType():
+			continue
+		}
+		for it := val.ElementIterator(); it.Next(); {
+			_, e := it.Element()
+			stack = append(stack, e)
+		}
+	}
+}
+
+// conservativeCost is the work of converting v to a type that is not known yet, as coalesce
+// converts its arguments to their unified type: every tuple and object type in v unified
+// (typeConversions) and every tuple, object or map value (valuePart).
+func conservativeCost(v cty.Value, limit int) int {
+	w := &unifyWalk{limit: limit}
+	w.typeConversions(v.Type())
+	w.valuePart(v)
 	if w.over() {
 		return limit + 1
 	}
@@ -282,24 +458,6 @@ func widestObject(ty cty.Type) int {
 	return widest
 }
 
-// typeHasCollection reports whether ty is or holds a list, set or map type: converting to it
-// can unify.
-func typeHasCollection(ty cty.Type) bool {
-	switch {
-	case ty.IsCollectionType():
-		return true
-	case ty.IsTupleType():
-		return slices.ContainsFunc(ty.TupleElementTypes(), typeHasCollection)
-	case ty.IsObjectType():
-		for _, at := range ty.AttributeTypes() {
-			if typeHasCollection(at) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // typeHasDynamic reports whether ty is or holds the dynamic pseudo-type.
 func typeHasDynamic(ty cty.Type) bool {
 	switch {
@@ -319,11 +477,33 @@ func typeHasDynamic(ty cty.Type) bool {
 	return false
 }
 
+// typeHasCollection reports whether ty is or holds a list, set or map type: converting to it
+// can unify.
+func typeHasCollection(ty cty.Type) bool {
+	switch {
+	case ty.IsCollectionType():
+		return true
+	case ty.IsTupleType():
+		return slices.ContainsFunc(ty.TupleElementTypes(), typeHasCollection)
+	case ty.IsObjectType():
+		for _, at := range ty.AttributeTypes() {
+			if typeHasCollection(at) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // valueConversionCost is the work of converting v to a type unified with another, beyond the
-// unification itself: cty converts each nested value on its own and unifies the elements of each
-// tuple, object or map it converts (conversionCost to a type without the dynamic type).
+// unification itself (valuePart).
 func valueConversionCost(v cty.Value, limit int) int {
-	return conversionCost(v, cty.String, false, limit)
+	w := &unifyWalk{limit: limit}
+	w.valuePart(v)
+	if w.over() {
+		return limit + 1
+	}
+	return w.total()
 }
 
 // unifyTypesCost is the work of unifying types together, as coalesce does with its arguments'

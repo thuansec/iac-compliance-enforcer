@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	"github.com/zclconf/go-cty/cty/function"
 )
 
@@ -199,5 +200,122 @@ func TestCallsThatDoNotConvertAreNotCharged(t *testing.T) {
 		if !v.IsKnown() {
 			t.Errorf("%s: unknown: %v", expr, m.Diagnostics)
 		}
+	}
+}
+
+// The conversion charge follows cty's path for the value and the target together: conversions
+// that do not unify cost nothing, those that do are charged (T-0114g). Each case is also
+// converted by cty, which finishes quickly exactly where nothing is charged.
+func TestConversionCostFollowsCty(t *testing.T) {
+	t.Parallel()
+	strs := tupleOf(40_000, cty.StringVal("a"), cty.StringVal("b"))
+	obj := objectOf(20_000, cty.StringVal("a"))
+	pair := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.NumberIntVal(1)})
+	pairs := cty.ListVal(slices.Repeat([]cty.Value{pair}, 20_000))
+	strList := cty.ListVal(slices.Repeat([]cty.Value{cty.StringVal("a")}, 40_000))
+	entries := map[string]cty.Value{}
+	for i := range 20_000 {
+		entries[fmt.Sprint("k", i)] = cty.ListVal([]cty.Value{cty.NumberIntVal(1)})
+	}
+	lists := cty.MapVal(entries)
+	for name, tc := range map[string]struct {
+		v       cty.Value
+		want    cty.Type
+		charged bool
+	}{
+		"tuple into set(string)":       {strs, cty.Set(cty.String), false},
+		"object into map(string)":      {obj, cty.Map(cty.String), false},
+		"list of tuples into lists":    {pairs, cty.List(cty.List(cty.String)), false},
+		"list into list(string)":       {strList, cty.List(cty.String), false},
+		"anything into any":            {strs, cty.DynamicPseudoType, false},
+		"tuple into list(string)":      {strs, cty.List(cty.String), true},
+		"tuple into list(any)":         {strs, cty.List(cty.DynamicPseudoType), true},
+		"tuple into set(any)":          {strs, cty.Set(cty.DynamicPseudoType), true},
+		"object into map(any)":         {obj, cty.Map(cty.DynamicPseudoType), true},
+		"map of lists, other element":  {lists, cty.Map(cty.List(cty.String)), true},
+		"tuples nested in an object":   {cty.ObjectVal(map[string]cty.Value{"a": strs}), cty.Object(map[string]cty.Type{"a": cty.List(cty.String)}), true},
+		"unknown tuple into list(any)": {cty.UnknownVal(strs.Type()), cty.List(cty.DynamicPseudoType), true},
+		// An unknown value's type is converted with convert.dynamicReplace, which unifies a
+		// tuple's element types whatever the target element type: 10.8 s at 40,000.
+		"unknown tuple into set(string)": {cty.UnknownVal(strs.Type()), cty.Set(cty.String), true},
+		"null object into map(string)":   {cty.NullVal(obj.Type()), cty.Map(cty.String), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cost := conversionCost(tc.v, tc.want, false, maxFunctionWork)
+			if got := cost > maxFunctionWork/4; got != tc.charged {
+				t.Errorf("cost %d, want charged = %v", cost, tc.charged)
+			}
+			if !tc.charged {
+				start := time.Now()
+				if _, err := convert.Convert(tc.v, tc.want); err != nil {
+					t.Fatal(err)
+				}
+				// Linear: well under a second (the unifying cases take 2.5 s and more).
+				if elapsed := time.Since(start); elapsed > time.Second*raceSlowdown {
+					t.Errorf("cty took %v for a conversion charged nothing", elapsed)
+				}
+			}
+		})
+	}
+}
+
+// Conversions that are slow in cty are charged, whatever path they take: elements converted to
+// a type holding any keep their own types, which cty unifies (11 s for a list(list(any))
+// default; T-0114g review), and cty builds a conversion from the types even where no value
+// reaches it (an empty list, a target attribute a map lacks: 4 s each).
+func TestSlowConversionsAreCharged(t *testing.T) {
+	t.Parallel()
+	distinct := func(i int) cty.Value { // an object with ten attributes no other has
+		attrs := map[string]cty.Value{}
+		for j := range 10 {
+			attrs[fmt.Sprintf("a%d_%d", i, j)] = cty.StringVal("x")
+		}
+		return cty.ObjectVal(attrs)
+	}
+	nested, objs := make([]cty.Value, 4_000), make([]cty.Value, 4_000)
+	for i := range nested {
+		nested[i] = cty.TupleVal([]cty.Value{distinct(i)})
+		objs[i] = cty.ObjectVal(map[string]cty.Value{"a": distinct(i)})
+	}
+	big := tupleOf(20_000, cty.StringVal("a"), cty.True)
+	maps := cty.MapVal(map[string]cty.Value{"x": big, "y": big})
+	for name, tc := range map[string]struct {
+		v    cty.Value
+		want cty.Type
+	}{
+		"tuples of objects into list(list(any))":    {cty.TupleVal(nested), cty.List(cty.List(cty.DynamicPseudoType))},
+		"objects into list(object({a = any}))":      {cty.TupleVal(objs), cty.List(cty.Object(map[string]cty.Type{"a": cty.DynamicPseudoType}))},
+		"empty list of tuples into list(list(any))": {cty.ListValEmpty(big.Type()), cty.List(cty.List(cty.DynamicPseudoType))},
+		"map into an object it lacks attributes of": {maps, cty.ObjectWithOptionalAttrs(map[string]cty.Type{"a": cty.List(cty.DynamicPseudoType)}, []string{"a"})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if cost := conversionCost(tc.v, tc.want, false, maxFunctionWork); cost <= maxFunctionWork/4 {
+				t.Errorf("cost %d, want more than %d", cost, maxFunctionWork/4)
+			}
+		})
+	}
+}
+
+// Converted into a type holding any, each element keeps its own type, so the converted elements
+// are unified by their own types, not copies of the target element type (T-0114g review). The
+// walk is called directly: conversionCost's type-level charge would cover the same shapes.
+func TestConvertedElementsKeepTheirTypes(t *testing.T) {
+	t.Parallel()
+	distinct := make([]cty.Value, 2_000)
+	for i := range distinct {
+		attrs := map[string]cty.Value{}
+		for j := range 5 {
+			attrs[fmt.Sprintf("a%d_%d", i, j)] = cty.True
+		}
+		distinct[i] = cty.TupleVal([]cty.Value{cty.ObjectVal(attrs)})
+	}
+	w := &unifyWalk{limit: maxFunctionWork}
+	w.convert(cty.TupleVal(distinct), cty.List(cty.List(cty.DynamicPseudoType)))
+	// The 2,000 converted lists hold objects with different attributes: unified, they sort all
+	// 10,000 attribute types together. Copies of list(any) would cost two sorts of 2,000.
+	if w.cost < pairs(10_000) {
+		t.Errorf("cost %d, want at least %d", w.cost, pairs(10_000))
 	}
 }

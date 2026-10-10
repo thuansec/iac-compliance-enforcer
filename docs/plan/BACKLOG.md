@@ -497,12 +497,13 @@ locations and without executing anything.
     - a value whose type grows faster than its size is bounded: a chain of locals `u_k = var.c ? [local.u_{k-1}, local.u_{k-1}] : [local.u_{k-1}, local.u_{k-1}]` with c unknown yields small unknown values whose type doubles per local, and cty's unification and type comparisons walk the expanded type (22 locals: 14 s, doubling per local; T-0114c review, existing before T-0114c); add a type-size limit next to the value-size limit (counting the expanded type) so such a local is unknown with a limit diagnostic, with a test on the chain
   - attempts: 1
   - result: valueSize counts an unknown or null value as its expanded type (typeSize, bounded by size and nesting) and an empty collection's element type, so every value-size limit and the locals estimate also bound types; unifyWalk weights types by depth (cty's Equals at every level) and conditionals and coalesce pay the walk even for equal types (equal primitive types exempt); the doubling chain is refused in about 0.1 s instead of 3.5 to 14 s, and 3,000-local deep chains no longer take 65 to 95 s (ADR 0031)
-- [ ] T-0114g · Charge conversions only where cty unifies
+- [x] T-0114g · Charge conversions only where cty unifies
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114d
   - accept:
     - the conversion charge (ADR 0029) follows cty's conversion path, value and target type together, so conversions that do not unify cost nothing: a tuple into `set(string)`, an object into `map(string)`, a list of tuples into a list of tuples; today a `map(string)` or `set(string)` variable of about 11,000 entries is unknown although converting it is linear (T-0114d); keep charging every path that unifies (nested values each, `any` targets twice), with parity tests against cty
-  - attempts: 0
+  - attempts: 1
+  - result: conversionCost walks the value and the target together as cty's convert does (unifyWalk.convert), with replace mirroring dynamicReplace for unknown and null parts; conversions that unify nothing cost nothing (tuple into set(string), object into map(string), list of tuples into lists), so such variables of tens of thousands of entries are known again; targets holding any keep the type-level charge, and converted elements keep their own types; tolist/toset/tomap charged into list/set/map(any), coalesce and lookup conservatively; an unknown tuple into set(string) (10.8 s in cty) is now charged (ADR 0032)
 - [ ] T-0114h · Bound contains and index over large compound values
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114d
