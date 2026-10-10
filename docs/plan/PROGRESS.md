@@ -2173,3 +2173,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     on variables that are now converted rather than refused. That bound now applies only to
     refused values.
 - Next: the next ready M1 task.
+
+## 2026-10-10 · T-0114h · done
+- What: contains and index are charged for comparing the value with every element.
+  - cty's Equals walks both sides for marks and unknowns on every comparison, and again at
+    every level it recurses.
+  - comparisonCost charges (elements × the value's size + the list's size) × (valueDepth of the
+    value + 1). The set comparison (setComparisonWork, formerly setComparisonCost) is a floor.
+- Files: internal/terraform/{functions.go,compare_internal_test.go},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - contains and index of a 10,000-element tuple against itself took 28.6 s; now refused at once
+    with function_limit.
+  - 100 copies of a 500-deep value, and a large 500-deep list against a small one, took 20 to
+    46 s; now refused. Mutation-checked without the depth factor.
+  - Searching a list for a small value stays known.
+  - TestComparisonChargeBoundary runs through the bounded wrapper with the remaining work at,
+    above and below the charge.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: nested values multiply the work by their depth (25 s while charged 1.76M).
+    - Major: the tests were flat-only.
+    - Minors: boundary tests, the reference row.
+  - Round 2: APPROVE.
+  - Noted risk: a contains in a for expression over a large collection now costs about twice as
+    much, times the depth plus one: 1,000 iterations over a 100-string allowlist spend about a
+    quarter of a module's work. It fails closed as a coverage gap. Revisit if users report false
+    unknowns.
+- Follow-ups: T-0114j. The bounded wrapper's type pass measures arguments without charging
+  that walk.
+- Next: the next ready M1 task.

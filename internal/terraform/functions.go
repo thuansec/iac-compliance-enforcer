@@ -124,10 +124,10 @@ type callCost func(args []cty.Value, sizes []int) (out, work int)
 
 // callCosts lists the functions whose result or work can grow faster than their arguments.
 var callCosts = map[string]callCost{
-	"contains":   setComparisonCost,
+	"contains":   comparisonCost,
 	"format":     formatCost,
 	"formatlist": formatListCost,
-	"index":      setComparisonCost,
+	"index":      comparisonCost,
 }
 
 // setBuildCosts lists the functions that build sets or compare every pair of elements, from
@@ -515,16 +515,63 @@ func formatListCost(args []cty.Value, sizes []int) (out, work int) {
 	return saturatingMul(rows, formatBound(f.AsString(), largest)), 0
 }
 
-// setComparisonCost charges the pairwise work of comparing values that hold sets, for
+// comparisonCost charges contains and index: they compare the value with each element of the
+// list, and cty walks both for marks and unknowns on every comparison, so one comparison costs
+// the element's size plus the value's. Equals then recurses and walks each subtree again at
+// every level, so that is multiplied by the depth of the recursion plus one, which the value's
+// nesting depth bounds (recursion stops at the shallower side). The work is (elements × the
+// value's size + the list's size) × (the value's depth + 1) (T-0114h: contains(var.t, var.t)
+// over 10,000 elements took 21 s, and 500-deep values 25 s, uncharged). With sets, comparing is
+// pairwise (setComparisonWork).
+func comparisonCost(args []cty.Value, sizes []int) (out, work int) {
+	if len(args) < 2 {
+		return 0, 0
+	}
+	elems := 0
+	if list, _ := args[0].Unmark(); list.IsKnown() && !list.IsNull() && list.CanIterateElements() {
+		elems = list.LengthInt()
+	}
+	flat := min(saturatingMul(elems, sizes[1])+sizes[0], maxFunctionWork+1)
+	work = saturatingMul(flat, valueDepth(args[1])+1)
+	return 0, max(work, setComparisonWork(args, sizes))
+}
+
+// valueDepth is v's nesting depth: 0 for a primitive, unknown or null value, one more than its
+// deepest element otherwise, capped at maxNesting. v must have been measured, which bounds the
+// walk.
+func valueDepth(v cty.Value) int {
+	type item struct {
+		val   cty.Value
+		depth int
+	}
+	deepest := 0
+	stack := []item{{val: v}}
+	for len(stack) > 0 && deepest < maxNesting {
+		it := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		val, _ := it.val.Unmark()
+		deepest = max(deepest, it.depth)
+		if !val.IsKnown() || val.IsNull() || !val.CanIterateElements() {
+			continue
+		}
+		for elems := val.ElementIterator(); elems.Next(); {
+			_, e := elems.Element()
+			stack = append(stack, item{e, it.depth + 1})
+		}
+	}
+	return min(deepest, maxNesting)
+}
+
+// setComparisonWork is the pairwise work of comparing values that hold sets, for
 // functions that compare elements of a collection with a value (contains, index). cty compares
 // two sets by looking up each element of one in the other, and when number hashes collide
 // (cty hashes ten significant digits) each lookup compares every element: the work is bounded
 // by the product of the sizes. Values without sets compare in linear time.
-func setComparisonCost(args []cty.Value, sizes []int) (out, work int) {
+func setComparisonWork(args []cty.Value, sizes []int) int {
 	if len(args) < 2 || !typeHasSet(args[0].Type()) && !typeHasSet(args[1].Type()) {
-		return 0, 0
+		return 0
 	}
-	return 0, saturatingMul(sizes[0], sizes[1])
+	return saturatingMul(sizes[0], sizes[1])
 }
 
 // setBuildCost charges building a set from the elements of every argument (toset, the set
