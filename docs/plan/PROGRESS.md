@@ -1953,3 +1953,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       and diagnostic checks.
   - Round 2: APPROVE. Its minor (a sensitivity test) was added.
 - Next: T-0114c or the next ready M1 task.
+
+## 2026-10-10 · T-0114c · done
+- What: the quadratic unification of large tuple types in conditionals is charged before hcl
+  runs it (ADR 0028).
+  - The profile showed ConditionalExpr.Value → convert.UnifyUnsafe → unifyTupleTypesToList →
+    sortTypes and compareTypes, quadratic in the tuple's length: 0.16, 0.6, 2.5 and 11 s at 5K,
+    10K, 20K and 40K elements.
+  - rewriteForExprs wraps each conditional result in __iace_cond_branch, an identity function
+    that takes an ordinary argument, so hcl keeps its diagnostics, marks and unknowns.
+  - The function charges unifyCost of the result's type: each tuple type over 1,024 elements
+    costs length × length/16, found recursively through tuples, objects and collections and
+    whatever the value. The walk is added, and a walk past the limit refuses.
+  - Over the limit, the result is a dynamic unknown, so hcl does not unify, with
+    expression_too_complex "Conditional too large".
+  - Conditionals count as walking their inputs (ADR 0026, ADR 0027).
+- Files: internal/terraform/{forexpr.go,evalguard.go,parse.go,locals.go,conditional_internal_test.go},
+  docs/adr/0028-unify-large-tuple-results-of-conditionals-in-linear-time.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - 40,000-element tuples, taken or not, nested in an object or a tuple, or unknown of a tuple
+    type, are limited in about 70 ms; without the wrapper they took 12 to 32 s.
+  - TestConditionalsMatchHCL matches plain hcl, values and diagnostics, for guard idioms, try,
+    an unknown condition, null and identical-type results, and a %{ if } template.
+  - TestConditionalBranchCharge and TestUnifyCost pin the charge.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: the first design reported every branch's diagnostics, breaking Terraform's guard
+      idioms and try.
+    - Major: it converted tuples where hcl does not unify.
+    - Redesigned as an identity wrapper that only charges.
+  - Round 2: CHANGES_REQUIRED.
+    - Major: nested and unknown-typed tuples escaped the charge. Fixed with the type-based
+      recursive cost.
+    - My round-3 request claimed I had read the gate result before sending, when it ran at the
+      same time; corrected.
+  - Round 3: APPROVE. Its minor (an unbounded walk for types with no large tuple) is fixed:
+    the walk stops at the limit.
+- Follow-ups: T-0114d (tolist and list(any) conversions), T-0114e (charge only when hcl unifies),
+  T-0114f (type size of values built from unknowns).
+- Next: T-0114d or the next ready M1 task.

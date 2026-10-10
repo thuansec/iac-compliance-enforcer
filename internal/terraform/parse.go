@@ -122,6 +122,9 @@ type ParsedModule struct {
 	forFn      *function.Function
 	lookupFn   *function.Function // lookupFunction
 	forLimited bool
+	// condLimited records that the unification charge of a conditional result did not fit the
+	// function work left (condBranchFunction) during the current evaluation.
+	condLimited bool
 	// forDiags are the diagnostics of the expressions the internal functions evaluated
 	// themselves (for-expression collections, lookup arguments) during the current evaluation,
 	// which evalExpr returns with hcl's.
