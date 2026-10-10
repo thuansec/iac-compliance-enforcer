@@ -1890,3 +1890,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Follow-up: T-0114a (an existing walk of a large input per local for function calls and
   operators: about 140 s for 3,000 `length(var.c.l)`).
 - Next: T-0114a or the next ready M1 task.
+
+## 2026-10-10 · T-0114a · done
+- What: locals that walk a large input are charged before they walk it (ADR 0026).
+  - The profile showed the walks inside cty: Function.Call → returnTypeForValues →
+    ContainsMarked (and unmarking and known checks) on every argument of every call and operator
+    (operators are cty stdlib functions). They run before iace's bounded wrapper can refuse.
+  - walksArguments flags calls, binary and unary operators, and for expressions (rewritten to
+    __iace_for); .tf.json expressions are assumed to walk.
+  - evalLocal charges such a local the inputs' part of its size estimate (ADR 0025, without its
+    own source) × argumentWalkWork (4) before evaluating it. If that is unaffordable, the local is
+    unknown with a function_limit warning and nothing is walked.
+- Measurements:
+  - 3,000 locals over a 120,000-element list take 0.8 s (`!= null`) and 1.7 s (`length`), the
+    same as 300.
+  - Before: 300 locals took 15 to 20 s, and the time grew linearly with the number of locals.
+  - The walks cost about 400 ns per input unit, hence the weight of 4.
+- Files: internal/terraform/{locals.go,locals_walks_internal_test.go},
+  docs/adr/{0026-charge-the-inputs-of-locals-that-call-functions.md,0020 (header)},
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - TestWalkingLocalsAreCharged fails without the charge: 3,000 and 68 locals evaluated, 170 s.
+  - TestWalkingLocalChargeIsExact covers below, at and above the limit; TestWalksArguments; and
+    TestOrdinaryLocalsAreNotLimited.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: ADR 0026 wrongly claimed that resources, outputs and inputs were bounded; they walk
+      for free too (about 20 s for 300). Fixed, and follow-up T-0114b added.
+    - Minors: tests added, and follow-up T-0114c (quadratic tuple unification).
+  - Round 2: APPROVE.
+- Next: T-0114b or the next ready M1 task.
