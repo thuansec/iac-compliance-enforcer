@@ -1921,3 +1921,35 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - Minors: tests added, and follow-up T-0114c (quadratic tuple unification).
   - Round 2: APPROVE.
 - Next: T-0114b or the next ready M1 task.
+
+## 2026-10-10 · T-0114b · done
+- What: input walks are charged wherever iace evaluates an expression (ADR 0027, extending ADR
+  0026).
+  - evalBounded charges used × argumentWalkWork before evaluating an expression that walks its
+    arguments. It covers resource attributes (per count and for_each instance), count, for_each,
+    dynamic for_each, outputs and module inputs. `used` is the sizes of the vars, locals,
+    modules, iterators and instance values it refers to.
+  - Over the limit, the value is unknown with function_limit and nothing is walked. Locals and
+    this path share the chargeWalk helper.
+  - variableName resolves var.<name> and var["<name>"]. A bare `var` or a dynamic index counts
+    the whole var object, and its sensitivity, in locals and resources.
+  - walksArguments no longer counts the closure-taking internal functions (__iace_for, its
+    reference functions, __iace_lookup), which walk nothing in cty and charge themselves. This
+    fixed a double charge that pushed the realistic fan-out from 41% to 57%; it is 41.9% now.
+- Files: internal/terraform/{resources.go,locals.go,resources_walks_internal_test.go,
+  locals_walks_internal_test.go}, docs/adr/{0027-charge-input-walks-wherever-expressions-are-evaluated.md,
+  0026 (header)}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass.
+  - 300 resources, count = 300, 300 outputs and a module called 300 times each evaluate at most
+    about 18 times over a 120,000-element list, with function_limit. Without the charge, 69 to
+    300 evaluate, taking about 31 s.
+  - The var["c"] and bare var forms are bounded in resources and locals.
+  - TestBareVarLimitStaysSensitive keeps unknown results sensitive (mutation-checked).
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Majors: var["c"] and bare var were not counted (about 15 s for 300), in resources and in
+      locals.
+    - Minors: I had edited the merged ADR 0026 (restored; ADR 0027 is new), a shared helper,
+      and diagnostic checks.
+  - Round 2: APPROVE. Its minor (a sensitivity test) was added.
+- Next: T-0114c or the next ready M1 task.

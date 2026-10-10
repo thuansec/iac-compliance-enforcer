@@ -156,6 +156,8 @@ type resourceDecoder struct {
 	refEntries    *int
 	// refMemo memoizes references by source range.
 	refMemo map[sourceKey]refResult
+	// walkMemo memoizes walks by source range.
+	walkMemo map[sourceKey]bool
 }
 
 // instanceSpec is one instance to decode: its key, address suffix and count or each.
@@ -586,6 +588,7 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": d.vars}}
 	locals, mods := map[string]cty.Value{}, map[string]cty.Value{}
 	est := r.End.Byte - r.Start.Byte
+	used := 0 // the part of est the values it uses make up, which calls and operators walk
 	sensitive := false
 	// Each reference costs map lookups only: sizes and sensitivity are cached per value. A
 	// dynamic block iterator shadows any root of its name, var and local included, as hcl's
@@ -596,22 +599,30 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 		if it, ok := d.iters[root]; ok {
 			ectx.Variables[root] = it.val
 			shadowed[root] = true
-			est += it.size
+			est, used = est+it.size, used+it.size
 			sensitive = sensitive || it.sensitive
 			continue
 		}
 		attr, _ := traversalAttr(tr, 1)
 		switch root {
 		case "var":
-			if d.vars.Type().HasAttribute(attr) {
-				v := d.vars.GetAttr(attr)
-				est += d.size("var."+attr, v)
-				sensitive = sensitive || d.isSensitive("var."+attr, v)
+			name, ok := variableName(tr)
+			switch {
+			case !ok: // var, or var[expr]: every variable is in reach (ADR 0027)
+				n := d.size("var", d.vars)
+				est, used = est+n, used+n
+				sensitive = sensitive || d.isSensitive("var", d.vars)
+			case d.vars.Type().HasAttribute(name):
+				v := d.vars.GetAttr(name)
+				n := d.size("var."+name, v)
+				est, used = est+n, used+n
+				sensitive = sensitive || d.isSensitive("var."+name, v)
 			}
 		case "local":
 			if l, ok := d.locals[attr]; ok {
 				locals[attr] = l.Value
-				est += d.size("local."+attr, l.Value)
+				n := d.size("local."+attr, l.Value)
+				est, used = est+n, used+n
 				sensitive = sensitive || d.isSensitive("local."+attr, l.Value)
 			}
 		case "path":
@@ -625,7 +636,8 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 			}
 			if v, ok := d.modules[attr]; ok {
 				mods[attr] = v
-				est += d.size("module."+attr, v)
+				n := d.size("module."+attr, v)
+				est, used = est+n, used+n
 				sensitive = sensitive || d.isSensitive("module."+attr, v)
 			}
 		case "count", "each":
@@ -636,7 +648,7 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 				break
 			}
 			ectx.Variables[root] = v
-			est += d.instSizes[root]
+			est, used = est+d.instSizes[root], used+d.instSizes[root]
 			sensitive = sensitive || d.instSensitive[root]
 		default:
 			ectx.Variables[root] = cty.DynamicVal
@@ -656,6 +668,11 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	}
 	if est > maxLocalValueSize || est > d.remaining {
 		d.tooLarge(name, nameRange, est <= maxLocalValueSize)
+		return unknown, false
+	}
+	// Calls and operators walk the values they use inside cty before anything can refuse them,
+	// once per evaluation, so per instance: the walk is charged first (ADR 0026, T-0114b).
+	if d.walks(expr) && !d.m.chargeWalk(used, r) {
 		return unknown, false
 	}
 	val, diags := d.m.evalExpr(expr, ectx)
@@ -680,6 +697,22 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	}
 	d.remaining -= size
 	return val, true
+}
+
+// walks is walksArguments for expr, memoized by source range: resource instances evaluate the
+// same expressions again.
+func (d *resourceDecoder) walks(expr hcl.Expression) bool {
+	r := expr.Range()
+	key := sourceKey{r.Filename, r.Start.Byte, r.End.Byte}
+	if w, ok := d.walkMemo[key]; ok {
+		return w
+	}
+	w := walksArguments(expr)
+	if d.walkMemo == nil {
+		d.walkMemo = map[sourceKey]bool{}
+	}
+	d.walkMemo[key] = w
+	return w
 }
 
 // tooLarge reports an attribute over the limit for one value at that attribute, and the first
