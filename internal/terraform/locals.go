@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 )
@@ -89,6 +90,10 @@ type localState struct {
 	// safe: the expression passed safeToEvaluate, so its traversals were read.
 	safe   bool
 	cyclic bool
+	// walks: the expression calls functions or applies operators, which cty runs as functions
+	// that walk every argument in full (checking it for marks) before iace can refuse them, so
+	// evaluating it walks the values it uses.
+	walks bool
 	// calls are the functions the expression calls, if it is safe.
 	calls []functionCall
 }
@@ -132,6 +137,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 			continue // evalExpr reports it; hcl must not parse its JSON templates
 		}
 		s.safe, s.calls = true, calls
+		s.walks = walksArguments(s.attr.Expr)
 		s.uses = map[string]int{}
 		for _, tr := range s.attr.Expr.Variables() {
 			switch root := tr.RootName(); root {
@@ -671,10 +677,22 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 	remaining := maxLocalsSize - b.total
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": b.vars}}
 	if s.safe {
-		if est := b.estimate(s, maxLocalValueSize, done); est > maxLocalValueSize {
+		est := b.estimate(s, maxLocalValueSize, done)
+		if est > maxLocalValueSize {
 			return tooLarge(false)
 		} else if est > remaining {
 			return tooLarge(true)
+		}
+		// The values it uses are walked by every call and operator over them; est less its own
+		// source bounds them, so that is charged before they are walked, where nothing else can
+		// stop it (ADR 0026).
+		used := est - (s.attr.Expr.Range().End.Byte - s.attr.Expr.Range().Start.Byte) - s.otherUses
+		if s.walks && used > 0 && !m.chargeFunctionWork(saturatingMul(used, argumentWalkWork)) {
+			r := s.attr.Expr.Range()
+			m.diag(SeverityWarning, DiagFunctionLimit, "Function call too large",
+				"The functions and operators of this local value would walk more of its inputs than the work left for function calls, so its value is unknown.",
+				s.file, r.Start.Line, r.Start.Column)
+			return unknown
 		}
 		locals := make(map[string]cty.Value, len(s.deps))
 		for _, dep := range s.deps {
@@ -952,4 +970,30 @@ func numberDigits(v cty.Value) int {
 		exp = -exp
 	}
 	return (exp + int(f.MinPrec())) * 30103 / 100000 // log10(2)
+}
+
+// argumentWalkWork is the work charged per unit of the values a walking local uses: cty walks
+// each argument of a call or operator several times (checking marks, unmarking, checking it is
+// known), about 400 ns per unit in all, against about 100 ns per unit of function work
+// (T-0114a).
+const argumentWalkWork = 4
+
+// walksArguments reports whether evaluating expr calls functions or applies operators: cty
+// walks every argument of those in full. A for expression counts: its rewrite calls
+// forFunctionName, which walks its collection. A .tf.json expression may hold either in its
+// template strings, so it is assumed to.
+func walksArguments(expr hcl.Expression) bool {
+	se, ok := expr.(hclsyntax.Expression)
+	if !ok {
+		return true
+	}
+	found := false
+	_ = hclsyntax.VisitAll(se, func(n hclsyntax.Node) hcl.Diagnostics {
+		switch n.(type) {
+		case *hclsyntax.FunctionCallExpr, *hclsyntax.BinaryOpExpr, *hclsyntax.UnaryOpExpr:
+			found = true
+		}
+		return nil
+	})
+	return found
 }

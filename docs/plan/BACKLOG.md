@@ -453,11 +453,25 @@ locations and without executing anything.
     - the estimate stays an upper bound: tests with dynamic index steps and splats still charge the whole value
   - attempts: 1
   - result: a use with static steps (local.cfg.env, ["k"], [0], legacy .0) is charged the sub-value it reaches; dynamic indexes, splats and unresolvable steps still charge the whole value; path measurements are cached by text and charged to the module's function work, falling back to the whole value's size when it runs out (ADR 0025)
-- [ ] T-0114a · Bound the per-local walks of a large input
+- [x] T-0114a · Bound the per-local walks of a large input
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114
   - accept:
     - many locals that each use a large input once take time in proportion to their source, not to the input's size per local: today 3,000 locals `aN = length(var.c.l)` over a 120,000-element list take about 140 s, and 1,000 locals `aN = var.c.l != null` about 44 s (T-0114 review), because each evaluation walks the whole input somewhere (cty's argument checks for function calls, and an unidentified walk for operators); find the walks with a profile, charge or remove them, and add a test that bounds both shapes
+  - attempts: 1
+  - result: profiled: cty walks every argument of a call or operator (ContainsMarked and more) before iace can refuse it; a local with calls, operators or for expressions is now charged its inputs' size × 4 to the module's function work before evaluation, and is unknown with function_limit, unwalked, over the limit; 3,000 locals over a 120,000-element list take 0.8 to 1.7 s (minutes before) (ADR 0026); follow-ups T-0114b (resources, outputs, module inputs) and T-0114c (tuple unification in conditionals)
+- [ ] T-0114b · Charge input walks in resource, output and module-input expressions
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114a
+  - accept:
+    - an expression with calls or operators evaluated for a resource attribute (per instance of count and for_each), an output or a module input is charged its inputs' size × argumentWalkWork before it is evaluated, as locals are (ADR 0026), ideally through a helper shared with evalLocal; over the limit it is unknown with function_limit and nothing is walked
+    - today 300 resources, or one resource with count = 300, each `bucket = length(var.c.l)` over a 120,000-element list take about 20 s (T-0114a review); regression tests for many resources and for count bound the work deterministically
+  - attempts: 0
+- [ ] T-0114c · Bound type unification of large tuples in conditionals
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114a
+  - accept:
+    - a conditional whose result types are large tuples (an untyped list in a variable default is a tuple), such as `false ? var.c.t : ["x"]`, is not quadratic in the tuple's length: today one local takes 0.66 s at 10,000 elements, 2.8 s at 20,000 and 11.3 s at 40,000, apparently in hcl's type unification (T-0114a review); find the cost with a profile and bound or charge it, with a test across sizes
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing

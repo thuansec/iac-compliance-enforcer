@@ -4,7 +4,7 @@
 - Date: 2026-10-09
 - Amended by: ADR 0021 (the tree's function work is four modules' worth), ADR 0023 (references
   passed to lookup), ADR 0024 (nested .tf.json template strings), ADR 0025 (locals-estimate
-  path measurements)
+  path measurements), ADR 0026 (inputs of locals that call functions)
 - Tasks: T-0113; T-0113a (the iteration weight and directive strings, listed below as a follow-up)
 
 ## Context
