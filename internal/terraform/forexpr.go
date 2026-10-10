@@ -50,6 +50,7 @@ func rewriteForExprs(node hclsyntax.Node) {
 	directives := map[*hclsyntax.ForExpr]bool{}
 	_ = hclsyntax.VisitAll(node, func(n hclsyntax.Node) hcl.Diagnostics {
 		renameLookup(n) // ADR 0023
+		wrapBranches(n) // ADR 0028
 		if j, ok := n.(*hclsyntax.TemplateJoinExpr); ok {
 			if f, ok := j.Tuple.(*hclsyntax.ForExpr); ok {
 				directives[f] = true // visited before its for expression
@@ -315,6 +316,7 @@ func clampWork(v cty.Value) int {
 // forFunctions are the internal functions rewritten for expressions call.
 func (m *ParsedModule) forFunctions() map[string]function.Function {
 	return map[string]function.Function{
+		condBranchName:  m.condBranchFunction(),
 		forFunctionName: m.forFunction(),
 		forRefsName:     m.forReferencesFunction(false),
 		forElementsName: m.forReferencesFunction(true),
@@ -358,10 +360,13 @@ func (m *ParsedModule) jsonStringTemplate(expr hcl.Expression) (hclsyntax.Expres
 	return tmpl, true
 }
 
-// callsForFunctions reports whether expr, inspected already, holds a rewritten for expression.
+// callsForFunctions reports whether expr, inspected already, holds a rewritten for expression or
+// conditional, which need the internal functions in scope even without a function table.
 func (m *ParsedModule) callsForFunctions(expr hcl.Expression) bool {
 	calls, _ := m.inspectExpr(expr)
-	return slices.ContainsFunc(calls, func(c functionCall) bool { return c.name == forFunctionName })
+	return slices.ContainsFunc(calls, func(c functionCall) bool {
+		return c.name == forFunctionName || c.name == condBranchName
+	})
 }
 
 // evalJSON evaluates a .tf.json value as hcl's JSON decoder does, member by member, but parses
@@ -428,4 +433,105 @@ func (m *ParsedModule) evalJSON(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		return cty.DynamicVal, diags
 	}
 	return cty.ObjectVal(attrs), diags
+}
+
+// condBranchName is the internal function a conditional's results are wrapped in (ADR 0028):
+// when the two results' types differ, cty unifies them, and unifying a tuple type sorts its
+// element types with a comparison that is quadratic in the tuple's length (20,000 elements:
+// 2.5 s). The wrapper charges that cost before hcl unifies. It takes the result as an ordinary
+// argument, so hcl evaluates the result itself and keeps its own rules: only the taken result's
+// diagnostics are reported, and none when the condition is unknown.
+const condBranchName = "__iace_cond_branch"
+
+// largeTuple is the length from which a conditional result that is a tuple is charged its
+// unification: below it, unifying takes well under a millisecond.
+const largeTuple = 1024
+
+// unifyWorkDivisor converts length² of a tuple into function work: unifying costs about 6 ns per
+// length² unit, against about 100 ns per unit of function work (T-0114c).
+const unifyWorkDivisor = 16
+
+// wrapBranches wraps the results of a conditional in condBranchName, once.
+func wrapBranches(n hclsyntax.Node) {
+	c, ok := n.(*hclsyntax.ConditionalExpr)
+	if !ok {
+		return
+	}
+	wrap := func(e hclsyntax.Expression) hclsyntax.Expression {
+		if call, ok := e.(*hclsyntax.FunctionCallExpr); ok && call.Name == condBranchName {
+			return e
+		}
+		r := e.Range()
+		return &hclsyntax.FunctionCallExpr{
+			Name: condBranchName, Args: []hclsyntax.Expression{e},
+			NameRange: r, OpenParenRange: r, CloseParenRange: r,
+		}
+	}
+	c.TrueResult, c.FalseResult = wrap(c.TrueResult), wrap(c.FalseResult)
+}
+
+// condBranchFunction is condBranchName for m: the result, unchanged, after charging the
+// unification of its type (unifyCost).
+// Over the limit the result is unknown, keeping its marks, with m.condLimited set. The charge is
+// made whether or not hcl then unifies (it does not when the other result is null, dynamic or of
+// the same type), which can only over-charge.
+func (m *ParsedModule) condBranchFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{
+			Name: "result", Type: cty.DynamicPseudoType,
+			AllowUnknown: true, AllowNull: true, AllowMarked: true, AllowDynamicType: true,
+		}},
+		// Dynamic: a refused result must be an unknown without the tuple's type, or hcl would
+		// still unify that type.
+		Type: function.StaticReturnType(cty.DynamicPseudoType),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			v := args[0]
+			_, marks := v.Unmark()
+			// The type decides the cost, whatever the value: an unknown or null value of a large
+			// tuple type unifies the same way.
+			cost := unifyCost(v.Type(), maxFunctionWork-m.fnWork+1)
+			if cost == 0 || m.chargeFunctionWork(cost) {
+				return v, nil
+			}
+			m.condLimited = true
+			return cty.DynamicVal.WithMarks(marks), nil
+		},
+	})
+}
+
+// unifyCost is the work of unifying ty with another type, as cty does, recursively through tuple
+// element types, object attribute types and collection element types: length × length /
+// unifyWorkDivisor for every tuple type longer than largeTuple, plus the number of types walked
+// when there is one; other types unify in linear time, and cost 0. It stops counting past limit,
+// and a type that takes more than limit steps to walk costs more than limit.
+func unifyCost(ty cty.Type, limit int) int {
+	cost, walked := 0, 0
+	stack := []cty.Type{ty}
+	for len(stack) > 0 && cost <= limit {
+		if walked > limit {
+			return limit + 1 // a type larger than the work left (reused types count each time)
+		}
+		t := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		walked++
+		switch {
+		case t.IsTupleType():
+			elems := t.TupleElementTypes()
+			if n := len(elems); n > largeTuple {
+				// Divided before multiplying: saturatingMul caps at just past maxFunctionWork.
+				cost = min(cost+saturatingMul(n, n/unifyWorkDivisor), maxFunctionWork+1)
+			}
+			stack = append(stack, elems...)
+		case t.IsObjectType():
+			for _, at := range t.AttributeTypes() {
+				stack = append(stack, at)
+			}
+		case t.IsCollectionType():
+			stack = append(stack, t.ElementType())
+		}
+	}
+	if cost > 0 { // the walk itself counts once there is a quadratic part to unify
+		cost = min(cost+walked, maxFunctionWork+1)
+	}
+	return cost
 }

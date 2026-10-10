@@ -468,11 +468,30 @@ locations and without executing anything.
     - today 300 resources, or one resource with count = 300, each `bucket = length(var.c.l)` over a 120,000-element list take about 20 s (T-0114a review); regression tests for many resources and for count bound the work deterministically
   - attempts: 1
   - result: evalBounded (resource attributes per instance, count, for_each, dynamic for_each, outputs, module inputs) charges its inputs' size × 4 before an expression that walks them, through the chargeWalk helper shared with locals; var["c"] resolves like var.c and a bare var or var[expr] counts every variable (sensitive if any is); the closure-taking internal functions no longer count as walking (ADR 0027)
-- [ ] T-0114c · Bound type unification of large tuples in conditionals
+- [x] T-0114c · Bound type unification of large tuples in conditionals
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114a
   - accept:
     - a conditional whose result types are large tuples (an untyped list in a variable default is a tuple), such as `false ? var.c.t : ["x"]`, is not quadratic in the tuple's length: today one local takes 0.66 s at 10,000 elements, 2.8 s at 20,000 and 11.3 s at 40,000, apparently in hcl's type unification (T-0114a review); find the cost with a profile and bound or charge it, with a test across sizes
+  - attempts: 1
+  - result: profiled (cty's convert.sortTypes, quadratic); every conditional result is wrapped in __iace_cond_branch, an identity function that charges the unification of its type (each tuple type over 1,024 elements: length × length/16, found recursively, plus the walk) and over the limit returns a dynamic unknown, so hcl does not unify; values, types and diagnostics stay hcl's; 40,000 elements stop in about 70 ms instead of 11 s (ADR 0028); follow-ups T-0114d, T-0114e, T-0114f
+- [ ] T-0114d · Bound tuple-to-list conversions in functions and type constraints
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114c
+  - accept:
+    - converting a large tuple to list(any) or set(any) is not quadratic: today `tolist(var.t)` over 20,000 elements (the last one a bool) takes 9.8 s per local, and a `variable { type = list(any) }` with such a default 4.7 s (T-0114c review); cover function parameters (tolist, toset and others that convert) and variable type constraints (defaults, tfvars, module inputs), charging or bounding the unification as ADR 0028 does for conditionals, with tests across sizes
+  - attempts: 0
+- [ ] T-0114e · Charge conditional unification only when hcl unifies
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0114c
+  - accept:
+    - a conditional result is charged its unification (ADR 0028) only when hcl unifies the two result types: not when the other result is null, a dynamic value or of the same type; today `var.enabled ? local.cidrs : null` over 3,000 elements costs about 560k units on every evaluation, so about 15 resource instances exhaust a module's function work (T-0114c review); for example decide with both results in hand (a whole-conditional rewrite), keeping hcl's diagnostics, marks and unknowns, with parity tests against plain hcl
+  - attempts: 0
+- [ ] T-0114f · Bound the type size of values built from unknowns
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114c
+  - accept:
+    - a value whose type grows faster than its size is bounded: a chain of locals `u_k = var.c ? [local.u_{k-1}, local.u_{k-1}] : [local.u_{k-1}, local.u_{k-1}]` with c unknown yields small unknown values whose type doubles per local, and cty's unification and type comparisons walk the expanded type (22 locals: 14 s, doubling per local; T-0114c review, existing before T-0114c); add a type-size limit next to the value-size limit (counting the expanded type) so such a local is unknown with a limit diagnostic, with a test on the chain
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing

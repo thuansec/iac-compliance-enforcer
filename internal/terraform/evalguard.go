@@ -33,7 +33,7 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
-	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags = false, nil, false, nil
+	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags, m.condLimited = false, nil, false, nil, false
 	var val cty.Value
 	var diags hcl.Diagnostics
 	switch {
@@ -50,6 +50,11 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	}
 	diags, m.forDiags = append(diags, m.forDiags...), nil
 	r := expr.Range()
+	if m.condLimited {
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Conditional too large",
+			"A result of a conditional holds a tuple so long that unifying its type with the other result's would pass the work limit for function calls, so that result was not unified and may be unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+	}
 	if m.forLimited {
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "For expression too large",
 			"A for expression would iterate past the work limit, so its value is unknown.",
