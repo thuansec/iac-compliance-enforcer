@@ -767,7 +767,8 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 }
 
 // valueSize measures v: one unit per value plus one per string byte, map key or attribute name,
-// and per decimal digit of a number's magnitude.
+// and per decimal digit of a number's magnitude; an unknown or null value counts its expanded
+// type (typeSize), and an empty collection its element type.
 // It reports false as soon as the size passes limit or the nesting passes depth, and walks with
 // an explicit stack that never holds more than limit values.
 func valueSize(v cty.Value, limit, depth int) (int, bool) {
@@ -788,6 +789,12 @@ func valueSize(v cty.Value, limit, depth int) (int, bool) {
 		ty := val.Type()
 		switch {
 		case !val.IsKnown() || val.IsNull():
+			// As large as its type: cty walks the type, which can be far larger than any
+			// value built from unknowns (T-0114f).
+			// size is at most limit here, so a type that does not fit takes size past it.
+			size += typeSize(ty, limit-size+1, depth-it.depth) - 1
+		case ty.IsCollectionType() && val.LengthInt() == 0:
+			size += typeSize(ty.ElementType(), limit-size, depth-it.depth-1)
 		case ty == cty.String:
 			size += len(val.AsString())
 		case ty == cty.Number:

@@ -55,10 +55,17 @@ func pairs(k int) int {
 
 // unify charges unifying types, recursively as cty does.
 func (w *unifyWalk) unify(types []cty.Type) {
+	w.unifyAt(types, 1)
+}
+
+// unifyAt charges unifying types at nesting depth: cty compares each unified type with the
+// types it came from at every level (Type.Equals), so a type is walked once per level above it
+// (T-0114f: unifying two equal types doubled 18 times took 0.7 s).
+func (w *unifyWalk) unifyAt(types []cty.Type, depth int) {
 	if len(types) == 0 || w.over() {
 		return
 	}
-	w.walked += len(types)
+	w.walked += saturatingMul(len(types), depth)
 	w.add(pairs(len(types)))
 	var tuples, objects, lists, sets, maps, dynamic int
 	for _, ty := range types {
@@ -92,16 +99,16 @@ func (w *unifyWalk) unify(types []cty.Type) {
 		return // cty unifies to the dynamic type
 	case tuples == len(types) && sameLength(types):
 		for i := range types[0].TupleElementTypes() {
-			w.unify(column(types, func(ty cty.Type) cty.Type { return ty.TupleElementTypes()[i] }))
+			w.unifyAt(column(types, func(ty cty.Type) cty.Type { return ty.TupleElementTypes()[i] }), depth+1)
 		}
 	case objects == len(types) && sameAttributes(types):
 		for name := range types[0].AttributeTypes() {
-			w.unify(column(types, func(ty cty.Type) cty.Type { return ty.AttributeType(name) }))
+			w.unifyAt(column(types, func(ty cty.Type) cty.Type { return ty.AttributeType(name) }), depth+1)
 		}
 	default:
 		// Tuples of different lengths, objects with different attributes, collections, or a
 		// mix of them: cty unifies all their element types together (or fails).
-		w.unify(childTypes(types))
+		w.unifyAt(childTypes(types), depth+1)
 	}
 }
 
@@ -319,12 +326,52 @@ func valueConversionCost(v cty.Value, limit int) int {
 	return conversionCost(v, cty.String, false, limit)
 }
 
-// unifyTypesCost is the work of unifying types together, as coalesce does with its arguments'.
+// unifyTypesCost is the work of unifying types together, as coalesce does with its arguments'
+// and a conditional with its results': the sorts, and the walk even when nothing is sorted, since
+// unifying equal types still walks them (T-0114f).
 func unifyTypesCost(types []cty.Type, limit int) int {
 	w := &unifyWalk{limit: limit}
 	w.unify(types)
 	if w.over() {
 		return limit + 1
 	}
-	return w.total()
+	return min(w.cost+w.walked, maxFunctionWork+1)
+}
+
+// typeSize counts the types in ty expanded, as cty walks it when it compares or unifies types: a
+// type used in several places counts each time, so a type built by repeating another can be far
+// larger than any value of it (T-0114f). It stops counting past limit, and a type nested deeper
+// than depth counts limit + 1.
+func typeSize(ty cty.Type, limit, depth int) int {
+	type item struct {
+		ty    cty.Type
+		depth int
+	}
+	n := 0
+	stack := []item{{ty: ty}}
+	for len(stack) > 0 {
+		it := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n++
+		if n > limit || it.depth > depth {
+			return limit + 1
+		}
+		t, d := it.ty, it.depth+1
+		switch {
+		case t.IsTupleType():
+			for _, et := range t.TupleElementTypes() {
+				stack = append(stack, item{et, d})
+			}
+		case t.IsObjectType():
+			for _, at := range t.AttributeTypes() {
+				stack = append(stack, item{at, d})
+			}
+		case t.IsCollectionType():
+			stack = append(stack, item{t.ElementType(), d})
+		}
+		if n+len(stack) > limit {
+			return limit + 1 // every type pushed counts at least one
+		}
+	}
+	return n
 }

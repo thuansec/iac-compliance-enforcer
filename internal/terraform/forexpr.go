@@ -558,6 +558,8 @@ func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function
 			case !recorded, t.RawEquals(dynamicNull), f.RawEquals(dynamicNull),
 				t.Type() == cty.DynamicPseudoType, f.Type() == cty.DynamicPseudoType:
 				return f, nil // hcl does not unify
+			case t.Type().IsPrimitiveType() && t.Type().Equals(f.Type()):
+				return f, nil // equal primitive types: nothing to unify or convert
 			}
 			limit := maxFunctionWork - m.fnWork
 			cost := unifyTypesCost([]cty.Type{t.Type(), f.Type()}, limit)
@@ -566,7 +568,7 @@ func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function
 				// converted to another map of lists unifies all its entries (T-0114e review).
 				cost = min(cost+valueConversionCost(t, limit)+valueConversionCost(f, limit), maxFunctionWork+1)
 			}
-			if cost == 0 || m.chargeFunctionWork(cost) {
+			if m.chargeFunctionWork(cost) {
 				return f, nil
 			}
 			m.spendFunctionWork(cost) // a refusal pays for the walk, so it cannot repeat for free
