@@ -3,6 +3,7 @@ package terraform
 import (
 	"encoding/json"
 	"math/big"
+	"reflect"
 	"slices"
 
 	"github.com/hashicorp/hcl/v2"
@@ -315,13 +316,16 @@ func clampWork(v cty.Value) int {
 
 // forFunctions are the internal functions rewritten for expressions call.
 func (m *ParsedModule) forFunctions() map[string]function.Function {
-	return map[string]function.Function{
-		condBranchName:  m.condBranchFunction(),
+	fns := map[string]function.Function{
 		forFunctionName: m.forFunction(),
 		forRefsName:     m.forReferencesFunction(false),
 		forElementsName: m.forReferencesFunction(true),
 		forResultName:   m.forResultFunction(),
 	}
+	for name, f := range m.condFunctions() {
+		fns[name] = f
+	}
+	return fns
 }
 
 // withForFunction returns ctx with the internal functions in scope (for expressions and lookup),
@@ -365,7 +369,7 @@ func (m *ParsedModule) jsonStringTemplate(expr hcl.Expression) (hclsyntax.Expres
 func (m *ParsedModule) callsForFunctions(expr hcl.Expression) bool {
 	calls, _ := m.inspectExpr(expr)
 	return slices.ContainsFunc(calls, func(c functionCall) bool {
-		return c.name == forFunctionName || c.name == condBranchName
+		return c.name == forFunctionName || c.name == condFalseName
 	})
 }
 
@@ -435,110 +439,140 @@ func (m *ParsedModule) evalJSON(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	return cty.ObjectVal(attrs), diags
 }
 
-// condBranchName is the internal function a conditional's results are wrapped in (ADR 0028):
-// when the two results' types differ, cty unifies them, and unifying a tuple type sorts its
-// element types with a comparison that is quadratic in the tuple's length (20,000 elements:
-// 2.5 s). The wrapper charges that cost before hcl unifies. It takes the result as an ordinary
-// argument, so hcl evaluates the result itself and keeps its own rules: only the taken result's
-// diagnostics are reported, and none when the condition is unknown.
-const condBranchName = "__iace_cond_branch"
+// Conditionals (ADR 0030): hcl evaluates both results of a conditional, then, unless one is a
+// dynamic null or of the dynamic type, unifies their types and converts the taken result to the
+// unified type. Unifying sorts element types comparing every pair (ADR 0029), so a conditional
+// over a large tuple took seconds. Each conditional's results are wrapped so the work is
+// charged with both results in hand, just before hcl unifies:
+//
+//	c ? a : b  →  c ? __iace_cond_true(__iace_cond_begin(S), a) : __iace_cond_false(S, b)
+//
+// hcl evaluates the true result first, and a call's arguments in order: begin resets the
+// conditional's state S, the true wrapper records a's value in it, and the false wrapper
+// charges unifying it with b's, as hcl is about to. The wrappers take the results as ordinary
+// arguments, so hcl evaluates them with its own rules for diagnostics, marks and unknowns, and
+// return them unchanged. S is a capsule only the rewrite can create: a configuration that calls
+// the functions itself cannot reach or forge another conditional's state.
+const (
+	condBeginName = "__iace_cond_begin"
+	condTrueName  = "__iace_cond_true"
+	condFalseName = "__iace_cond_false"
+)
 
-// largeTuple is the length from which a tuple, or the attribute count from which an object, is
-// charged its unification or conversion: below it, unifying takes well under a millisecond.
-const largeTuple = 1024
+// condState is one conditional's record of its true result during an evaluation.
+type condState struct {
+	trueResult cty.Value
+	recorded   bool
+}
 
-// unifyWorkDivisor converts length² of a tuple into function work: unifying costs about 6 ns per
-// length² unit, against about 100 ns per unit of function work (T-0114c).
-const unifyWorkDivisor = 16
+// condStateType is the capsule type of a conditional's state.
+var condStateType = cty.Capsule("iace conditional", reflect.TypeOf(condState{}))
 
-// wrapBranches wraps the results of a conditional in condBranchName, once.
+// newCondState returns a fresh conditional state as a capsule value.
+func newCondState() cty.Value {
+	return cty.CapsuleVal(condStateType, &condState{})
+}
+
+// wrapBranches wraps the results of a conditional (see condBeginName), once: the rewrite's own
+// wrappers are recognised by their state capsule, which no configuration can write.
 func wrapBranches(n hclsyntax.Node) {
 	c, ok := n.(*hclsyntax.ConditionalExpr)
 	if !ok {
 		return
 	}
-	wrap := func(e hclsyntax.Expression) hclsyntax.Expression {
-		if call, ok := e.(*hclsyntax.FunctionCallExpr); ok && call.Name == condBranchName {
-			return e
-		}
-		r := e.Range()
-		return &hclsyntax.FunctionCallExpr{
-			Name: condBranchName, Args: []hclsyntax.Expression{e},
-			NameRange: r, OpenParenRange: r, CloseParenRange: r,
+	if call, ok := c.FalseResult.(*hclsyntax.FunctionCallExpr); ok && call.Name == condFalseName && len(call.Args) == 2 {
+		if lit, ok := call.Args[0].(*hclsyntax.LiteralValueExpr); ok && lit.Val.Type().Equals(condStateType) {
+			return
 		}
 	}
-	c.TrueResult, c.FalseResult = wrap(c.TrueResult), wrap(c.FalseResult)
+	state := newCondState()
+	call := func(name string, args ...hclsyntax.Expression) hclsyntax.Expression {
+		r := args[len(args)-1].Range()
+		return &hclsyntax.FunctionCallExpr{
+			Name: name, Args: args, NameRange: r, OpenParenRange: r, CloseParenRange: r,
+		}
+	}
+	literal := func(r hcl.Range) hclsyntax.Expression {
+		return &hclsyntax.LiteralValueExpr{Val: state, SrcRange: r}
+	}
+	tr, fr := c.TrueResult.Range(), c.FalseResult.Range()
+	c.TrueResult = call(condTrueName, call(condBeginName, literal(tr)), c.TrueResult)
+	c.FalseResult = call(condFalseName, literal(fr), c.FalseResult)
 }
 
-// condBranchFunction is condBranchName for m: the result, unchanged, after charging the
-// unification of its type (unifyCost).
-// Over the limit the result is unknown, keeping its marks, with m.condLimited set. The charge is
-// made whether or not hcl then unifies (it does not when the other result is null, dynamic or of
-// the same type), which can only over-charge.
-func (m *ParsedModule) condBranchFunction() function.Function {
+// condStateOf returns the state a capsule argument holds.
+func condStateOf(v cty.Value) *condState {
+	s, _ := v.EncapsulatedValue().(*condState)
+	return s
+}
+
+// condResultParam is the parameter a wrapper takes a result in: any value, as hcl gives it.
+var condResultParam = function.Parameter{
+	Name: "result", Type: cty.DynamicPseudoType,
+	AllowUnknown: true, AllowNull: true, AllowMarked: true, AllowDynamicType: true,
+}
+
+// condFunctions are the conditional wrappers for m.
+func (m *ParsedModule) condFunctions() map[string]function.Function {
+	stateParam := function.Parameter{Name: "state", Type: condStateType}
+	return map[string]function.Function{
+		condBeginName: function.New(&function.Spec{
+			Params: []function.Parameter{stateParam},
+			Type:   function.StaticReturnType(condStateType),
+			Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+				*condStateOf(args[0]) = condState{}
+				return args[0], nil
+			},
+		}),
+		condTrueName: function.New(&function.Spec{
+			Params: []function.Parameter{stateParam, condResultParam},
+			Type:   function.StaticReturnType(cty.DynamicPseudoType),
+			Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+				*condStateOf(args[0]) = condState{trueResult: args[1], recorded: true}
+				return args[1], nil
+			},
+		}),
+		condFalseName: m.condFalseFunction(stateParam),
+	}
+}
+
+// condFalseFunction is condFalseName for m: the false result, unchanged, after charging the
+// unification hcl is about to do with the recorded true result, if it will: not when either
+// result is a dynamic null or of the dynamic type. The charge is unifying the two types
+// (unifyTypesCost) and, when they differ, converting both values to the unified type (only the
+// taken one is converted, so this can over-count). Over the limit the false result is a dynamic
+// unknown with its marks, so hcl does not unify, and m.condLimited is set, which makes
+// evalExpr return the whole value unknown.
+func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function.Function {
+	dynamicNull := cty.NullVal(cty.DynamicPseudoType)
 	return function.New(&function.Spec{
-		Params: []function.Parameter{{
-			Name: "result", Type: cty.DynamicPseudoType,
-			AllowUnknown: true, AllowNull: true, AllowMarked: true, AllowDynamicType: true,
-		}},
-		// Dynamic: a refused result must be an unknown without the tuple's type, or hcl would
-		// still unify that type.
+		Params: []function.Parameter{stateParam, condResultParam},
+		// Dynamic: a refused result must be an unknown without its type, or hcl would still
+		// unify that type.
 		Type: function.StaticReturnType(cty.DynamicPseudoType),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			v := args[0]
-			_, marks := v.Unmark()
-			// The type decides the cost, whatever the value: an unknown or null value of a large
-			// tuple type unifies the same way.
-			cost := unifyCost(v.Type(), maxFunctionWork-m.fnWork+1)
+			state, f := condStateOf(args[0]), args[1]
+			t, recorded := state.trueResult, state.recorded
+			*state = condState{}
+			switch {
+			case !recorded, t.RawEquals(dynamicNull), f.RawEquals(dynamicNull),
+				t.Type() == cty.DynamicPseudoType, f.Type() == cty.DynamicPseudoType:
+				return f, nil // hcl does not unify
+			}
+			limit := maxFunctionWork - m.fnWork
+			cost := unifyTypesCost([]cty.Type{t.Type(), f.Type()}, limit)
+			if !t.Type().Equals(f.Type()) {
+				// Converting a value can cost more than unifying the types: a map of lists
+				// converted to another map of lists unifies all its entries (T-0114e review).
+				cost = min(cost+valueConversionCost(t, limit)+valueConversionCost(f, limit), maxFunctionWork+1)
+			}
 			if cost == 0 || m.chargeFunctionWork(cost) {
-				return v, nil
+				return f, nil
 			}
 			m.spendFunctionWork(cost) // a refusal pays for the walk, so it cannot repeat for free
 			m.condLimited = true
+			_, marks := f.Unmark()
 			return cty.DynamicVal.WithMarks(marks), nil
 		},
 	})
-}
-
-// unifyCost is the work of unifying ty with another type, or of converting it to a collection
-// type, as cty does, recursively through tuple element types, object attribute types and
-// collection element types: length × length / unifyWorkDivisor for every tuple type longer than
-// largeTuple and every object type with more attributes, plus the number of types walked when
-// there is one; other types unify in linear time, and cost 0. It stops counting past limit,
-// and a type that takes more than limit steps to walk costs more than limit.
-func unifyCost(ty cty.Type, limit int) int {
-	cost, walked := 0, 0
-	stack := []cty.Type{ty}
-	for len(stack) > 0 && cost <= limit {
-		if walked > limit {
-			return limit + 1 // a type larger than the work left (reused types count each time)
-		}
-		t := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		walked++
-		switch {
-		case t.IsTupleType():
-			elems := t.TupleElementTypes()
-			if n := len(elems); n > largeTuple {
-				// Divided before multiplying: saturatingMul caps at just past maxFunctionWork.
-				cost = min(cost+saturatingMul(n, n/unifyWorkDivisor), maxFunctionWork+1)
-			}
-			stack = append(stack, elems...)
-		case t.IsObjectType():
-			attrs := t.AttributeTypes()
-			if n := len(attrs); n > largeTuple {
-				// Unified as a map, an object's attribute types are sorted like a tuple's.
-				cost = min(cost+saturatingMul(n, n/unifyWorkDivisor), maxFunctionWork+1)
-			}
-			for _, at := range attrs {
-				stack = append(stack, at)
-			}
-		case t.IsCollectionType():
-			stack = append(stack, t.ElementType())
-		}
-	}
-	if cost > 0 { // the walk itself counts once there is a quadratic part to unify
-		cost = min(cost+walked, maxFunctionWork+1)
-	}
-	return cost
 }

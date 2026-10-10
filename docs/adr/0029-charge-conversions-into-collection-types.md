@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114d
 - Extends: ADR 0028
+- Extended by: ADR 0030 (conditionals charged with unifyWalk)
 
 ## Context
 ADR 0028 charges the unification of large tuples in conditionals. cty runs the same quadratic

@@ -2048,3 +2048,46 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - T-0114e gains the nested conditional case: `true ? var.n : [["x"]]` still takes about 9 s,
     and the review recommends T-0114e next.
 - Next: T-0114e.
+
+## 2026-10-10 · T-0114e · done
+- What: conditionals are charged with both results in hand, only for what hcl actually unifies
+  and converts (ADR 0030).
+  - hcl evaluates the true result, then the false one. Unless a result is a dynamic null or of
+    the dynamic type, it unifies the two types and converts the taken result.
+  - The rewrite turns `c ? a : b` into
+    `c ? __iace_cond_true(__iace_cond_begin(S), a) : __iace_cond_false(S, b)`. S is a cty capsule
+    holding the conditional's state. No configuration can write one, so hand-written calls fail
+    on their argument types and cannot forge state, and the rewrite recognises its own wrappers.
+  - begin resets S before `a` is evaluated, so a stale record from an earlier evaluation is
+    never read. The true wrapper records `a`. The false wrapper reads and clears the record.
+  - The false wrapper charges nothing on hcl's skip conditions. Otherwise it charges unifyWalk
+    over the two types (equal types cost nothing), plus both values' conversion when the types
+    differ.
+  - Over the limit, the false result is a dynamic unknown, so hcl does not unify, and evalExpr
+    makes the whole expression unknown with its marks ("Conditional too large").
+  - unifyCost and the per-result wrapper (ADR 0028) are removed.
+- Files: internal/terraform/{forexpr.go,conversions.go,evalguard.go,parse.go,functions.go,
+  conditional_internal_test.go,convert_internal_test.go},
+  docs/adr/{0030-charge-conditionals-with-both-results.md,0028 (header),0029 (header)},
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - `cond ? x : null`, `cond ? x : x` and dynamic results over 3,000 elements now pay only the
+    input walks. Before, they also paid about 560k units of unification.
+  - `true ? var.n : [["x"]]` over 36 nested tuples took 8.5 to 10 s and is now refused in
+    milliseconds. So is a map(list(number)) of 20,000 entries, which took 2.7 s.
+  - TestConditionalsMatchHCL adds nested conditionals, a failing true result with the false one
+    taken, and conditionals in for expressions.
+  - The record reset, the conversion charge, the charge threshold and the kept sensitivity are
+    each mutation-checked.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the conversion was charged only when unifying the types cost something, but
+      converting a map of lists between element types unifies all its entries (2.7 s). It is now
+      charged whenever the types differ.
+    - Minors: a tighter threshold, the forged-call errors asserted, and a refusal now makes the
+      whole expression unknown (fail closed).
+  - Round 2: APPROVE. Its minor (a sensitivity test for refused conditionals) was added.
+- Follow-ups: T-0114i. The wrappers' arguments are walked for marks and charged as input walks,
+  about 144k units per 3,000-element result, which plain hcl does not pay.
+- Next: the next ready M1 task.

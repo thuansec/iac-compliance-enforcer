@@ -482,13 +482,14 @@ locations and without executing anything.
     - converting a large tuple to list(any) or set(any) is not quadratic: today `tolist(var.t)` over 20,000 elements (the last one a bool) takes 9.8 s per local, and a `variable { type = list(any) }` with such a default 4.7 s (T-0114c review); cover function parameters (tolist, toset and others that convert) and variable type constraints (defaults, tfvars, module inputs), charging or bounding the unification as ADR 0028 does for conditionals, with tests across sizes
   - attempts: 1
   - result: profiled (cty sorts the element types of every tuple→list, object→map and map conversion, quadratic); a unification estimate that follows cty's rules (columns for same-shape tuples and objects, all elements together otherwise, mixed types × the largest type's size) charges every conversion before it runs: function arguments into list/set/map parameters, coalesce, lookup's default, tolist/toset/tomap, and variable values from defaults, tfvars, --var and module inputs (with optional() defaults); over the limit a call is unknown (function_limit) and a variable unknown of its type (value_too_large); 40,000 elements stop in milliseconds instead of 10 to 80 s (ADR 0029); follow-ups T-0114g (over-count), T-0114h (contains/index)
-- [ ] T-0114e · Charge conditional unification only when hcl unifies
+- [x] T-0114e · Charge conditional unification only when hcl unifies
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114c
   - accept:
     - a conditional result is charged its unification (ADR 0028) only when hcl unifies the two result types: not when the other result is null, a dynamic value or of the same type; today `var.enabled ? local.cidrs : null` over 3,000 elements costs about 560k units on every evaluation, so about 15 resource instances exhaust a module's function work (T-0114c review); for example decide with both results in hand (a whole-conditional rewrite), keeping hcl's diagnostics, marks and unknowns, with parity tests against plain hcl
     - with both results in hand, charge their unification with ADR 0029's unifyWalk: today a result's nested tuples of different lengths, each within 1,024 elements, escape the per-result charge, so `true ? var.n : [["x"]]` over 36 such tuples takes about 8.5 s (T-0114d review)
-  - attempts: 0
+  - attempts: 1
+  - result: each conditional's results are wrapped in a pair (`__iace_cond_true(__iace_cond_begin(S), a)`, `__iace_cond_false(S, b)`) sharing a capsule state only the rewrite can create; the false wrapper sees both results and charges what hcl is about to do: nothing for null or dynamic results, ADR 0029's unifyWalk over the two types, plus both values' conversion when the types differ; over the limit the expression is unknown (marks kept) with "Conditional too large"; `cond ? x : null` over 3,000 elements no longer pays 560k units per evaluation, and nested tuples or maps of lists stop in milliseconds instead of 2.7 to 8.5 s (ADR 0030); follow-up T-0114i (the wrappers' walk charge)
 - [ ] T-0114f · Bound the type size of values built from unknowns
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114c
@@ -506,6 +507,12 @@ locations and without executing anything.
   - depends: T-0114d
   - accept:
     - `contains(list, value)` and `index(list, value)` compare the value with each element, and cty walks the value for marks and known-ness on every comparison, so `contains(var.t, var.t)` over a 10,000-element tuple takes 21 s (T-0114d probe); charge elements × the value's size (setComparisonCost today charges that only when sets are involved), or compare without re-walking, with a test across sizes that finishes within the per-module time budget
+  - attempts: 0
+- [ ] T-0114i · Stop charging conditional results as input walks
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0114e
+  - accept:
+    - a conditional's results are not walked for marks by its wrappers (ADR 0030), or the walk is not charged as an input walk (ADR 0026, ADR 0027), since plain hcl does not walk them: today `var.enabled ? local.cidrs : null` over 3,000 elements still costs about 144k units per evaluation, so about 58 instances spend a module's function work (T-0114e review); for example declare the wrappers' result parameter so cty skips ContainsMarked, or exempt them in walksArguments, keeping marks on results, with a test of the per-evaluation charge
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing

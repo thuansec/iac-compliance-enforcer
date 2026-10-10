@@ -51,8 +51,11 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	diags, m.forDiags = append(diags, m.forDiags...), nil
 	r := expr.Range()
 	if m.condLimited {
+		// A true result taken would be returned unconverted, unlike in hcl: fail closed.
+		_, marks := val.UnmarkDeep()
+		val = cty.DynamicVal.WithMarks(marks)
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Conditional too large",
-			"A result of a conditional holds a tuple so long that unifying its type with the other result's would pass the work limit for function calls, so that result was not unified and may be unknown.",
+			"Unifying the results of a conditional would pass the work limit for function calls, so the expression is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 	}
 	if m.forLimited {
