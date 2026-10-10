@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114c
 - Extends: ADR 0020 (internal functions in rewritten syntax trees), ADR 0027
+- Extended by: ADR 0029 (conversions into collection types; large objects)
 
 ## Context
 When a conditional's two results have different types, hcl unifies them with cty. Unifying a

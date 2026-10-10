@@ -1993,3 +1993,58 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Follow-ups: T-0114d (tolist and list(any) conversions), T-0114e (charge only when hcl unifies),
   T-0114f (type size of values built from unknowns).
 - Next: T-0114d or the next ready M1 task.
+
+## 2026-10-10 · T-0114d · done
+- What: converting values into collection types is charged before cty does it (ADR 0029).
+  - The profile showed cty's convert.sortTypes, which compares every pair of element types. It
+    runs for tuple→list (any element type), tuple→set(any), object→map(any or compound), and maps
+    whose elements cty converts. coalesce, lookup's default and tolist/toset/tomap also unify
+    inside the call. Variable type constraints convert too, and typeexpr unifies again while it
+    applies optional() defaults.
+  - unifyWalk estimates cty's unify by following its rules, with no length threshold:
+    - each sort of k types costs k²/16;
+    - same-length tuples and same-named objects unify column by column, and other shapes unify
+      all their elements together;
+    - mixed types cost each pair times the size of the largest type;
+    - a dynamic type stops the walk.
+  - conversionCost charges this estimate for every known tuple, object or map value. When the
+    target holds `any`, it also charges for every tuple and object type. With optional()
+    defaults it charges k²/16 × (attributes + 1) for each list, set and map value.
+  - The bounded function wrapper charges arguments into list, set or map parameters, and every
+    argument of the unifying functions. __iace_lookup charges its default. Variables charge in
+    finishVariable and setFlag. A refused call is unknown with function_limit; a refused
+    variable is unknown of its declared type with value_too_large, and keeps its marks.
+  - unifyCost (ADR 0028) also charges objects with more than 1,024 attributes. Refusals in the
+    type pass and in the conditional wrapper spend their estimate.
+- Files: internal/terraform/{conversions.go,functions.go,lookup.go,variables.go,forexpr.go,locals.go,
+  convert_internal_test.go,variables_convert_test.go,functions_internal_test.go},
+  docs/adr/{0029-charge-conversions-into-collection-types.md,0028 (header)},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - tolist, toset, tomap, join, sort, compact, chunklist, zipmap, coalesce, lookup and a
+    conditional over 40,000 elements (objects: 20,000) are refused in milliseconds. Before, they
+    took 5 to 82 s.
+  - Nested tuples (36 of lengths 1,024 down to 989) took 11 to 25 s and are refused. So are mixed
+    tuples and a string, which took 13 s in a list(any) default.
+  - Variables, from defaults, tfvars, --var and module inputs, and including optional()
+    defaults, took 4.7 to 25 s and are refused within the evaluation step.
+  - TestConversionsMatchCty matches cty below the limit. Every new test is mutation-checked.
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: nested tuples just under 1,024 that differ in length unify together, uncharged
+      (25 s). The cost was a per-value threshold; it is now unifyWalk.
+    - Major: optional() defaults unify lists (11.4 s). Now charged.
+    - Major: the docs claimed the estimate only over-counted.
+    - Minors fixed: over-count tests labelled, refusals spend, rewraps.
+  - Round 2: CHANGES_REQUIRED.
+    - Major: mixed-type sorts compare compound types element by element (13 s, value known).
+      Now charged × the size of the largest type.
+  - Round 3: APPROVE.
+- Follow-ups:
+  - T-0114g: charge only where cty unifies. map(string) and set(string) of about 11,000 entries
+    are over-counted.
+  - T-0114h: contains and index re-walk the value, 21 s at 10,000.
+  - T-0114e gains the nested conditional case: `true ? var.n : [["x"]]` still takes about 9 s,
+    and the review recommends T-0114e next.
+- Next: T-0114e.

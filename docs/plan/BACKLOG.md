@@ -475,23 +475,37 @@ locations and without executing anything.
     - a conditional whose result types are large tuples (an untyped list in a variable default is a tuple), such as `false ? var.c.t : ["x"]`, is not quadratic in the tuple's length: today one local takes 0.66 s at 10,000 elements, 2.8 s at 20,000 and 11.3 s at 40,000, apparently in hcl's type unification (T-0114a review); find the cost with a profile and bound or charge it, with a test across sizes
   - attempts: 1
   - result: profiled (cty's convert.sortTypes, quadratic); every conditional result is wrapped in __iace_cond_branch, an identity function that charges the unification of its type (each tuple type over 1,024 elements: length × length/16, found recursively, plus the walk) and over the limit returns a dynamic unknown, so hcl does not unify; values, types and diagnostics stay hcl's; 40,000 elements stop in about 70 ms instead of 11 s (ADR 0028); follow-ups T-0114d, T-0114e, T-0114f
-- [ ] T-0114d · Bound tuple-to-list conversions in functions and type constraints
+- [x] T-0114d · Bound tuple-to-list conversions in functions and type constraints
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114c
   - accept:
     - converting a large tuple to list(any) or set(any) is not quadratic: today `tolist(var.t)` over 20,000 elements (the last one a bool) takes 9.8 s per local, and a `variable { type = list(any) }` with such a default 4.7 s (T-0114c review); cover function parameters (tolist, toset and others that convert) and variable type constraints (defaults, tfvars, module inputs), charging or bounding the unification as ADR 0028 does for conditionals, with tests across sizes
-  - attempts: 0
+  - attempts: 1
+  - result: profiled (cty sorts the element types of every tuple→list, object→map and map conversion, quadratic); a unification estimate that follows cty's rules (columns for same-shape tuples and objects, all elements together otherwise, mixed types × the largest type's size) charges every conversion before it runs: function arguments into list/set/map parameters, coalesce, lookup's default, tolist/toset/tomap, and variable values from defaults, tfvars, --var and module inputs (with optional() defaults); over the limit a call is unknown (function_limit) and a variable unknown of its type (value_too_large); 40,000 elements stop in milliseconds instead of 10 to 80 s (ADR 0029); follow-ups T-0114g (over-count), T-0114h (contains/index)
 - [ ] T-0114e · Charge conditional unification only when hcl unifies
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0114c
   - accept:
     - a conditional result is charged its unification (ADR 0028) only when hcl unifies the two result types: not when the other result is null, a dynamic value or of the same type; today `var.enabled ? local.cidrs : null` over 3,000 elements costs about 560k units on every evaluation, so about 15 resource instances exhaust a module's function work (T-0114c review); for example decide with both results in hand (a whole-conditional rewrite), keeping hcl's diagnostics, marks and unknowns, with parity tests against plain hcl
+    - with both results in hand, charge their unification with ADR 0029's unifyWalk: today a result's nested tuples of different lengths, each within 1,024 elements, escape the per-result charge, so `true ? var.n : [["x"]]` over 36 such tuples takes about 8.5 s (T-0114d review)
   - attempts: 0
 - [ ] T-0114f · Bound the type size of values built from unknowns
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0114c
   - accept:
     - a value whose type grows faster than its size is bounded: a chain of locals `u_k = var.c ? [local.u_{k-1}, local.u_{k-1}] : [local.u_{k-1}, local.u_{k-1}]` with c unknown yields small unknown values whose type doubles per local, and cty's unification and type comparisons walk the expanded type (22 locals: 14 s, doubling per local; T-0114c review, existing before T-0114c); add a type-size limit next to the value-size limit (counting the expanded type) so such a local is unknown with a limit diagnostic, with a test on the chain
+  - attempts: 0
+- [ ] T-0114g · Charge conversions only where cty unifies
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0114d
+  - accept:
+    - the conversion charge (ADR 0029) follows cty's conversion path, value and target type together, so conversions that do not unify cost nothing: a tuple into `set(string)`, an object into `map(string)`, a list of tuples into a list of tuples; today a `map(string)` or `set(string)` variable of about 11,000 entries is unknown although converting it is linear (T-0114d); keep charging every path that unifies (nested values each, `any` targets twice), with parity tests against cty
+  - attempts: 0
+- [ ] T-0114h · Bound contains and index over large compound values
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0114d
+  - accept:
+    - `contains(list, value)` and `index(list, value)` compare the value with each element, and cty walks the value for marks and known-ness on every comparison, so `contains(var.t, var.t)` over a 10,000-element tuple takes 21 s (T-0114d probe); charge elements × the value's size (setComparisonCost today charges that only when sets are involved), or compare without re-walking, with a test across sizes that finishes within the per-module time budget
   - attempts: 0
 - [ ] T-0116 · Bound set comparisons, unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing
