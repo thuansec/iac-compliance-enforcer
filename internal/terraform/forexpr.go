@@ -506,10 +506,42 @@ func condStateOf(v cty.Value) *condState {
 	return s
 }
 
-// condResultParam is the parameter a wrapper takes a result in: any value, as hcl gives it.
-var condResultParam = function.Parameter{
-	Name: "result", Type: cty.DynamicPseudoType,
-	AllowUnknown: true, AllowNull: true, AllowMarked: true, AllowDynamicType: true,
+// condResultType is the capsule a wrapper takes a result in. Its custom expression decoder
+// evaluates the result itself, eagerly and exactly as hcl evaluates an ordinary argument, and
+// hcl appends the diagnostics as it would for one; but cty, which walks every argument for marks
+// before a call (ContainsMarked), sees only the capsule. A result passed as itself was walked
+// once per wrapper, and again by every enclosing conditional: 10 to 1,300 ns per unit by shape
+// (T-0114i review), where plain hcl walks nothing (ADR 0033).
+var condResultType = newCondResultType()
+
+// condResultTypeOf holds condResultType for its own decoder, which a package-level initializer
+// cannot refer to.
+var condResultTypeOf struct{ ty cty.Type }
+
+// newCondResultType builds condResultType.
+func newCondResultType() cty.Type {
+	decode := customdecode.CustomExpressionDecoderFunc(func(expr hcl.Expression, ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
+		v, diags := expr.Value(ctx)
+		return cty.CapsuleVal(condResultTypeOf.ty, &v), diags
+	})
+	ty := cty.CapsuleWithOps("iace conditional result", reflect.TypeOf(cty.Value{}), &cty.CapsuleOps{
+		ExtensionData: func(key any) any {
+			if key == customdecode.CustomExpressionDecoder {
+				return decode
+			}
+			return nil
+		},
+	})
+	condResultTypeOf.ty = ty
+	return ty
+}
+
+// condResultParam is the parameter a wrapper takes a result in (condResultType).
+var condResultParam = function.Parameter{Name: "result", Type: condResultType}
+
+// condResult returns the result a wrapper's capsule argument holds.
+func condResult(v cty.Value) cty.Value {
+	return *v.EncapsulatedValue().(*cty.Value)
 }
 
 // condFunctions are the conditional wrappers for m.
@@ -528,8 +560,9 @@ func (m *ParsedModule) condFunctions() map[string]function.Function {
 			Params: []function.Parameter{stateParam, condResultParam},
 			Type:   function.StaticReturnType(cty.DynamicPseudoType),
 			Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-				*condStateOf(args[0]) = condState{trueResult: args[1], recorded: true}
-				return args[1], nil
+				r := condResult(args[1])
+				*condStateOf(args[0]) = condState{trueResult: r, recorded: true}
+				return r, nil
 			},
 		}),
 		condFalseName: m.condFalseFunction(stateParam),
@@ -551,7 +584,7 @@ func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function
 		// unify that type.
 		Type: function.StaticReturnType(cty.DynamicPseudoType),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			state, f := condStateOf(args[0]), args[1]
+			state, f := condStateOf(args[0]), condResult(args[1])
 			t, recorded := state.trueResult, state.recorded
 			*state = condState{}
 			switch {

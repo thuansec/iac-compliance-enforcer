@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114b
 - Extends: ADR 0026
+- Extended by: ADR 0033 (conditional results passed as capsules, not walked)
 
 ## Context
 ADR 0026 charges a local the walk of its inputs before cty walks them, because cty checks every

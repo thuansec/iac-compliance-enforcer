@@ -6,6 +6,7 @@
 - Supersedes: ADR 0028's per-result charge (its rewrite and limit diagnostic stay)
 - Extends: ADR 0029
 - Extended by: ADR 0031 (equal types charged their walk)
+- Extended by: ADR 0033 (results passed as capsules, not walked)
 
 ## Context
 ADR 0028 wraps each result of a conditional and charges the unification of its type alone,
