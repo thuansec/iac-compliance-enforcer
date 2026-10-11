@@ -33,7 +33,7 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
-	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags, m.condLimited = false, nil, false, nil, false
+	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags, m.condLimited, m.cmpLimited = false, nil, false, nil, false, false
 	var val cty.Value
 	var diags hcl.Diagnostics
 	switch {
@@ -56,6 +56,13 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		val = cty.DynamicVal.WithMarks(marks)
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Conditional too large",
 			"Unifying the results of a conditional would pass the work limit for function calls, so the expression is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+	}
+	if m.cmpLimited {
+		_, marks := val.UnmarkDeep()
+		val = cty.DynamicVal.WithMarks(marks)
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Comparison too large",
+			"Comparing values that hold sets would pass the work limit for function calls, so the expression is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 	}
 	if m.forLimited {

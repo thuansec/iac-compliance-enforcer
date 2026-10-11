@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114i
 - Extends: ADR 0026, ADR 0027, ADR 0030
+- Extended by: ADR 0035 (equality operators wrapped the same way)
 
 ## Context
 ADR 0030 wraps each result of a conditional in an internal function. That made every

@@ -52,6 +52,7 @@ func rewriteForExprs(node hclsyntax.Node) {
 	_ = hclsyntax.VisitAll(node, func(n hclsyntax.Node) hcl.Diagnostics {
 		renameLookup(n) // ADR 0023
 		wrapBranches(n) // ADR 0028
+		wrapEquality(n) // T-0116b
 		if j, ok := n.(*hclsyntax.TemplateJoinExpr); ok {
 			if f, ok := j.Tuple.(*hclsyntax.ForExpr); ok {
 				directives[f] = true // visited before its for expression
@@ -369,7 +370,7 @@ func (m *ParsedModule) jsonStringTemplate(expr hcl.Expression) (hclsyntax.Expres
 func (m *ParsedModule) callsForFunctions(expr hcl.Expression) bool {
 	calls, _ := m.inspectExpr(expr)
 	return slices.ContainsFunc(calls, func(c functionCall) bool {
-		return c.name == forFunctionName || c.name == condFalseName
+		return c.name == forFunctionName || c.name == condFalseName || c.name == cmpRightName
 	})
 }
 
@@ -566,6 +567,7 @@ func (m *ParsedModule) condFunctions() map[string]function.Function {
 			},
 		}),
 		condFalseName: m.condFalseFunction(stateParam),
+		cmpRightName:  m.cmpRightFunction(stateParam),
 	}
 }
 
@@ -593,6 +595,77 @@ func condConversionCost(t, f cty.Value, limit int) int {
 		return cost
 	}
 	return min(cost+conversionCost(f, u, limit-cost), maxFunctionWork+1)
+}
+
+// wrapEquality wraps the operands of an equality operator (see cmpRightName), once: the
+// rewrite's own wrappers are recognised by their state capsule, which no configuration can
+// write.
+func wrapEquality(n hclsyntax.Node) {
+	op, ok := n.(*hclsyntax.BinaryOpExpr)
+	if !ok || op.Op != hclsyntax.OpEqual && op.Op != hclsyntax.OpNotEqual {
+		return
+	}
+	if call, ok := op.RHS.(*hclsyntax.FunctionCallExpr); ok && call.Name == cmpRightName && len(call.Args) == 2 {
+		if lit, ok := call.Args[0].(*hclsyntax.LiteralValueExpr); ok && lit.Val.Type().Equals(condStateType) {
+			return
+		}
+	}
+	state := newCondState()
+	call := func(name string, args ...hclsyntax.Expression) hclsyntax.Expression {
+		r := args[len(args)-1].Range()
+		return &hclsyntax.FunctionCallExpr{
+			Name: name, Args: args, NameRange: r, OpenParenRange: r, CloseParenRange: r,
+		}
+	}
+	literal := func(r hcl.Range) hclsyntax.Expression {
+		return &hclsyntax.LiteralValueExpr{Val: state, SrcRange: r}
+	}
+	lr, rr := op.LHS.Range(), op.RHS.Range()
+	op.LHS = call(condTrueName, call(condBeginName, literal(lr)), op.LHS)
+	op.RHS = call(cmpRightName, literal(rr), op.RHS)
+}
+
+// cmpRightFunction is cmpRightName for m: the right operand, unchanged, after charging the
+// comparison with the recorded left operand when cty recurses into them (known, not null, of one
+// type that is not primitive): measuring both, then equalityCost. Over the limit the right operand is a dynamic unknown with its marks, so the
+// comparison is unknown, the measured work is spent, and m.cmpLimited is set.
+func (m *ParsedModule) cmpRightFunction(stateParam function.Parameter) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{stateParam, condResultParam},
+		Type:   function.StaticReturnType(cty.DynamicPseudoType),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			state, r := condStateOf(args[0]), condResult(args[1])
+			l, recorded := state.trueResult, state.recorded
+			*state = condState{}
+			ul, _ := l.Unmark()
+			ur, _ := r.Unmark()
+			if !recorded || !ul.IsKnown() || !ur.IsKnown() || ul.IsNull() || ur.IsNull() ||
+				!ul.Type().Equals(ur.Type()) || ul.Type().IsPrimitiveType() {
+				return r, nil // cty decides without recursing (cmpRightName)
+			}
+			limit := maxFunctionWork - m.fnWork
+			sl, okl := valueSize(l, limit, maxNesting)
+			cost := sl
+			if okl {
+				sr, okr := valueSize(r, limit-sl, maxNesting)
+				cost = min(cost+sr, maxFunctionWork+1)
+				if okr {
+					cost = min(cost+equalityCost(l, r, limit-cost), maxFunctionWork+1)
+				} else {
+					cost = limit + 1
+				}
+			} else {
+				cost = limit + 1
+			}
+			if m.chargeFunctionWork(cost) {
+				return r, nil
+			}
+			m.spendFunctionWork(cost) // a refusal pays for the walk, so it cannot repeat for free
+			m.cmpLimited = true
+			_, marks := r.Unmark()
+			return cty.DynamicVal.WithMarks(marks), nil
+		},
+	})
 }
 
 // condFalseFunction is condFalseName for m: the false result, unchanged, after charging the

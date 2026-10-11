@@ -2373,3 +2373,52 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Its three minors were fixed in the note: the proportional argument, which gate enforces
     what, and the measured ratios.
 - Next: resume T-0116b.
+
+## 2026-10-11 · T-0116b · done
+- What: equality operators are bounded (ADR 0035).
+  - wrapEquality rewrites `a == b` and `a != b` into the conditional's capsule wrappers.
+  - cmpRightFunction charges any comparison cty recurses into: known, not null, one type that
+    is not primitive. Over the limit the expression is unknown with "Comparison too large",
+    marks kept.
+  - equalityCost charges, in this order:
+    - marksWalk of both operands: (3 per node, 3 per map key, set sorts) × (depth + 1);
+    - each set pair: its sort, hashing, and hash buckets priced by the elements' own walks,
+      n1 × m2 + n2 × m1. Elements holding sets cost m1 × m2, or 2 × (m1 + m2) plus their inner
+      sets when the bucket has one element per side.
+    - Number elements pay their formatting cost on each sort level.
+- Files: internal/terraform/{equality.go,equality_internal_test.go,forexpr.go,evalguard.go,
+  locals.go,parse.go,setconv_internal_test.go},
+  docs/adr/0035-charge-equality-over-sets.md (header of 0033),
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - These are refused within 1 s: `var.s == var.s` over 1,500 colliding numbers (14 s
+    before), deep lists and tuples with and without sets (66 s and 4.5 s per comparison),
+    and colliding compound and set-of-set elements (4.8 to 12 s).
+  - These stay known: distinct sets, typical rule sets with port sets, and lists of a few
+    hundred objects (0.01 of the work).
+  - TestEqualityMatchesHCL checks 20 expressions against plain hcl, including errors, try,
+    templates, marks and unknowns.
+  - Each new charge has a mutation-checked test: weight-priced buckets, markWalkWork = 1,
+    fraction formatting, single-pair buckets and the refusal's spend.
+  - Timing sweep (strings, numbers, objects, fractions, colliding sets, deep lists, objects and
+    maps, sets of sets): at most about 95 ns per unit when accepted.
+  - The tests now share one colliding set (sync.OnceValues). That removed about 120 s under
+    -race from each of three tests, which had pushed the package past go test's 10-minute
+    timeout.
+- Review: iace-reviewer, 4 rounds over two reviewers. The first reviewer's round-2 report was
+  lost, so a fresh reviewer took over.
+  - Round 1: CHANGES_REQUIRED.
+    - Blocker: depth × size marks walks.
+    - Major: values without sets were uncharged.
+    - Minors: the estimator's own walks (to T-0116d), fractions, a misplaced attempts line,
+      the ADR alternative, and the spend test.
+  - Round 2: CHANGES_REQUIRED.
+    - Blocker: colliding compound elements were priced by weight.
+    - Major: the walk constant was too low.
+    - Minors: tiny sets overcharged (follow-up T-0116e), and the wrapper test was too loose.
+  - Round 3: CHANGES_REQUIRED. Major: single-pair buckets of sets were multiplied.
+  - Round 4: APPROVE.
+- Attempts: work set aside once in a stash while T-0123 fixed the flaky timing limits that
+  blocked its gates.
+- Next: T-0116c, T-0116d, T-0116e, T-0115.
