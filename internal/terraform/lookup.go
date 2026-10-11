@@ -64,7 +64,7 @@ func (m *ParsedModule) lookupFunction() function.Function {
 				// The default is converted to a map's element type, unifying a large tuple or
 				// object in quadratic time (ADR 0029); charged whether or not it is used.
 				if ty := vals[0].Type(); ty.IsMapType() && typeHasCollection(ty.ElementType()) {
-					cost := conversionCost(vals[2], ty.ElementType(), false, maxFunctionWork-m.fnWork)
+					cost := conversionCost(vals[2], ty.ElementType(), maxFunctionWork-m.fnWork)
 					if cost > 0 && !m.chargeFunctionWork(cost) {
 						m.spendFunctionWork(cost)
 						m.fnLimited = true

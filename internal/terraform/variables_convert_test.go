@@ -236,3 +236,175 @@ func TestRefusedConversionStaysSensitive(t *testing.T) {
 		t.Errorf("value %#v, want unknown and sensitive", v.Type().FriendlyName())
 	}
 }
+
+// A tfvars value converted into a set(number) variable builds the set, and colliding numbers
+// (cty hashes ten significant digits) compare every pair: the conversion is charged, so the
+// variable is unknown with value_too_large instead (T-0116).
+func TestSetVariablesOfCollidingNumbersAreBounded(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("t = [")
+	for i := range 1_500 {
+		fmt.Fprintf(&b, "1.%015d, ", i)
+	}
+	b.WriteString("]\n")
+	m, vars, elapsed := timedEvalVars(t, map[string]string{
+		"main.tf":    "variable \"t\" {\n  type = set(number)\n}\n",
+		"big.tfvars": b.String(),
+	}, terraform.VarOptions{VarFiles: []string{"big.tfvars"}})
+	if elapsed > time.Second*raceSlowdown {
+		t.Errorf("evaluating the variables took %v", elapsed)
+	}
+	if vars["t"].Value.IsKnown() || !slices.ContainsFunc(m.Diagnostics, func(d terraform.Diagnostic) bool {
+		return d.Code == terraform.DiagValueTooLarge
+	}) {
+		t.Errorf("known %v, diagnostics %v; want unknown with value_too_large", vars["t"].Value.IsKnown(), codes(m))
+	}
+}
+
+// Quoted numeric strings in tfvars convert to the colliding numbers they spell (T-0116 review:
+// 600 of them took 7.3 s into a set(number) variable).
+func TestSetVariablesOfNumericStringsAreBounded(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("t = [")
+	for i := range 1_500 {
+		fmt.Fprintf(&b, "\"1.%015d\", ", i)
+	}
+	b.WriteString("]\n")
+	m, vars, elapsed := timedEvalVars(t, map[string]string{
+		"main.tf":    "variable \"t\" {\n  type = set(number)\n}\n",
+		"big.tfvars": b.String(),
+	}, terraform.VarOptions{VarFiles: []string{"big.tfvars"}})
+	if elapsed > time.Second*raceSlowdown {
+		t.Errorf("evaluating the variables took %v", elapsed)
+	}
+	if vars["t"].Value.IsKnown() {
+		t.Errorf("known; want unknown with value_too_large: %v", codes(m))
+	}
+}
+
+// A set(number) variable of distinct numbers is converted, not refused.
+func TestSetVariablesOfDistinctNumbersAreKnown(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("t = [")
+	for i := range 2_000 {
+		fmt.Fprintf(&b, "%d, ", 1024+i)
+	}
+	b.WriteString("]\n")
+	m, vars, _ := timedEvalVars(t, map[string]string{
+		"main.tf":    "variable \"t\" {\n  type = set(number)\n}\n",
+		"big.tfvars": b.String(),
+	}, terraform.VarOptions{VarFiles: []string{"big.tfvars"}})
+	if !vars["t"].Value.IsKnown() {
+		t.Errorf("unknown: %v", codes(m))
+	}
+}
+
+// Distinct objects hash apart too: a set(object) variable of a few hundred rules, each with a
+// nested list, is converted, and a neighbouring variable keeps its value (T-0116 review: 250
+// rules were refused, and 350 blanked the neighbour).
+func TestSetVariablesOfDistinctObjectsAreKnown(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("rules = [\n")
+	for i := range 400 {
+		fmt.Fprintf(&b, "  { description = \"rule %d\", from_port = %d, to_port = %d, protocol = \"tcp\", cidr_blocks = [\"10.0.%d.0/24\", \"10.1.%d.0/24\", \"10.2.%d.0/24\"] },\n",
+			i, 1000+i, 1000+i, i%256, i%256, i%256)
+	}
+	b.WriteString("]\nenv = [\"prod\"]\n")
+	m, vars, _ := timedEvalVars(t, map[string]string{
+		"main.tf": "variable \"rules\" {\n  type = set(object({ description = string, from_port = number, to_port = number, protocol = string, cidr_blocks = list(string) }))\n}\n" +
+			"variable \"env\" {\n  type = set(string)\n}\n",
+		"rules.tfvars": b.String(),
+	}, terraform.VarOptions{VarFiles: []string{"rules.tfvars"}})
+	for _, name := range []string{"rules", "env"} {
+		if !vars[name].Value.IsKnown() {
+			t.Errorf("%s: unknown: %v", name, codes(m))
+		}
+	}
+}
+
+// A set(any) variable is converted to its elements' unified type first: distinct strings hash
+// apart and stay known, with a known neighbour, while colliding numbers are refused (T-0116
+// review: set(any) was charged as if every element collided).
+func TestSetAnyVariables(t *testing.T) {
+	t.Parallel()
+	var users, nums strings.Builder
+	users.WriteString("users = [")
+	nums.WriteString("nums = [")
+	for i := range 1_500 {
+		fmt.Fprintf(&users, "\"user-%05d@example.com\", ", i)
+		fmt.Fprintf(&nums, "1.%015d, ", i)
+	}
+	users.WriteString("]\n")
+	nums.WriteString("]\n")
+	m, vars, elapsed := timedEvalVars(t, map[string]string{
+		"main.tf":  "variable \"users\" {\n  type = set(any)\n}\nvariable \"nums\" {\n  type = set(any)\n}\nvariable \"env\" {\n  type = set(string)\n}\n",
+		"v.tfvars": users.String() + nums.String() + "env = [\"prod\"]\n",
+	}, terraform.VarOptions{VarFiles: []string{"v.tfvars"}})
+	if elapsed > time.Second*raceSlowdown {
+		t.Errorf("evaluating the variables took %v", elapsed)
+	}
+	for name, known := range map[string]bool{"users": true, "env": true, "nums": false} {
+		if got := vars[name].Value.IsKnown(); got != known {
+			t.Errorf("%s: known %v, want %v: %v", name, got, known, codes(m))
+		}
+	}
+}
+
+// Estimating a conversion into a set of lists converts the elements as cty does, which is real
+// work: a refused variable spends what the estimate did, so a module of many such variables
+// stays within its time budget (T-0116 review: twelve of them took 8.6 s, growing with each).
+func TestRefusedSetVariablesSpendTheirEstimate(t *testing.T) { // not parallel: it measures time
+	var tf, tfvars strings.Builder
+	for v := range 12 {
+		fmt.Fprintf(&tf, "variable \"v%02d\" {\n  type = set(list(number))\n}\n", v)
+		fmt.Fprintf(&tfvars, "v%02d = [[", v)
+		for i := range 10_000 {
+			fmt.Fprintf(&tfvars, "%d,", i)
+		}
+		tfvars.WriteString("]")
+		for i := range 700 {
+			fmt.Fprintf(&tfvars, ", [1.%015d]", i)
+		}
+		tfvars.WriteString("]\n")
+	}
+	m, vars, elapsed := timedEvalVars(t, map[string]string{
+		"main.tf":    tf.String(),
+		"big.tfvars": tfvars.String(),
+	}, terraform.VarOptions{VarFiles: []string{"big.tfvars"}})
+	if elapsed > 2*time.Second*raceSlowdown {
+		t.Errorf("evaluating the variables took %v", elapsed)
+	}
+	for name, v := range vars {
+		if v.Value.IsKnown() {
+			t.Errorf("%s: known; want unknown: %v", name, codes(m))
+		}
+	}
+}
+
+// A set(any) value whose element types do not unify is refused, but finding that out unifies
+// them, which is real work: each refusal spends it, so a module instantiated many times reaches
+// the tree's budget instead of repeating the unification for free (T-0116 review: 50 instances
+// with four such defaults took 22 s).
+func TestRefusedSetAnyDefaultsSpendTheirUnification(t *testing.T) { // not parallel: it measures time
+	var child strings.Builder
+	for v := range 4 {
+		fmt.Fprintf(&child, "variable \"x%d\" {\n  type    = set(any)\n  default = [{ x = 1 }", v)
+		for i := range 4_000 {
+			fmt.Fprintf(&child, ", \"%d\"", i)
+		}
+		child.WriteString("]\n}\n")
+	}
+	dir := files(t, map[string]string{
+		"main.tf":   "module \"c\" {\n  source = \"./c\"\n  count  = 50\n}\n",
+		"c/main.tf": child.String(),
+	})
+	start := time.Now()
+	instances := mustEvaluateTree(t, dir)
+	if elapsed := time.Since(start); elapsed > 3*time.Second*raceSlowdown {
+		t.Errorf("evaluating %d instances took %v", len(instances), elapsed)
+	}
+}

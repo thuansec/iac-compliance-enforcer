@@ -600,6 +600,14 @@ func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function
 				// Converting a value can cost more than unifying the types: a map of lists
 				// converted to another map of lists unifies all its entries (T-0114e review).
 				cost = min(cost+valueConversionCost(t, limit)+valueConversionCost(f, limit), maxFunctionWork+1)
+				if cost <= limit && (typeHasSet(t.Type()) || typeHasSet(f.Type())) {
+					// The unified type can hold a set, and converting a result to it builds the
+					// set: charged as converting each result to the type hcl unifies them to,
+					// computed here once its unification is charged (T-0116).
+					if u, _ := convert.UnifyUnsafe([]cty.Type{t.Type(), f.Type()}); u != cty.NilType && typeHasSet(u) {
+						cost = min(cost+conversionCost(t, u, limit)+conversionCost(f, u, limit), maxFunctionWork+1)
+					}
+				}
 			}
 			if m.chargeFunctionWork(cost) {
 				return f, nil
