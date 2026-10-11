@@ -35,8 +35,14 @@ lint: ## golangci-lint, regal (policies) and actionlint (workflows)
 	@if compgen -G '.github/workflows/*.y*ml' >/dev/null; then $(call tool,actionlint); \
 	  else echo "lint: no workflows, actionlint skipped"; fi
 
-test: ## race-enabled, shuffled tests with a coverage profile
-	$(GO) test -race -shuffle=on -count=1 -coverprofile=coverage.out ./...
+# Tests that measure the process's live heap run alone and without -race: they test memory, not
+# concurrency, and under the race detector their forced collections took about two minutes,
+# which pushed the package past go test's 10-minute timeout (T-0125).
+HEAP_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken)$$
+
+test: ## race-enabled, shuffled tests with a coverage profile, then the heap tests without -race
+	$(GO) test -race -shuffle=on -count=1 -skip '$(HEAP_TESTS)' -coverprofile=coverage.out ./...
+	$(GO) test -count=1 -run '$(HEAP_TESTS)' ./internal/terraform/
 
 cover-check: ## overall Go coverage from coverage.out must be at least COVERAGE_MIN
 	@[[ -f coverage.out ]] || { echo "cover-check: coverage.out is missing; run make test first"; exit 1; }

@@ -212,3 +212,15 @@ func TestSetBuildChargesItsRepeats(t *testing.T) {
 		t.Errorf("into set(any): the build costs %d, want at least %d (unifying again, then hashing)", got, want)
 	}
 }
+
+// A refused conversion into set(any) reports the work its estimate really did (unifyWalk.done:
+// the unification it ran and the elements it hashed), which chargeConversion spends, so a
+// refused variable cannot repeat it for free (T-0116c review).
+func TestRefusedSetAnyConversionReportsItsWork(t *testing.T) {
+	t.Parallel()
+	v := cty.TupleVal(collidingNumberVals(3_000))
+	cost, done := conversionCostDone(v, cty.Set(cty.DynamicPseudoType), false, maxFunctionWork)
+	if cost <= maxFunctionWork || done < 3_000 {
+		t.Errorf("cost %d, done %d; want refused with the hashing of 3,000 elements done", cost, done)
+	}
+}

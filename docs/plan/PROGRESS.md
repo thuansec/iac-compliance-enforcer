@@ -2459,3 +2459,24 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - T-0124 now also covers the estimate's second number formatting and asks for a timing
       sweep.
 - Next: T-0116d, T-0116e, T-0124, T-0125, T-0115.
+
+## 2026-10-11 · T-0116c · CI round 2 (T-0125 progress)
+- What: CI on PR #79 failed. The gates job hit go test's 10-minute package timeout:
+  internal/terraform ran 600.29 s under -race. The loop allows one open PR, so the fix landed
+  on the same branch:
+  - `make test` runs the two heap-measuring tests (TestParseMemoryPerFile,
+    TestKeptHeapPerBudgetToken) without -race, in a second step, and skips them by name in the
+    race run. They measure memory, not concurrency, and took about 62 s and 54 s under race
+    against 8 s and 6 s without. go test's -skip flag keeps the test-skips check meaningful.
+  - TestEvaluateRootsCreatesABudget now runs in parallel.
+  - Two serial tests got smaller setups and stay sensitive, with their comments corrected.
+  - New TestRefusedSetAnyConversionReportsItsWork.
+- Files: Makefile, internal/terraform/{budget_internal_test.go,equality_internal_test.go,
+  variables_convert_test.go,setconv_internal_test.go}, docs/plan/BACKLOG.md
+- Evidence: `gates.sh full` 13 pass. The test step went from 586–607 s to 417–418 s, and
+  cover-check passed.
+- Review: iace-reviewer, APPROVE.
+  - Its two comment fixes are applied.
+  - The ns-per-unit gap of repeated colliding refusals (about 160) went to T-0116e.
+  - T-0125 stays open, with this as progress and a per-package time check added.
+- Next: CI on PR #79, then merge.

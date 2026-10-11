@@ -554,7 +554,7 @@ locations and without executing anything.
     - the set-build estimate (unifyWalk.setBuild) no longer runs cty's full conversion of compound elements that cty then runs again, so an accepted conversion costs about its charge, not twice it (T-0116 review: 0.86 s of estimate plus 0.82 s of conversion for one `set(list(number))` value); either the estimate's conversions are charged or the hash is computed without converting compound elements, with a timing test
     - equal compound elements count once, as cty keeps one copy: `true ? <3,000 × {a = "x"}> : toset([{a = "y"}])` is known, not a coverage gap (key them by their hash bytes plus an equality check), with a colliding-but-distinct compound case still refused
     - (moved to T-0124) the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s; T-0116c found that what dominates them is converting 512-bit numbers to strings, not the set build
-  - attempts: 1
+  - attempts: 2
   - result: setBuild charges each repeat of cty's work before it runs: a compound element's conversion (conversionCostWith), a primitive's formatting (comparisonWeight), and for set(any) the tuple's unification again; the reviewer's set(list(number)) shape went from 0.87 s to 0.02 s. Equal values, compound ones included, count once through valueKey, an exact length-framed key. Bullet 3 moved to T-0124 (512-bit number formatting dominates those defaults, on main too). Follow-ups: T-0124, T-0125
 - [ ] T-0116d · Charge walking sets, compound values first
   - skills: iace-terraform-parsing, iace-security, iace-testing
@@ -572,6 +572,7 @@ locations and without executing anything.
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116b
   - accept:
+    - repeated refused comparisons of 600 colliding numbers spend the module's work in about 1.4 s, about 160 ns per unit against the 95–120 calibration (T-0116c review): recalibrate the colliding-number bucket charge with the same sweep
     - equalityCost's set-sort charge (setSort: setSortWork per element and level) overcharges sets of one to four elements, which cty sorts cheaply. A list of 5,000 two-element sets is charged a third of the module's work for 57 ms (about 20 ns per unit), so about 15,000 such sets are refused at about 170 ms (T-0116b review). Calibrate small sets separately, for example a lower constant below some size, with a timing sweep that stays at or under about 120 ns per unit for small and large sets, and keep the large-set and colliding cases refused
   - attempts: 0
 - [ ] T-0124 · Charge converting numbers to strings by their precision
@@ -585,7 +586,9 @@ locations and without executing anything.
 - [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
   - skills: iace-testing, iace-quality-gates
   - depends: none
+  - progress: T-0116c's PR moved the two heap-measuring tests to a non-race step of `make test`, made TestEvaluateRootsCreatesABudget parallel and shrank two serial tests: the test step went from 586–607 s to 417 s. internal/terraform is still the package closest to the limit
   - accept:
+    - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
     - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
