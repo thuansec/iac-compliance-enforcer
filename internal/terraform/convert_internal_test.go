@@ -242,7 +242,7 @@ func TestConversionCostFollowsCty(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cost := conversionCost(tc.v, tc.want, false, maxFunctionWork)
+			cost := conversionCost(tc.v, tc.want, maxFunctionWork)
 			if got := cost > maxFunctionWork/4; got != tc.charged {
 				t.Errorf("cost %d, want charged = %v", cost, tc.charged)
 			}
@@ -291,7 +291,7 @@ func TestSlowConversionsAreCharged(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if cost := conversionCost(tc.v, tc.want, false, maxFunctionWork); cost <= maxFunctionWork/4 {
+			if cost := conversionCost(tc.v, tc.want, maxFunctionWork); cost <= maxFunctionWork/4 {
 				t.Errorf("cost %d, want more than %d", cost, maxFunctionWork/4)
 			}
 		})

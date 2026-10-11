@@ -353,11 +353,16 @@ func (m *ParsedModule) chargeConversion(v *varState, val cty.Value) bool {
 	if !typeHasCollection(v.ty) {
 		return true
 	}
-	cost := conversionCost(val, v.ty, v.defaults != nil, maxFunctionWork-m.fnWork)
+	cost, done := conversionCostDone(val, v.ty, v.defaults != nil, maxFunctionWork-m.fnWork)
 	if cost == 0 || m.chargeFunctionWork(cost) {
 		return true
 	}
-	m.spendFunctionWork(cost)
+	// A refusal spends only the work the estimate did (converting and hashing elements to
+	// build sets), not the estimate: a variable is converted once per module instance, so a
+	// refused one cannot repeat, and spending the estimate would refuse every later variable,
+	// even an unrelated one; but the work done must count, or many variables would each do a
+	// module's worth (T-0116 review).
+	m.spendFunctionWork(done)
 	return false
 }
 

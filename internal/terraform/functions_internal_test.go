@@ -540,7 +540,7 @@ func TestBoundedKeepsSignature(t *testing.T) {
 	t.Parallel()
 	m := &ParsedModule{}
 	for name, f := range supportedFunctions {
-		b := m.bounded(f, nil, nil, cty.NilType)
+		b := m.bounded(f, nil, nil, cty.NilType, false)
 		if !slices.EqualFunc(f.Params(), b.Params(), paramsEqual) || (f.VarParam() == nil) != (b.VarParam() == nil) ||
 			(f.VarParam() != nil && !paramsEqual(*f.VarParam(), *b.VarParam())) {
 			t.Errorf("%s: bounded parameters differ", name)

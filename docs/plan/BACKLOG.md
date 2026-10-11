@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -525,12 +525,32 @@ locations and without executing anything.
     - the bounded wrapper's Type hook measures every argument (valueSize) on its affordable path without charging that walk (T-0114h review), so a call whose Impl does not run (an unknown argument, which cty skips) walks large arguments for free on every evaluation; charge the measured size in the type pass, or skip measuring when the call will not run, without double-charging calls that do run, with a test of repeated calls over a large argument and an unknown one
   - attempts: 1
   - result: the bounded wrapper's type pass charges the arguments it measured, once, when Impl will not run: cty skips the call (an unknown argument its parameter does not allow, skipsCall) or the pass fails (conversion or the function's own type check, which can and try catch); calls that run are still charged once, in the call; over the size limit a skipped call pays the limit
-- [ ] T-0116 · Bound set comparisons, unification and conversion into set types
+- [x] T-0116 · Bound unification and conversion into set types
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0105b
   - accept:
-    - comparing values that hold sets (`==`/`!=`) and unifying or converting values into set types (HCL conditionals, tolist/tomap/concat/coalescelist, lookup's default, coalesce, tfvars into `set(...)` variables, set literals) no longer compare every pair when cty number hashes collide (T-0105b review: 300 colliding numbers take 1.8s in `true ? <tuple> : var.nums`, 5–21s through lookup's default); such an expression or value is unknown with a limit warning
-    - each path has a colliding-number regression test that finishes within the per-module time budget, and the reference's worst-case note drops its T-0116 exception
+    - unifying or converting values into set types (HCL conditionals, tolist/tomap/concat/coalescelist, lookup's default, coalesce, tfvars into `set(...)` variables) no longer compares every pair uncharged when cty number hashes collide (T-0105b review: 300 colliding numbers take 1.8s in `true ? <tuple> : var.nums`, 5–21s through lookup's default); such an expression or value is unknown with a limit warning
+    - each path has a colliding-number regression test that finishes within the per-module time budget, and the reference's worst-case note drops its T-0116 exception for conversions (comparisons: T-0116b)
+  - attempts: 1
+  - result: converting into a set type is charged building the set as cty does (unifyWalk.setBuild): elements converted to the element type (numeric strings become numbers) and hashed at their comparison weight, each hash bucket of n elements, d distinct, costing d × weight + n × distinct weight; targets holding sets are charged as all colliding; conditionals, coalesce and tuples into list(any) are charged their conversion to the unified type when it holds a set; the set functions skip it (setBuildCosts charges it); a refused variable conversion spends the work the estimate really did (unifyWalk.done), not the estimate; follow-ups T-0116b, T-0116c, T-0114k
+- [ ] T-0114k · Charge a conditional's result conversions to the unified type exactly
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0116
+  - accept:
+    - a conditional whose result types differ is charged converting each result to the type hcl unifies them to (conversionCost into convert.UnifyUnsafe of the two types, computed once its unification is charged), not ADR 0030's valuePart estimate, which counts unifying the element types of every tuple, object and map in the results: today `true ? <40,000 repeated strings> : toset(["b"])` is refused although converting it is linear (T-0116 review); keep the charge for every path that unifies, with parity tests against cty
+  - attempts: 0
+- [ ] T-0116b · Bound comparisons of values that hold sets
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116
+  - accept:
+    - `==` and `!=` over values that hold sets no longer compare every pair uncharged when cty number hashes collide: `var.s == var.s` over a set of 1,000 colliding numbers takes 2.7 s (T-0116 probe); hcl evaluates operators itself, not through iace's function table, so bound them in the rewritten syntax tree (for example capsule-decoded operand wrappers as in ADR 0033) with the pairwise charge of setComparisonWork; such a comparison is unknown with a limit warning, with a colliding-number regression test within the per-module time budget
+- [ ] T-0116c · Keep set-build estimates exact for compound elements
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0116
+  - accept:
+    - the set-build estimate (unifyWalk.setBuild) no longer runs cty's full conversion of compound elements that cty then runs again, so an accepted conversion costs about its charge, not twice it (T-0116 review: 0.86 s of estimate plus 0.82 s of conversion for one `set(list(number))` value); either the estimate's conversions are charged or the hash is computed without converting compound elements, with a timing test
+    - equal compound elements count once, as cty keeps one copy: `true ? <3,000 × {a = "x"}> : toset([{a = "y"}])` is known, not a coverage gap (key them by their hash bytes plus an equality check), with a colliding-but-distinct compound case still refused
+    - the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s, about 14 times HEAD's 0.18 s (bounded by the tree budget); these shapes come back down with the fix
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing

@@ -2267,3 +2267,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
       fixed, the last one now rather than as a follow-up.
   - Round 2: APPROVE. Its minor (a test of the function's own type check failing) was added.
 - Next: the next ready M1 task.
+
+## 2026-10-11 · T-0116 · done
+- What: converting values into set types is charged for building the set, so colliding number
+  hashes can no longer make cty compare every pair without a charge.
+  - unifyWalk.setBuild converts each element to the element type, as cty does (numeric strings
+    become the numbers they hash as), and hashes it, charging its comparison weight.
+    - A hash bucket of n elements, d of them distinct, costs d × weight + n × distinct weight.
+      Distinct and repeated values cost only the hashing.
+    - Targets that hold sets are charged as if every element collided.
+  - When the unified type holds a set, these are charged their conversion to it: conditional
+    results (condFalseFunction), coalesce's arguments, and tuples converted to set(any) or
+    list(any).
+  - The set functions skip this charge (noSetBuild), since their setBuildCosts already pay it.
+  - A refused variable conversion spends the work the estimate really did (unifyWalk.done:
+    element conversions, hashing and UnifyUnsafe), not the estimate itself. Refusals cannot
+    repeat for free, and a pessimistic estimate does not blank neighbouring variables.
+  - The backlog split out T-0116b (`==`/`!=` over sets) and T-0114k (exact conditional charge).
+- Files: internal/terraform/{conversions.go,forexpr.go,functions.go,lookup.go,variables.go,
+  setconv_internal_test.go,variables_convert_test.go,convert_internal_test.go,
+  functions_internal_test.go}, docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - 17 conversion paths with 1,500 colliding numbers are unknown with a limit warning, within
+    1 s: conditionals, lookup's default, tolist, tomap, coalesce, numeric strings, unification
+    to a third type and unknowns. Reverting the change fails 14 of them, plus the three tfvars
+    set tests.
+  - 2,000 distinct ports, 40,000 repeated strings and 400 distinct set(object) rules stay known.
+  - Twelve refused set(list(number)) variables take 1.1 s (8.9 s before the round-1 fix).
+  - Four refused set(any) defaults under `count = 50` take 0.86 s (22.6 s before the round-2
+    fix).
+- Review: iace-reviewer, 3 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: refused variables spent nothing, although the estimate does real conversions.
+    - Minors: the estimate's conversions run twice, equal compound elements count as distinct,
+      and a slow test setup. The setup is fixed; the other two are follow-up T-0116c.
+  - Round 2: CHANGES_REQUIRED. Major: the UnifyUnsafe work was not counted as done.
+  - Round 3: APPROVE. It noted that set(list(any))-like defaults under many instances run about
+    2.5 s, bounded by the tree budget; that note is cited in T-0116c.
+- Next: T-0115 (the next ready M1 task).

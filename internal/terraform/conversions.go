@@ -1,9 +1,11 @@
 package terraform
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // Converting a value to a collection type makes cty unify element types, and unifying n types
@@ -24,6 +26,11 @@ import (
 // types walked pass limit.
 type unifyWalk struct {
 	limit, cost, walked int
+	// noSetBuild: the caller charges building sets itself (the set functions).
+	noSetBuild bool
+	// done is the work the walk itself did, not just estimated: setBuild converts and hashes
+	// elements as cty does, so a refused conversion spends this much (T-0116 review).
+	done int
 }
 
 // over reports whether the walk has passed its limit.
@@ -203,13 +210,27 @@ func (w *unifyWalk) typeConversions(ty cty.Type) {
 // conversionCost is the work of converting v to want, as cty does (ADR 0029, ADR 0032), in the
 // units of unifyWalk, following cty's conversion path for the value and the target together
 // (convert): conversions that unify nothing cost nothing, such as a tuple into a set of strings
-// or an object into a map of strings. With defaults (a type constraint with optional attributes),
-// typeexpr also unifies the elements of every list, set and map it rebuilds, attribute by
-// attribute: each costs k × k / unifyWorkDivisor per attribute of the constraint's widest
-// object, plus one. The values and types walked are added once there is a cost. It stops
-// counting past limit, and a value that takes more than limit steps to walk costs more.
-func conversionCost(v cty.Value, want cty.Type, defaults bool, limit int) int {
+// or an object into a map of strings. The values and types walked are added once there is a
+// cost. It stops counting past limit, and a value that takes more than limit steps to walk
+// costs more.
+func conversionCost(v cty.Value, want cty.Type, limit int) int {
+	return conversionCostWith(&unifyWalk{limit: limit}, v, want, false)
+}
+
+// conversionCostDone is conversionCost plus the work the estimate itself did (unifyWalk.done),
+// which a caller that refuses the conversion spends. With defaults (a type constraint with
+// optional attributes), typeexpr also unifies the elements of every list, set and map it
+// rebuilds, attribute by attribute: each costs k × k / unifyWorkDivisor per attribute of the
+// constraint's widest object, plus one.
+func conversionCostDone(v cty.Value, want cty.Type, defaults bool, limit int) (cost, done int) {
 	w := &unifyWalk{limit: limit}
+	cost = conversionCostWith(w, v, want, defaults)
+	return cost, w.done
+}
+
+// conversionCostWith is conversionCost with the walk w, whose limit and options it uses.
+func conversionCostWith(w *unifyWalk, v cty.Value, want cty.Type, defaults bool) int {
+	limit := w.limit
 	if want != cty.DynamicPseudoType && typeHasDynamic(want) {
 		// cty builds the conversion from the types before it touches a value, unifying to find
 		// every element type a dynamic target leaves open, even where no value reaches it (an
@@ -273,14 +294,19 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
 			w.eachElement(val, w.valuePart)
+			w.toUnifiedType(val, types)
 			if want.IsListType() {
 				w.unify(types)
+			} else {
+				w.setBuild(val, ety)
 			}
 			return
 		}
 		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
 		if want.IsListType() {
 			converted(ety)
+		} else {
+			w.setBuild(val, ety)
 		}
 	case ty.IsTupleType() && want.IsTupleType():
 		if wants := want.TupleElementTypes(); len(wants) == val.LengthInt() {
@@ -292,6 +318,7 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
 			w.eachElement(val, w.valuePart)
+			w.toUnifiedType(val, types)
 			if slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
 				w.unify(types)
 			}
@@ -319,7 +346,137 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 	case (ty.IsListType() || ty.IsSetType()) && (want.IsListType() || want.IsSetType()):
 		ety := want.ElementType()
 		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+		if want.IsSetType() {
+			w.setBuild(val, ety)
+		}
 	}
+}
+
+// setBuild charges building a set of element type ety from the elements of v. cty puts each
+// element in a bucket by its hash (crc32 of its hash bytes, Value.Hash) and compares it with
+// the distinct values already in that bucket, stopping at an equal one: numbers share a hash
+// when their first ten significant digits agree, every unknown hashes alike, and crc32
+// collisions can be built at will. So each element is converted to ety, as cty converts it, and
+// hashed, which is linear and charged as its comparison weight; a bucket of n elements, d of
+// them distinct, costs d times the elements' total weight plus n times the distinct ones'
+// weight (T-0116). Distinct hashes and repeated values cost only the hashing. Call it after the
+// elements' conversions are charged, so converting them here is affordable unless the walk is
+// over. When ety holds a set, comparing two elements compares their sets pairwise, so that is
+// charged as if every element collided (setBuildCost).
+func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
+	if w.noSetBuild || w.over() {
+		return
+	}
+	target := ety
+	switch {
+	case target != cty.DynamicPseudoType:
+	case v.Type().IsCollectionType():
+		target = v.Type().ElementType() // already one type: nothing to unify
+	default:
+		// cty converts a tuple's elements to their unified type first, and hashes them in it.
+		// The caller charged that unification, and the walk is not over.
+		if u, _ := convert.UnifyUnsafe(elementTypes(v)); u != cty.NilType {
+			target = u
+		}
+	}
+	w.markDone()            // UnifyUnsafe did the unification charged before
+	if typeHasSet(target) { // also a target left dynamic: unknown, so charged pessimistically
+		_, work := setBuildCost([]cty.Value{v}, nil)
+		w.add(work)
+		return
+	}
+	type bucket struct {
+		n, distinct, weight, distinctWeight int
+		seen                                map[string]bool
+	}
+	buckets := map[int]*bucket{}
+	// Converting the elements does about the work charged so far for converting them, and
+	// hashing them what is walked here: all of it is done, not estimated.
+	for it := v.ElementIterator(); it.Next() && !w.over(); {
+		_, e := it.Element()
+		e, _ = e.UnmarkDeep()
+		if e.IsKnown() && !e.IsNull() && target != cty.DynamicPseudoType && !e.Type().Equals(target) {
+			if c, err := convert.Convert(e, target); err == nil {
+				e = c // a numeric string becomes the number it hashes as
+			}
+		}
+		weight, costliest := comparisonWeight(e)
+		if !e.Type().IsPrimitiveType() && costliest > maxSetNumberFormatCost {
+			// cty orders a set of compound values by hash, formatting such numbers again on
+			// every later use (setBuildCost).
+			w.markDone()
+			w.add(maxFunctionWork + 1)
+			return
+		}
+		w.walked += weight // hashing formats it
+		if w.over() {
+			w.markDone()
+			return
+		}
+		h := e.Hash()
+		b := buckets[h]
+		if b == nil {
+			b = &bucket{seen: map[string]bool{}}
+			buckets[h] = b
+		}
+		b.n++
+		b.weight = min(b.weight+weight, maxFunctionWork+1)
+		// cty keeps one copy of equal values. Unknown and compound values count as distinct.
+		if key, ok := primitiveKey(e); !ok || !b.seen[key] {
+			b.distinct++
+			b.distinctWeight = min(b.distinctWeight+weight, maxFunctionWork+1)
+			if ok {
+				b.seen[key] = true
+			}
+		}
+	}
+	w.markDone()
+	for _, b := range buckets {
+		if b.distinct > 1 {
+			w.add(min(saturatingMul(b.distinct, b.weight)+saturatingMul(b.n, b.distinctWeight), maxFunctionWork+1))
+		}
+	}
+}
+
+// markDone records the walk's work so far as done (unifyWalk.done): call it right after work
+// that was charged before is really done.
+func (w *unifyWalk) markDone() {
+	w.done = max(w.done, min(w.cost+w.walked, maxFunctionWork+1))
+}
+
+// primitiveKey is a key equal for equal known primitive values and for nulls, and ok false for
+// any other value. A number's key is its exact decimal text, whose cost its comparison weight counts.
+func primitiveKey(v cty.Value) (key string, ok bool) {
+	switch {
+	case !v.IsKnown():
+		return "", false
+	case v.IsNull():
+		return "~", true // nulls of one type are equal
+	}
+	switch v.Type() {
+	case cty.String:
+		return "s" + v.AsString(), true
+	case cty.Number:
+		return "n" + v.AsBigFloat().Text('g', -1), true
+	case cty.Bool:
+		return fmt.Sprint("b", v.True()), true
+	}
+	return "", false
+}
+
+// toUnifiedType charges, when some of types hold sets, converting every element of v to the type
+// cty unifies them to: building that set can compare every pair (T-0116). The unification
+// itself was charged before, so computing it is affordable unless the walk is over.
+func (w *unifyWalk) toUnifiedType(v cty.Value, types []cty.Type) {
+	if w.over() || !slices.ContainsFunc(types, typeHasSet) {
+		return
+	}
+	u, _ := convert.UnifyUnsafe(types)
+	w.markDone() // the unification charged before
+	if u == cty.NilType || !typeHasSet(u) {
+		return
+	}
+	w.eachElement(v, func(e cty.Value) { w.convert(e, u) })
 }
 
 // replace charges the type cty gives an unknown or null value converted to want
