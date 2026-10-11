@@ -202,15 +202,18 @@ func (m *ParsedModule) forFunction() function.Function {
 			if !ty.IsCollectionType() && !ty.IsTupleType() && !ty.IsObjectType() {
 				return coll, nil // hcl reports that it cannot iterate over it
 			}
-			size, ok := valueSize(coll, left, maxNesting)
+			size, sort, ok := valueSizeWalk(coll, left, left, maxNesting)
 			if !ok {
-				m.spendFunctionWork(left) // measured all that was left
+				m.spendFunctionWork(max(left, sort)) // measured all that was left
 				return limited()
 			}
+			// Measuring the collection sorted every set in it, and hcl's iteration sorts the
+			// collection again (T-0116d).
+			walked := min(size+saturatingMul(sort, 2), maxFunctionWork+1)
 			perIteration := forIterationWork + clampWork(args[1]) + clampWork(args[3]) + clampWork(args[4])
-			if !m.chargeFunctionWork(size, saturatingMul(unmarked.LengthInt(), perIteration),
+			if !m.chargeFunctionWork(walked, saturatingMul(unmarked.LengthInt(), perIteration),
 				saturatingMul(clampWork(args[2]), size)) {
-				m.spendFunctionWork(size) // the walk done; the loop itself never runs
+				m.spendFunctionWork(size + sort) // the walk done; the loop itself never runs
 				return limited()
 			}
 			return coll, nil
@@ -265,13 +268,17 @@ func (m *ParsedModule) forReferencesFunction(elements bool) function.Function {
 				if diags.HasErrors() {
 					continue
 				}
-				n, ok := valueSize(v, left, maxNesting)
+				n, sort, ok := valueSizeWalk(v, left, left, maxNesting)
 				if !ok {
-					m.spendFunctionWork(left) // measured all that was left
+					m.spendFunctionWork(max(left, sort)) // measured all that was left
 					return exhausted, nil
 				}
-				m.spendFunctionWork(n)
+				// Every walk of a set sorts it (T-0116d): the body's walks of the value as much
+				// as this measurement, and largestElement iterates it once more.
+				m.spendFunctionWork(min(n+sort, maxFunctionWork+1))
+				n = min(n+sort, maxFunctionWork)
 				if elements {
+					m.spendFunctionWork(sort)
 					n = largestElement(v)
 				}
 				total = min(total+n, maxFunctionWork)
@@ -281,19 +288,20 @@ func (m *ParsedModule) forReferencesFunction(elements bool) function.Function {
 	})
 }
 
-// largestElement is the size of v's largest element, or of v if it has none.
+// largestElement is the size of v's largest element, or of v if it has none, with the sort
+// work of walking it (valueSizeWalk).
 func largestElement(v cty.Value) int {
 	v, _ = v.Unmark()
 	ty := v.Type()
 	if !v.IsKnown() || v.IsNull() || !ty.IsCollectionType() && !ty.IsTupleType() && !ty.IsObjectType() {
-		n, _ := valueSize(v, maxFunctionWork, maxNesting)
-		return n
+		n, sort, _ := valueSizeWalk(v, maxFunctionWork, maxFunctionWork, maxNesting)
+		return min(n+sort, maxFunctionWork)
 	}
 	largest := 0
 	for it := v.ElementIterator(); it.Next(); {
 		_, e := it.Element()
-		n, _ := valueSize(e, maxFunctionWork, maxNesting)
-		largest = max(largest, n)
+		n, sort, _ := valueSizeWalk(e, maxFunctionWork, maxFunctionWork, maxNesting)
+		largest = max(largest, min(n+sort, maxFunctionWork))
 	}
 	return largest
 }

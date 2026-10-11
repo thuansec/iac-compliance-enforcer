@@ -200,6 +200,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 		vars:      variablesObject(vars),
 		sizes:     map[string]int{},
 		varSizes:  map[string]int{},
+		sorts:     map[string]int{},
 		sensitive: map[string]bool{},
 	}
 	if evalCall != nil {
@@ -435,6 +436,11 @@ type localsBudget struct {
 	// sizes are the evaluated locals' sizes; total is their sum.
 	sizes    map[string]int
 	varSizes map[string]int
+	// sorts is the sort work of walking each value measured (valueSizeWalk), by the keys
+	// estimate uses ("var", "var.<name>", "local.<name>", "module.<name>") and by path cache key
+	// after "path:": cty sorts every set in a value each time it walks it, so a walk is charged
+	// that work as well as the value's size (T-0116d).
+	sorts map[string]int
 	// pathSizes caches the size of each static path into a value (usePath.cacheKey), measured
 	// once up to maxLocalValueSize: the values never change once set, and many locals reading
 	// one path into a large value must not walk it each time.
@@ -471,6 +477,35 @@ func (b *localsBudget) estimate(s *localState, limit int, done map[string]Local)
 	return est
 }
 
+// setSort records the sort work of the value measured for key (sorts), and charges it: the
+// measurement sorted every set in the value.
+func (b *localsBudget) setSort(key string, sort int) {
+	if b.sorts == nil {
+		b.sorts = map[string]int{}
+	}
+	b.sorts[key] = sort
+	b.m.spendFunctionWork(sort)
+}
+
+// walkSorts is the sort work of walking the values s uses, once each use, as estimate counts
+// their sizes: it must follow estimate, which measures them (T-0116d).
+func (b *localsBudget) walkSorts(s *localState) int {
+	total := 0
+	for key, uses := range s.uses {
+		total = min(total+saturatingMul(uses, b.sorts[key]), maxFunctionWork+1)
+	}
+	for _, p := range s.paths {
+		sort := b.sorts[p.key] // a path not cached: the whole value's, which bounds it
+		if key, ok := p.cacheKey(); ok {
+			if n, cached := b.sorts["path:"+key]; cached {
+				sort = n
+			}
+		}
+		total = min(total+sort, maxFunctionWork+1)
+	}
+	return total
+}
+
 // usePath is a use of a local, variable or module with static steps after its name.
 type usePath struct {
 	key   string // "local.<name>", "var.<name>" or "module.<name>"
@@ -496,12 +531,16 @@ func (b *localsBudget) pathSize(p usePath, done map[string]Local) int {
 	if n, ok := b.pathSizes[key]; ok && cacheable {
 		return n
 	}
-	n, final := b.measurePath(p, done)
+	n, sort, final := b.measurePath(p, done)
 	if cacheable && final {
 		if b.pathSizes == nil {
 			b.pathSizes = map[string]int{}
 		}
 		b.pathSizes[key] = n
+		if b.sorts == nil {
+			b.sorts = map[string]int{}
+		}
+		b.sorts["path:"+key] = sort // measurePath charged it
 	}
 	return n
 }
@@ -535,21 +574,26 @@ func (p usePath) cacheKey() (string, bool) {
 }
 
 // measurePath measures the sub-value p reaches, up to maxLocalValueSize (past it, the size is
-// maxLocalValueSize + 1, which no local fits). final is false when the base value is not set yet,
-// so the result may not be cached.
-func (b *localsBudget) measurePath(p usePath, done map[string]Local) (n int, final bool) {
+// maxLocalValueSize + 1, which no local fits), and the sort work of walking it (valueSizeWalk).
+// When it charges the whole value instead, the sort is the whole value's. final is false when
+// the base value is not set yet, so the result may not be cached.
+func (b *localsBudget) measurePath(p usePath, done map[string]Local) (n, sort int, final bool) {
+	whole := func(final bool) (int, int, bool) {
+		n := b.size(p.key) // records the whole value's sort
+		return n, b.sorts[p.key], final
+	}
 	kind, name, _ := strings.Cut(p.key, ".")
 	var base cty.Value
 	switch kind {
 	case "local":
 		l, ok := done[name]
 		if !ok {
-			return b.size(p.key), false
+			return whole(false)
 		}
 		base = l.Value
 	case "var":
 		if !b.vars.Type().HasAttribute(name) {
-			return b.size(p.key), true
+			return whole(true)
 		}
 		base = b.vars.GetAttr(name)
 	default:
@@ -557,7 +601,7 @@ func (b *localsBudget) measurePath(p usePath, done map[string]Local) (n int, fin
 	}
 	sub, ok := staticSteps(base, p.steps)
 	if !ok {
-		return b.size(p.key), true
+		return whole(true)
 	}
 	// Measuring is charged to the module's function work, as every measurement is (ADR 0020,
 	// ADR 0025):
@@ -567,18 +611,20 @@ func (b *localsBudget) measurePath(p usePath, done map[string]Local) (n int, fin
 	left := maxFunctionWork - b.m.fnWork
 	limit := min(left, maxLocalValueSize)
 	if limit <= 0 {
-		return b.size(p.key), false
+		return whole(false)
 	}
-	n, ok = valueSize(sub, limit, maxNesting)
+	n, sort, ok = valueSizeWalk(sub, limit, b.m.workLeft(), maxNesting)
 	if !ok {
-		b.m.spendFunctionWork(limit)
+		// A refusal for sorting reports a sort past the work left: spending it stops the next
+		// measurement before it iterates again.
+		b.m.spendFunctionWork(max(limit, sort))
 		if limit < maxLocalValueSize {
-			return b.size(p.key), false // the work ran out first
+			return whole(false) // the work ran out first
 		}
-		return maxLocalValueSize + 1, true
+		return maxLocalValueSize + 1, sort, true
 	}
-	b.m.spendFunctionWork(n)
-	return n, true
+	b.m.spendFunctionWork(min(n+sort, maxFunctionWork+1)) // measuring sorted the sets in it
+	return n, sort, true
 }
 
 // staticSteps applies attribute and literal index steps to v, as evaluation would, unmarking
@@ -642,11 +688,12 @@ func (b *localsBudget) size(key string) int {
 		if n, ok := b.varSizes["\x00all"]; ok {
 			return n
 		}
-		n, ok := valueSize(b.vars, maxLocalValueSize, maxNesting)
+		n, sort, ok := valueSizeWalk(b.vars, maxLocalValueSize, b.m.workLeft(), maxNesting)
 		if !ok {
 			n = maxLocalValueSize + 1
 		}
 		b.varSizes["\x00all"] = n
+		b.setSort(key, sort)
 		return n
 	}
 	if name, ok := strings.CutPrefix(key, "local."); ok {
@@ -656,11 +703,12 @@ func (b *localsBudget) size(key string) int {
 		if n, ok := b.varSizes[key]; ok {
 			return n
 		}
-		n, ok := valueSize(b.modules[name], maxLocalValueSize, maxNesting)
+		n, sort, ok := valueSizeWalk(b.modules[name], maxLocalValueSize, b.m.workLeft(), maxNesting)
 		if !ok {
 			n = maxLocalValueSize + 1
 		}
 		b.varSizes[key] = n // module values never change once set, and no variable has a dot
+		b.setSort(key, sort)
 		return n
 	}
 	name, _ := strings.CutPrefix(key, "var.")
@@ -669,7 +717,9 @@ func (b *localsBudget) size(key string) int {
 	}
 	n := 1
 	if b.vars.Type().HasAttribute(name) {
-		n, _ = valueSize(b.vars.GetAttr(name), maxLocalValueSize, maxNesting)
+		var sort int
+		n, sort, _ = valueSizeWalk(b.vars.GetAttr(name), maxLocalValueSize, b.m.workLeft(), maxNesting)
+		b.setSort(key, sort)
 	}
 	b.varSizes[name] = n
 	return n
@@ -714,6 +764,9 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 		// source bounds them, so that is charged before they are walked, where nothing else can
 		// stop it (ADR 0026).
 		used := est - (s.attr.Expr.Range().End.Byte - s.attr.Expr.Range().Start.Byte) - s.otherUses
+		// Every walk of a set sorts it again (T-0116d).
+		// argumentWalkWork counts cty's several walks of each input, each of which sorts.
+		used = min(used+b.walkSorts(s), maxFunctionWork+1)
 		if s.walks && !m.chargeWalk(used, s.attr.Expr.Range()) {
 			return unknown
 		}
@@ -754,14 +807,18 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 			s.file, r.Start.Line, r.Start.Column)
 		return unknown
 	}
-	size, ok := valueSize(val, maxLocalValueSize, maxNesting)
+	size, sort, ok := valueSizeWalk(val, maxLocalValueSize, m.workLeft(), maxNesting)
 	if !ok {
+		// The walk done is spent, a refusal for sorting past the work left: the next local
+		// cannot repeat it for free (T-0116d review).
+		m.spendFunctionWork(sort)
 		return tooLarge(false)
 	}
 	if size > remaining {
 		return tooLarge(true)
 	}
 	b.sizes[s.attr.Name] = size
+	b.setSort("local."+s.attr.Name, sort)
 	b.total += size
 	return val
 }
@@ -772,51 +829,8 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 // It reports false as soon as the size passes limit or the nesting passes depth, and walks with
 // an explicit stack that never holds more than limit values.
 func valueSize(v cty.Value, limit, depth int) (int, bool) {
-	type item struct {
-		val   cty.Value
-		depth int
-	}
-	size := 0
-	stack := []item{{val: v}}
-	for len(stack) > 0 {
-		it := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if it.depth > depth {
-			return size, false
-		}
-		val, _ := it.val.Unmark()
-		size++
-		ty := val.Type()
-		switch {
-		case !val.IsKnown() || val.IsNull():
-			// As large as its type: cty walks the type, which can be far larger than any
-			// value built from unknowns (T-0114f).
-			// size is at most limit here, so a type that does not fit takes size past it.
-			size += typeSize(ty, limit-size+1, depth-it.depth) - 1
-		case ty.IsCollectionType() && val.LengthInt() == 0:
-			size += typeSize(ty.ElementType(), limit-size, depth-it.depth-1)
-		case ty == cty.String:
-			size += len(val.AsString())
-		case ty == cty.Number:
-			size += numberDigits(val)
-		case ty.IsCollectionType() || ty.IsObjectType() || ty.IsTupleType():
-			for elems := val.ElementIterator(); elems.Next(); {
-				k, ev := elems.Element()
-				// A set's keys are its elements, which may be unknown or marked.
-				if k, _ := k.Unmark(); k.Type() == cty.String && k.IsKnown() && !k.IsNull() {
-					size += len(k.AsString())
-				}
-				stack = append(stack, item{val: ev, depth: it.depth + 1})
-				if size+len(stack) > limit {
-					return size + len(stack), false
-				}
-			}
-		}
-		if size > limit {
-			return size, false
-		}
-	}
-	return size, true
+	size, _, ok := valueSizeWalk(v, limit, maxFunctionWork, depth)
+	return size, ok
 }
 
 // dependencyComponents returns the strongly connected components of the graph of nodes and

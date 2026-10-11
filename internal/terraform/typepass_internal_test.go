@@ -74,7 +74,7 @@ func TestSkippedVariadicCallsPayForTheirArguments(t *testing.T) {
 	t.Parallel()
 	big := tupleOf(1_000, cty.StringVal("a"))
 	unknown := cty.UnknownVal(cty.List(cty.String))
-	size, _ := measureArgs([]cty.Value{big, unknown}, maxFunctionWork)
+	size, _, _ := measureArgs([]cty.Value{big, unknown}, maxFunctionWork, maxFunctionWork)
 	m := &ParsedModule{}
 	if _, err := m.functions(nil, nil)["concat"].Call([]cty.Value{big, unknown}); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestFailedCallsPayForTheirArguments(t *testing.T) {
 	t.Parallel()
 	big := tupleOf(60_000, cty.StringVal("a"))
 	bad := cty.EmptyObjectVal // not a number: converting the index fails
-	sizes, _ := measureArgs([]cty.Value{big, bad}, maxFunctionWork)
+	sizes, _, _ := measureArgs([]cty.Value{big, bad}, maxFunctionWork, maxFunctionWork)
 	m := &ParsedModule{}
 	element := m.functions(nil, nil)["element"]
 	for i := range 3 {
@@ -105,7 +105,7 @@ func TestFailedCallsPayForTheirArguments(t *testing.T) {
 	// The arguments convert (concat takes any type), but concat's own type pass rejects a
 	// string.
 	str := cty.StringVal("x")
-	sizes, _ = measureArgs([]cty.Value{big, str}, maxFunctionWork)
+	sizes, _, _ = measureArgs([]cty.Value{big, str}, maxFunctionWork, maxFunctionWork)
 	concat := m.functions(nil, nil)["concat"]
 	for i := range 3 {
 		before := m.fnWork

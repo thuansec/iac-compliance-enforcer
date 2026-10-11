@@ -269,8 +269,10 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 	// measured is false when the arguments together pass the size limit, and affordable when
 	// the module can also pay for that work; a call is converted only then.
 	measure := func(args []cty.Value) (sizes []int, total, pre int, measured, affordable bool) {
-		sizes, measured = measureArgs(args, m.functionArgsLimit())
+		var sort int
+		sizes, sort, measured = measureArgs(args, m.functionArgsLimit(), m.workLeft()/2)
 		if !measured {
+			m.spendFunctionWork(sort) // the sorts of the walk done before it stopped
 			return sizes, 0, 0, false, false
 		}
 		for _, n := range sizes {
@@ -279,7 +281,9 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 		if before != nil {
 			_, pre = before(args, sizes)
 		}
-		pre = min(pre+m.conversionWork(f, args, unify, buildsSets), maxFunctionWork+1)
+		// Measuring the arguments sorted every set in them, and cty sorts them again when it
+		// walks them for marks before the call: twice the sort (T-0116d).
+		pre = min(pre+m.conversionWork(f, args, unify, buildsSets)+saturatingMul(sort, 2), maxFunctionWork+1)
 		return sizes, total, pre, true, m.canChargeFunctionWork(total, pre)
 	}
 	return function.New(&function.Spec{
@@ -405,20 +409,22 @@ func (m *ParsedModule) functionArgsLimit() int {
 	return min(maxFunctionValueSize, maxFunctionWork-m.fnWork)
 }
 
-// measureArgs returns the size of each of args, which together may not pass limit. ok is false
-// when they do; measuring stops there.
-func measureArgs(args []cty.Value, limit int) (sizes []int, ok bool) {
+// measureArgs returns the size of each of args, which together may not pass limit, and the sort
+// work of walking them (valueSizeWalk), which may not pass work. ok is false when either does;
+// measuring stops there.
+func measureArgs(args []cty.Value, limit, work int) (sizes []int, sort int, ok bool) {
 	sizes = make([]int, len(args))
 	total := 0
 	for i, a := range args {
-		n, ok := valueSize(a, limit-total, maxNesting)
+		n, w, ok := valueSizeWalk(a, limit-total, work-sort, maxNesting)
+		sort = min(sort+w, maxFunctionWork+1)
 		if !ok {
-			return sizes, false
+			return sizes, sort, false
 		}
 		sizes[i] = n
 		total += n
 	}
-	return sizes, true
+	return sizes, sort, true
 }
 
 // conversionWork is the work of the conversions f makes of args (ADR 0029, ADR 0032): an
@@ -500,6 +506,11 @@ func (m *ParsedModule) chargeFunctionWork(amounts ...int) bool {
 	}
 	m.fnWork += workSum(amounts)
 	return true
+}
+
+// workLeft is the function work m has left.
+func (m *ParsedModule) workLeft() int {
+	return max(maxFunctionWork-m.fnWork, 0)
 }
 
 // canChargeFunctionWork reports whether chargeFunctionWork would charge amounts.
