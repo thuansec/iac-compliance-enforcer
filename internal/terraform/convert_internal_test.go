@@ -137,12 +137,68 @@ func TestUnifyWalk(t *testing.T) {
 		"objects, same names":  {[]cty.Type{objectOf(8, cty.True).Type(), objectOf(8, cty.StringVal("a")).Type()}, pairs(2) + 8*pairs(2)},
 		"mixed":                {append(slices.Repeat([]cty.Type{tup(64)}, 16), str), pairs(17) + pairs(17)*65},
 		"objects, other names": {[]cty.Type{objectOf(80, cty.True).Type(), objectOf(79, cty.True).Type()}, pairs(2) + pairs(159)},
+		// Kinds cty does not unify structurally take its general path, charged like mixed
+		// types: no element types are unified (T-0114k).
+		"tuple and set":          {[]cty.Type{tup(64), cty.Set(str)}, pairs(2) + pairs(2)*65},
+		"tuples and a set":       {append(slices.Repeat([]cty.Type{tup(64)}, 16), cty.Set(str)), pairs(17) + pairs(17)*65},
+		"tuple, list and set":    {[]cty.Type{tup(64), cty.List(str), cty.Set(str)}, pairs(3) + pairs(3)*65},
+		"list of tuples and set": {[]cty.Type{cty.List(tup(64)), cty.Set(cty.List(str))}, pairs(2) + pairs(2)*66},
+		"object and tuple":       {[]cty.Type{objectOf(80, cty.True).Type(), tup(64)}, pairs(2)},
+		// A set of any makes cty unify the tuple's element types to convert it.
+		"tuple and set(any)": {[]cty.Type{tup(64), cty.Set(cty.DynamicPseudoType)}, pairs(2) + pairs(65)},
 	} {
 		w := &unifyWalk{limit: maxFunctionWork}
 		w.unify(tc.types)
 		if w.cost != tc.want {
 			t.Errorf("%s: cost %d, want %d", name, w.cost, tc.want)
 		}
+	}
+}
+
+// cty's general unify path, which TestUnifyWalk charges a walk of the types, is linear in
+// cty too. What a conditional's charge accepts, unifying the two results and converting both
+// to the unified type, finishes quickly in cty; a conversion that is quadratic (tuples into
+// lists of strings) is still refused (T-0114k review).
+func TestGeneralUnifyPathIsLinear(t *testing.T) {
+	t.Parallel()
+	rows := make([]cty.Value, 5_000) // distinct: equal compound elements count apart (T-0116c)
+	for i := range rows {
+		rows[i] = tupleOf(8, cty.StringVal(fmt.Sprint(i)))
+	}
+	for name, tc := range map[string]struct {
+		a, b     cty.Value
+		accepted bool
+	}{
+		"tuple and set":          {tupleOf(40_000, cty.StringVal("a")), cty.SetVal([]cty.Value{cty.StringVal("b")}), true},
+		"mixed tuple and set":    {tupleOf(40_000, cty.StringVal("a"), cty.NumberIntVal(1)), cty.SetVal([]cty.Value{cty.StringVal("b")}), true},
+		"list of tuples and set": {cty.ListVal(rows), cty.SetValEmpty(cty.List(cty.String)), true},
+		"doubled tuple and set":  {tupleOf(2, tupleOf(20_000, cty.StringVal("a"))), cty.SetValEmpty(cty.List(cty.String)), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cost := condConversionCost(tc.a, tc.b, maxFunctionWork)
+			if accepted := cost <= maxFunctionWork; accepted != tc.accepted {
+				t.Fatalf("cost %d, want accepted = %v", cost, tc.accepted)
+			}
+			if !tc.accepted {
+				return // quadratic in cty: 5 s for the doubled tuple
+			}
+			start := time.Now()
+			u, convs := convert.UnifyUnsafe([]cty.Type{tc.a.Type(), tc.b.Type()})
+			if u == cty.NilType {
+				t.Fatal("the types do not unify")
+			}
+			for i, v := range []cty.Value{tc.a, tc.b} {
+				if convs[i] != nil {
+					if _, err := convs[i](v); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if elapsed := time.Since(start); elapsed > time.Second*raceSlowdown {
+				t.Errorf("cty took %v for a charge of %d", elapsed, cost)
+			}
+		})
 	}
 }
 
@@ -318,4 +374,15 @@ func TestConvertedElementsKeepTheirTypes(t *testing.T) {
 	if w.cost < pairs(10_000) {
 		t.Errorf("cost %d, want at least %d", w.cost, pairs(10_000))
 	}
+}
+
+// valueConversionCost is the work of converting v to a type the walk does not know, beyond
+// the unification itself (valuePart).
+func valueConversionCost(v cty.Value, limit int) int {
+	w := &unifyWalk{limit: limit}
+	w.valuePart(v)
+	if w.over() {
+		return limit + 1
+	}
+	return w.total()
 }

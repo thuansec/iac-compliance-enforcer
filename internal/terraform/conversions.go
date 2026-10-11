@@ -104,6 +104,18 @@ func (w *unifyWalk) unifyAt(types []cty.Type, depth int) {
 		return
 	case dynamic > 0:
 		return // cty unifies to the dynamic type
+	case objects > 0 && tuples > 0 && objects+tuples == len(types):
+		return // cty fails at once
+	case !unifiesStructurally(len(types), tuples, objects, lists, sets, maps) &&
+		!slices.ContainsFunc(types, typeHasDynamic):
+		// cty unifies only some kinds structurally (unifiesStructurally); other mixes, such
+		// as a tuple and a set, take its general path like mixed types: each candidate is
+		// tried by building conversions from every type, which walk them but unify nothing,
+		// unless a target holds the dynamic type (then charged as below: converting a tuple
+		// to a set of any unifies its element types). T-0114k: a tuple of 40,000 strings and
+		// a set of strings unify in 0.6 ms.
+		w.add(saturatingMul(pairs(len(types)), w.largestType(types)))
+		return
 	case tuples == len(types) && sameLength(types):
 		for i := range types[0].TupleElementTypes() {
 			w.unifyAt(column(types, func(ty cty.Type) cty.Type { return ty.TupleElementTypes()[i] }), depth+1)
@@ -116,6 +128,18 @@ func (w *unifyWalk) unifyAt(types []cty.Type, depth int) {
 		// Tuples of different lengths, objects with different attributes, collections, or a
 		// mix of them: cty unifies all their element types together (or fails).
 		w.unifyAt(childTypes(types), depth+1)
+	}
+}
+
+// unifiesStructurally reports whether cty's unify takes a structural path for n types of these
+// kinds, which unifies their element or attribute types: all maps (or maps and objects), all
+// lists (or lists and tuples), all sets, all objects, or all tuples.
+func unifiesStructurally(n, tuples, objects, lists, sets, maps int) bool {
+	switch {
+	case maps > 0 && maps+objects == n, lists > 0 && lists+tuples == n:
+		return true
+	default:
+		return sets == n || objects == n || tuples == n
 	}
 }
 
@@ -209,10 +233,10 @@ func (w *unifyWalk) typeConversions(ty cty.Type) {
 
 // conversionCost is the work of converting v to want, as cty does (ADR 0029, ADR 0032), in the
 // units of unifyWalk, following cty's conversion path for the value and the target together
-// (convert): conversions that unify nothing cost nothing, such as a tuple into a set of strings
-// or an object into a map of strings. The values and types walked are added once there is a
-// cost. It stops counting past limit, and a value that takes more than limit steps to walk
-// costs more.
+// (convert): conversions that unify nothing cost nothing, such as an object into a map of
+// strings, except that a conversion into a set type always pays its hashing (setBuild). The
+// values and types walked are added once there is a cost. It stops counting past limit, and a
+// value that takes more than limit steps to walk costs more.
 func conversionCost(v cty.Value, want cty.Type, limit int) int {
 	return conversionCostWith(&unifyWalk{limit: limit}, v, want, false)
 }
@@ -408,7 +432,10 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 			w.add(maxFunctionWork + 1)
 			return
 		}
-		w.walked += weight // hashing formats it
+		// Hashing formats the element and inserting it allocates: real work even when no two
+		// elements share a hash (T-0114k: 40,000 distinct strings took 27 ms, about 680 ns
+		// each, so a walk counted only beside other costs left it free).
+		w.add(weight + setInsertWork)
 		if w.over() {
 			w.markDone()
 			return
@@ -443,6 +470,11 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 func (w *unifyWalk) markDone() {
 	w.done = max(w.done, min(w.cost+w.walked, maxFunctionWork+1))
 }
+
+// setInsertWork is the work of inserting one element into a set beyond hashing it: cty
+// allocates its hash bytes and a bucket entry (T-0114k: about 540 ns per repeated string,
+// whose hash is one byte long).
+const setInsertWork = 4
 
 // primitiveKey is a key equal for equal known primitive values and for nulls, and ok false for
 // any other value. A number's key is its exact decimal text, whose cost its comparison weight counts.
@@ -650,17 +682,6 @@ func typeHasCollection(ty cty.Type) bool {
 		}
 	}
 	return false
-}
-
-// valueConversionCost is the work of converting v to a type unified with another, beyond the
-// unification itself (valuePart).
-func valueConversionCost(v cty.Value, limit int) int {
-	w := &unifyWalk{limit: limit}
-	w.valuePart(v)
-	if w.over() {
-		return limit + 1
-	}
-	return w.total()
 }
 
 // unifyTypesCost is the work of unifying types together, as coalesce does with its arguments'

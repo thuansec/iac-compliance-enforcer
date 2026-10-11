@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -533,12 +533,13 @@ locations and without executing anything.
     - each path has a colliding-number regression test that finishes within the per-module time budget, and the reference's worst-case note drops its T-0116 exception for conversions (comparisons: T-0116b)
   - attempts: 1
   - result: converting into a set type is charged building the set as cty does (unifyWalk.setBuild): elements converted to the element type (numeric strings become numbers) and hashed at their comparison weight, each hash bucket of n elements, d distinct, costing d × weight + n × distinct weight; targets holding sets are charged as all colliding; conditionals, coalesce and tuples into list(any) are charged their conversion to the unified type when it holds a set; the set functions skip it (setBuildCosts charges it); a refused variable conversion spends the work the estimate really did (unifyWalk.done), not the estimate; follow-ups T-0116b, T-0116c, T-0114k
-- [ ] T-0114k · Charge a conditional's result conversions to the unified type exactly
+- [x] T-0114k · Charge a conditional's result conversions to the unified type exactly
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116
   - accept:
     - a conditional whose result types differ is charged converting each result to the type hcl unifies them to (conversionCost into convert.UnifyUnsafe of the two types, computed once its unification is charged), not ADR 0030's valuePart estimate, which counts unifying the element types of every tuple, object and map in the results: today `true ? <40,000 repeated strings> : toset(["b"])` is refused although converting it is linear (T-0116 review); keep the charge for every path that unifies, with parity tests against cty
-  - attempts: 0
+  - attempts: 1
+  - result: condConversionCost charges the unification twice (iace's UnifyUnsafe, then hcl's) plus conversionCost of each result into the unified type, replacing valuePart. unifyAt charges mixes outside cty's structural unify paths (a tuple and a set, for example) as its general path, a walk of the types; mixes holding `any` are still charged conservatively. setBuild charges hashing plus 4 per element as cost, measured at 40–120 ns per unit (ADR 0034). The 40,000-string conditional is known. Follow-ups: T-0116d, T-0123
 - [ ] T-0116b · Bound comparisons of values that hold sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116
@@ -551,6 +552,16 @@ locations and without executing anything.
     - the set-build estimate (unifyWalk.setBuild) no longer runs cty's full conversion of compound elements that cty then runs again, so an accepted conversion costs about its charge, not twice it (T-0116 review: 0.86 s of estimate plus 0.82 s of conversion for one `set(list(number))` value); either the estimate's conversions are charged or the hash is computed without converting compound elements, with a timing test
     - equal compound elements count once, as cty keeps one copy: `true ? <3,000 × {a = "x"}> : toset([{a = "y"}])` is known, not a coverage gap (key them by their hash bytes plus an equality check), with a colliding-but-distinct compound case still refused
     - the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s, about 14 times HEAD's 0.18 s (bounded by the tree budget); these shapes come back down with the fix
+  - attempts: 0
+- [ ] T-0116d · Charge walking sets of compound values
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116
+  - accept:
+    - iterating a set whose elements are lists, tuples, maps or objects is charged as cty does it. cty sorts by hash on every iteration, hashing both sides of each comparison (setRules.Less, makeSetHashBytes), so the cost is about n × log2(n) × the element weight. This applies wherever iace or cty walks such a set: argument measuring (measureArgs and valueSize), length, marks walks and conversions.
+    - The T-0114k review measured these, as regression tests within the per-module time budget:
+      - a `set(tuple([string × 7]))` variable from an 8k-entry tfvars plus 6 `length(var.s)` locals: 14.4 s at HEAD;
+      - `length(true ? var.t : toset([["a", …, "g"]]))` over 12k tuples of numbers: 3.7 s per local;
+      - iterating one 12k-element set of tuples: 0.69 s.
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
@@ -613,6 +624,13 @@ locations and without executing anything.
   - accept:
     - provider blocks are evaluated like resource bodies (values, unknown and sensitive paths, nested blocks such as assume_role, the same size limits and tree budgets) and recorded on ProviderConfig for the input document's providers array; credentials in provider blocks stay sensitive and redacted
     - a module call's providers map (`providers = { aws = aws.eu }`) is recorded, so a child resource's provider configuration can be traced to the caller's
+  - attempts: 0
+
+- [ ] T-0123 · Scale the fixed wall-clock limits of the terraform tests by raceSlowdown
+  - skills: iace-testing
+  - depends: none
+  - accept:
+    - timing assertions in internal/terraform that use a fixed limit under `-race` (for example TestConversionsOverNestedTuples at 5 s and TestConditionalsChargeConversions at 2 s) scale it by raceSlowdown, as the newer tests do. Under `-race` and the full parallel suite they each failed once at 5.12 s and 2.17 s, against 0.6 s and 0.3 s alone, on HEAD and on the T-0114k branch alike (T-0114k review). Without `-race` the limits are unchanged, so the bounds they prove still hold; an ADR or test note records why the race scale is not a weakening
   - attempts: 0
 
 ## M2 · Policy engine and walking skeleton — status: planned

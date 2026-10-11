@@ -569,6 +569,32 @@ func (m *ParsedModule) condFunctions() map[string]function.Function {
 	}
 }
 
+// condConversionCost is the work hcl does with a conditional's results t and f: unifying their
+// types (unifyTypesCost) and, when they differ, converting each to the type it unifies them to
+// (convert.UnifyUnsafe, as hcl does), along cty's conversion path (conversionCost). Finding that
+// type here unifies them once more, so the unification is charged twice then. Only the taken
+// result is converted, so this can over-count by the other. The unified type is computed once
+// its unification is charged; types that do not unify make hcl fail before converting.
+func condConversionCost(t, f cty.Value, limit int) int {
+	types := []cty.Type{t.Type(), f.Type()}
+	cost := unifyTypesCost(types, limit)
+	if cost > limit || t.Type().Equals(f.Type()) {
+		return cost
+	}
+	if cost = min(2*cost, maxFunctionWork+1); cost > limit {
+		return cost
+	}
+	u, _ := convert.UnifyUnsafe(types)
+	if u == cty.NilType {
+		return cost
+	}
+	cost = min(cost+conversionCost(t, u, limit-cost), maxFunctionWork+1)
+	if cost > limit {
+		return cost
+	}
+	return min(cost+conversionCost(f, u, limit-cost), maxFunctionWork+1)
+}
+
 // condFalseFunction is condFalseName for m: the false result, unchanged, after charging the
 // unification hcl is about to do with the recorded true result, if it will: not when either
 // result is a dynamic null or of the dynamic type. The charge is unifying the two types
@@ -594,21 +620,7 @@ func (m *ParsedModule) condFalseFunction(stateParam function.Parameter) function
 			case t.Type().IsPrimitiveType() && t.Type().Equals(f.Type()):
 				return f, nil // equal primitive types: nothing to unify or convert
 			}
-			limit := maxFunctionWork - m.fnWork
-			cost := unifyTypesCost([]cty.Type{t.Type(), f.Type()}, limit)
-			if !t.Type().Equals(f.Type()) {
-				// Converting a value can cost more than unifying the types: a map of lists
-				// converted to another map of lists unifies all its entries (T-0114e review).
-				cost = min(cost+valueConversionCost(t, limit)+valueConversionCost(f, limit), maxFunctionWork+1)
-				if cost <= limit && (typeHasSet(t.Type()) || typeHasSet(f.Type())) {
-					// The unified type can hold a set, and converting a result to it builds the
-					// set: charged as converting each result to the type hcl unifies them to,
-					// computed here once its unification is charged (T-0116).
-					if u, _ := convert.UnifyUnsafe([]cty.Type{t.Type(), f.Type()}); u != cty.NilType && typeHasSet(u) {
-						cost = min(cost+conversionCost(t, u, limit)+conversionCost(f, u, limit), maxFunctionWork+1)
-					}
-				}
-			}
+			cost := condConversionCost(t, f, maxFunctionWork-m.fnWork)
 			if m.chargeFunctionWork(cost) {
 				return f, nil
 			}

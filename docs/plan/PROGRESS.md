@@ -2306,3 +2306,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Round 3: APPROVE. It noted that set(list(any))-like defaults under many instances run about
     2.5 s, bounded by the tree budget; that note is cited in T-0116c.
 - Next: T-0115 (the next ready M1 task).
+
+## 2026-10-11 · T-0114k · done
+- What: a conditional whose result types differ is charged what hcl actually does, along cty's
+  path (ADR 0034).
+  - condConversionCost charges unifying the two types twice: iace finds the unified type with
+    convert.UnifyUnsafe, then hcl unifies again. It adds conversionCost of each result into
+    that type. This replaces ADR 0030's valuePart estimate.
+  - unifyAt follows cty's unify. Element types are unified only on its structural paths: all
+    maps, maps and objects, all lists, lists and tuples, all sets, all objects, all tuples. Any
+    other mix, such as a tuple and a set, takes cty's general path, which walks the types and
+    is charged like mixed types. A mix in which some type holds `any` is still charged
+    conservatively, and objects mixed with tuples fail at once.
+  - setBuild charges hashing plus setInsertWork (4) per element as cost. Since T-0116 the
+    hashing had counted only beside another cost, so a set of distinct values was free.
+  - valueConversionCost moved into the tests, its only remaining user.
+- Files: internal/terraform/{forexpr.go,conversions.go,condconv_internal_test.go,
+  convert_internal_test.go}, docs/adr/0034-charge-conditional-conversions-exactly.md (headers
+  of 0030 and 0032), docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass. Two earlier runs each failed one pre-existing timing test with a
+    fixed limit not scaled for the race detector (5.12 s against 5 s, 2.17 s against 2 s).
+    Both take the same time on HEAD; follow-up T-0123.
+  - `true ? <40,000 repeated strings> : toset(["b"])` is known; it was refused before. cty
+    unifies a 40k tuple and a set(string) in 0.6 ms, but iace charged the whole module budget.
+  - Timing sweep at 40k elements: 40–120 ns per unit for strings, numbers, repeated, mixed and
+    long strings. Objects of lists are about 200 ns per unit, the ADR 0032 gap.
+  - TestGeneralUnifyPathIsLinear: whatever the charge accepts runs in cty within 1 s, and a
+    quadratic doubled tuple is refused.
+  - TestUnifyWalk rows would fail on a revert. TestSetBuildChargesHashing is mutation-checked.
+  - The maps-of-lists and colliding-set conditionals stay refused.
+- Review: iace-reviewer, 2 rounds.
+  - Round 1: CHANGES_REQUIRED.
+    - Major: the parity test restated the implementation. Exact-cost rows and a test against
+      cty's own times were added.
+    - Minors: stale "costs nothing" wording (fixed); the repeat test is bounded by the
+      reference charge (kept, with an honest comment; locals' size limits stop the
+      alternative); the unification is done twice (now charged twice).
+    - Notes: a compound-set walk is uncharged, 14.4 s on HEAD: follow-up T-0116d.
+  - Round 2: APPROVE. Its minors: comment wrap (fixed) and the timing limits (T-0123).
+- Next: T-0116b, then T-0116c, T-0116d and T-0115.
