@@ -2480,3 +2480,44 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - The ns-per-unit gap of repeated colliding refusals (about 160) went to T-0116e.
   - T-0125 stays open, with this as progress and a per-package time check added.
 - Next: CI on PR #79, then merge.
+
+## 2026-10-11 · T-0116d · done
+- What: measuring a value charges the sorts cty does on every iteration of every set in it,
+  through valueSizeWalk (ADR 0036). An earlier iteration had left uncommitted work on
+  fix/T-0116d-set-walks, without marking the task `[~]`: the branch and its files named
+  T-0116d. This iteration resumed that work, then split the task and added the new T-0116f.
+  - Sort model, per set and level of its sort:
+    - compound elements: setSortWork plus their size;
+    - primitives: 2 plus an eighth of their size;
+    - non-integer numbers: 20 plus numberFormatCost;
+    - elements holding sets: their inner sorts × nestedSortFactor (4).
+  - A set whose lower-bound estimate passes the work left is refused before it is iterated.
+  - Charge sites:
+    - function arguments: twice the sort, with a refused measurement paying its sort;
+    - the locals estimate: variables, module values, paths and evaluated locals, refusals
+      included, and walking locals add their uses' sorts;
+    - for expressions: the collection twice its sort, references with theirs.
+- Files: internal/terraform/{setwalk.go,setwalk_internal_test.go,locals.go,functions.go,
+  forexpr.go,typepass_internal_test.go}, docs/adr/0036-charge-set-sorts-in-measuring-walks.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 480 s (546 s before two serial tests were
+    scaled to a quarter, T-0125).
+  - Timing sweep: 67–154 ns per unit for sets of 1k–8k strings, tuples, objects, integers,
+    halves, thirds and 512-bit fractions, and 67–99 for accepted sets of sets.
+  - Probes against main:
+    - 6 × `length(var.s)` over 8k seven-string tuples: 14.4 s → 0.8 s;
+    - 3 for loops over 12k tuples: 4.4 s → 1.2 s;
+    - 3 × `tolist(var.s)`: 16 s → 1.1 s;
+    - `length` of a set of 100 sets of 200 strings: 22.6 s → 2.7 s.
+  - Each new test fails without its change.
+  - TestEvaluateTreeBoundsTheWholeTree/expansion fails the non-race quick gate on this machine
+    on main too: 22–27 s against 20 s under package load, 4.4 s alone. The race-mode full gate
+    passes.
+- Review: iace-reviewer, CHANGES_REQUIRED, then APPROVE.
+  - Blocker fixed: a refused local now spends its walk (it had repeated for free, 16.9 s).
+  - Major fixed: sets of sets are charged their inner sorts per level.
+  - Minors fixed: a stale path sort, the typeSize bound, comment numbers, a timed region and
+    per-site fnWork tests.
+  - Moved to T-0116f: the first walk of a set of sets, which can't be counted up front.
+- Next: CI on the PR, then T-0116e, T-0116f, T-0124, T-0125.
