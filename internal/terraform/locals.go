@@ -1056,7 +1056,7 @@ func walksArguments(expr hcl.Expression) bool {
 		case *hclsyntax.FunctionCallExpr:
 			switch n.Name {
 			case forFunctionName, forRefsName, forElementsName, lookupFunctionName,
-				condBeginName, condTrueName, condFalseName:
+				condBeginName, condTrueName, condFalseName, cmpRightName:
 			default:
 				found = true
 			}

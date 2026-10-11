@@ -3,6 +3,7 @@ package terraform
 import (
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,10 @@ func collidingSet(n int) (tuple, set cty.Value) {
 	nums := collidingNumberVals(n)
 	return cty.TupleVal(nums), cty.SetVal(nums)
 }
+
+// colliding1500 is collidingSet(1_500), built once: building a set of colliding numbers
+// compares every pair, about 3 s, and ten times that under the race detector.
+var colliding1500 = sync.OnceValues(func() (tuple, set cty.Value) { return collidingSet(1_500) })
 
 // collidingNumberVals returns n numbers that share cty's number hash. Building a set of them takes
 // seconds, so tests that need only a tuple use this.
@@ -32,7 +37,7 @@ func collidingNumberVals(n int) []cty.Value {
 // such an expression is unknown with a limit warning.
 func TestConversionsIntoSetsAreBounded(t *testing.T) {
 	t.Parallel()
-	tup, set := collidingSet(1_500)
+	tup, set := colliding1500()
 	strs := make([]cty.Value, 1_500)
 	unknowns := make([]cty.Value, 8_000)
 	for i := range strs {

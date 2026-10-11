@@ -540,11 +540,13 @@ locations and without executing anything.
     - a conditional whose result types differ is charged converting each result to the type hcl unifies them to (conversionCost into convert.UnifyUnsafe of the two types, computed once its unification is charged), not ADR 0030's valuePart estimate, which counts unifying the element types of every tuple, object and map in the results: today `true ? <40,000 repeated strings> : toset(["b"])` is refused although converting it is linear (T-0116 review); keep the charge for every path that unifies, with parity tests against cty
   - attempts: 1
   - result: condConversionCost charges the unification twice (iace's UnifyUnsafe, then hcl's) plus conversionCost of each result into the unified type, replacing valuePart. unifyAt charges mixes outside cty's structural unify paths (a tuple and a set, for example) as its general path, a walk of the types; mixes holding `any` are still charged conservatively. setBuild charges hashing plus 4 per element as cost, measured at 40–120 ns per unit (ADR 0034). The 40,000-string conditional is known. Follow-ups: T-0116d, T-0123
-- [ ] T-0116b · Bound comparisons of values that hold sets
+- [x] T-0116b · Bound comparisons of values that hold sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116
   - accept:
     - `==` and `!=` over values that hold sets no longer compare every pair uncharged when cty number hashes collide: `var.s == var.s` over a set of 1,000 colliding numbers takes 2.7 s (T-0116 probe); hcl evaluates operators itself, not through iace's function table, so bound them in the rewritten syntax tree (for example capsule-decoded operand wrappers as in ADR 0033) with the pairwise charge of setComparisonWork; such a comparison is unknown with a limit warning, with a colliding-number regression test within the per-module time budget
+  - attempts: 1
+  - result: `==` and `!=` are rewritten like a conditional's results (__iace_cond_true(__iace_cond_begin(S), a) == __iace_cmp_right(S, b), ADR 0035), and the right wrapper charges any comparison cty recurses into: both operands' sizes, depth-weighted marks walks (3 per node and level, 3 per map key, set sorts), and per set pair the hashing plus hash buckets priced by the elements' own walks (one pair per side: two comparisons plus the inner sets). Over the limit the expression is unknown with "Comparison too large". setComparisonWork (a size product) was rejected because it refuses comparing large distinct sets. Timing sweep at most about 95 ns per unit. Follow-ups: T-0116d (now also the estimator's walks and the sorts of primitive sets), T-0116e
 - [ ] T-0116c · Keep set-build estimates exact for compound elements
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116
@@ -553,15 +555,23 @@ locations and without executing anything.
     - equal compound elements count once, as cty keeps one copy: `true ? <3,000 × {a = "x"}> : toset([{a = "y"}])` is known, not a coverage gap (key them by their hash bytes plus an equality check), with a colliding-but-distinct compound case still refused
     - the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s, about 14 times HEAD's 0.18 s (bounded by the tree budget); these shapes come back down with the fix
   - attempts: 0
-- [ ] T-0116d · Charge walking sets of compound values
+- [ ] T-0116d · Charge walking sets, compound values first
   - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0116
+  - depends: T-0116, T-0116b
   - accept:
     - iterating a set whose elements are lists, tuples, maps or objects is charged as cty does it. cty sorts by hash on every iteration, hashing both sides of each comparison (setRules.Less, makeSetHashBytes), so the cost is about n × log2(n) × the element weight. This applies wherever iace or cty walks such a set: argument measuring (measureArgs and valueSize), length, marks walks and conversions.
+    - the estimators' own walks are charged too: equalityCost (ADR 0035) iterates and hashes every set it charges before it can refuse (T-0116b review: 4.6 s for 30 sets of 500 strings, 16.4 s for 12 × 12 × 48 sets nested three deep, 3.3 s for 100 numbers with 8,192 fractional bits), as valueSize does
+    - sets of primitive values pay the sort too: every iteration sorts, and each comparison walks both elements for marks (T-0116b: comparing two sets of 4,000 distinct strings took 127 ms, almost all of it sorting). equalityCost's sort charge (setSortWork, compoundSortFactor, ADR 0035) is the calibrated model to reuse
     - The T-0114k review measured these, as regression tests within the per-module time budget:
       - a `set(tuple([string × 7]))` variable from an 8k-entry tfvars plus 6 `length(var.s)` locals: 14.4 s at HEAD;
       - `length(true ? var.t : toset([["a", …, "g"]]))` over 12k tuples of numbers: 3.7 s per local;
       - iterating one 12k-element set of tuples: 0.69 s.
+  - attempts: 0
+- [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0116b
+  - accept:
+    - equalityCost's set-sort charge (setSort: setSortWork per element and level) overcharges sets of one to four elements, which cty sorts cheaply. A list of 5,000 two-element sets is charged a third of the module's work for 57 ms (about 20 ns per unit), so about 15,000 such sets are refused at about 170 ms (T-0116b review). Calibrate small sets separately, for example a lower constant below some size, with a timing sweep that stays at or under about 120 ns per unit for small and large sets, and keep the large-set and colliding cases refused
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing

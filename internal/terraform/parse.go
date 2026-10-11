@@ -125,6 +125,9 @@ type ParsedModule struct {
 	// condLimited records that the unification charge of a conditional did not fit the
 	// function work left (condFalseFunction) during the current evaluation.
 	condLimited bool
+	// cmpLimited records that the charge of an equality operator over values that hold sets did
+	// not fit the function work left (cmpRightFunction) during the current evaluation.
+	cmpLimited bool
 	// forDiags are the diagnostics of the expressions the internal functions evaluated
 	// themselves (for-expression collections, lookup arguments) during the current evaluation,
 	// which evalExpr returns with hcl's.
