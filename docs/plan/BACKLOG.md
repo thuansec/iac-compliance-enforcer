@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0124
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -547,14 +547,15 @@ locations and without executing anything.
     - `==` and `!=` over values that hold sets no longer compare every pair uncharged when cty number hashes collide: `var.s == var.s` over a set of 1,000 colliding numbers takes 2.7 s (T-0116 probe); hcl evaluates operators itself, not through iace's function table, so bound them in the rewritten syntax tree (for example capsule-decoded operand wrappers as in ADR 0033) with the pairwise charge of setComparisonWork; such a comparison is unknown with a limit warning, with a colliding-number regression test within the per-module time budget
   - attempts: 1
   - result: `==` and `!=` are rewritten like a conditional's results (__iace_cond_true(__iace_cond_begin(S), a) == __iace_cmp_right(S, b), ADR 0035), and the right wrapper charges any comparison cty recurses into: both operands' sizes, depth-weighted marks walks (3 per node and level, 3 per map key, set sorts), and per set pair the hashing plus hash buckets priced by the elements' own walks (one pair per side: two comparisons plus the inner sets). Over the limit the expression is unknown with "Comparison too large". setComparisonWork (a size product) was rejected because it refuses comparing large distinct sets. Timing sweep at most about 95 ns per unit. Follow-ups: T-0116d (now also the estimator's walks and the sorts of primitive sets), T-0116e
-- [ ] T-0116c · Keep set-build estimates exact for compound elements
+- [x] T-0116c · Keep set-build estimates exact for compound elements
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116
   - accept:
     - the set-build estimate (unifyWalk.setBuild) no longer runs cty's full conversion of compound elements that cty then runs again, so an accepted conversion costs about its charge, not twice it (T-0116 review: 0.86 s of estimate plus 0.82 s of conversion for one `set(list(number))` value); either the estimate's conversions are charged or the hash is computed without converting compound elements, with a timing test
     - equal compound elements count once, as cty keeps one copy: `true ? <3,000 × {a = "x"}> : toset([{a = "y"}])` is known, not a coverage gap (key them by their hash bytes plus an equality check), with a colliding-but-distinct compound case still refused
-    - the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s, about 14 times HEAD's 0.18 s (bounded by the tree budget); these shapes come back down with the fix
-  - attempts: 0
+    - (moved to T-0124) the T-0116 review measured `set(list(any))`, `list(set(any))` and `map(set(any))` defaults under `count = 50/200/800` at about 2.5 s; T-0116c found that what dominates them is converting 512-bit numbers to strings, not the set build
+  - attempts: 1
+  - result: setBuild charges each repeat of cty's work before it runs: a compound element's conversion (conversionCostWith), a primitive's formatting (comparisonWeight), and for set(any) the tuple's unification again; the reviewer's set(list(number)) shape went from 0.87 s to 0.02 s. Equal values, compound ones included, count once through valueKey, an exact length-framed key. Bullet 3 moved to T-0124 (512-bit number formatting dominates those defaults, on main too). Follow-ups: T-0124, T-0125
 - [ ] T-0116d · Charge walking sets, compound values first
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116, T-0116b
@@ -572,6 +573,20 @@ locations and without executing anything.
   - depends: T-0116b
   - accept:
     - equalityCost's set-sort charge (setSort: setSortWork per element and level) overcharges sets of one to four elements, which cty sorts cheaply. A list of 5,000 two-element sets is charged a third of the module's work for 57 ms (about 20 ns per unit), so about 15,000 such sets are refused at about 170 ms (T-0116b review). Calibrate small sets separately, for example a lower constant below some size, with a timing sweep that stays at or under about 120 ns per unit for small and large sets, and keep the large-set and colliding cases refused
+  - attempts: 0
+- [ ] T-0124 · Charge converting numbers to strings by their precision
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116c
+  - accept:
+    - converting a number to a string costs about its precision, not its digits. HCL parses number literals at 512 bits, and cty converts them with exact decimal formatting: 14.5 µs for `123` at 512 bits against 1.5 µs at 64 bits, about 30 times its charge (comparisonWeight counts 5, numberFormatCost 0 for integers) (T-0116c probe). Every number-to-string conversion pays: conversions into string types (set(string), list(string), unified mixed tuples), string templates (`"${var.n}"`) and function arguments. Charge it from the number's precision and magnitude, with a timing sweep at or under about 120 ns per unit
+    - the set-build estimate (setBuild) formats each converted number a second time, charged only its comparisonWeight: on `count = 200`, `list(set(any))` took 2.9 s before T-0116 and 4.8 s after, `map(set(any))` 3.1 s and 5.1–5.5 s (T-0116c review). The precision-based charge covers that repeat as well as cty's conversion. A timing sweep over accepted `set(list(number))` values (T-0116c review: 117–126 ns per unit) guards both, scaled by raceSlowdown
+    - regression: a child module with a `list(set(any))` default of 300 rows `[i, i + 1, "x"]` under `count = 800` took 12.9 s, with 580 instances evaluated before the tree budget, about 3 times the budget's calibration; with the charge it finishes within about 4 s, as do `map(set(any))` and `set(list(any))` (T-0116 review)
+  - attempts: 0
+- [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
+  - skills: iace-testing, iace-quality-gates
+  - depends: none
+  - accept:
+    - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing

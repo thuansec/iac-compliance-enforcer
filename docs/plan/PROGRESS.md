@@ -2422,3 +2422,40 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Attempts: work set aside once in a stash while T-0123 fixed the flaky timing limits that
   blocked its gates.
 - Next: T-0116c, T-0116d, T-0116e, T-0115.
+
+## 2026-10-11 · T-0116c · done
+- What: the set-build estimate is exact for compound elements.
+  - setBuild charges each repeat of cty's work before running it, and stops first when over
+    the limit:
+    - a compound element's conversion;
+    - a primitive's formatting;
+    - the repeated unification of a tuple's element types into `set(any)`.
+  - Equal values, compound ones included, count once in a hash bucket, as cty keeps one copy.
+    valueKey is an exact key: length-framed primitive keys, elements in order, false at any
+    unknown.
+  - The third acceptance bullet moved to T-0124. Those `list(set(any))` and `map(set(any))`
+    defaults under many instances are as slow on main as on this branch: count = 200 takes
+    4.6 s, count = 800 takes 12.9 s with 580 instances before the tree budget.
+  - The profile shows the time goes to converting HCL's 512-bit numbers to strings: 14.5 µs
+    each, against 1.5 µs at 64 bits, charged about 5 units.
+- Files: internal/terraform/{conversions.go,setconv_internal_test.go},
+  docs/reference/terraform-functions.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass. The test step took 586–602 s, close to go test's 10-minute
+    timeout: follow-up T-0125.
+  - TestRepeatedCompoundSetValuesAreCheap: 3,000 repeated objects or lists convert cheaply,
+    and the T-0116 review's conditional is known. Colliding distinct objects are still
+    charged.
+  - TestSetBuildChargesItsOwnConversions: the reviewer's shape is now refused, 0.87 s → 0.02 s.
+  - TestSetBuildChargesItsRepeats: formatting and unifying twice.
+  - Each test is mutation-checked.
+- Review: iace-reviewer, APPROVE.
+  - valueKey matches cty's Equals in every probe, including precision, framing, nulls,
+    nested sets and marks.
+  - Typical set(object) rows cost 1.3% of the limit.
+  - The accepted set(list(number)) shapes measure 117–126 ns per unit.
+  - Minors:
+    - the reference row now names all three repeats;
+    - T-0124 now also covers the estimate's second number formatting and asks for a timing
+      sweep.
+- Next: T-0116d, T-0116e, T-0124, T-0125, T-0115.
