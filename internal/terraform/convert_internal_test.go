@@ -57,7 +57,7 @@ func TestConversionsOverLargeTuples(t *testing.T) {
 			start := time.Now()
 			m, v := evalLocal(t, expr, vars)
 			// Well under a second; converting took 2.5 to 10 s at these sizes.
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if v.IsKnown() {
@@ -106,7 +106,7 @@ func TestConversionsOverNestedTuples(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			m, v := evalLocal(t, expr, vars)
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if v.IsKnown() {

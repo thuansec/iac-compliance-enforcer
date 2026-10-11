@@ -2346,3 +2346,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     - Notes: a compound-set walk is uncharged, 14.4 s on HEAD: follow-up T-0116d.
   - Round 2: APPROVE. Its minors: comment wrap (fixed) and the timing limits (T-0123).
 - Next: T-0116b, then T-0116c, T-0116d and T-0115.
+
+## 2026-10-11 · T-0123 · done
+- What: the six fixed wall-clock limits in internal/terraform that were not scaled for the race
+  detector now multiply by raceSlowdown, like the newer tests.
+  - The limits: convert_internal_test.go at 5 s (2), conditional_internal_test.go at 5 s (3)
+    and 2 s (1).
+  - The raceSlowdown note (race_on_test.go, race_ext_on_test.go) gives the reasoning:
+    - Scaling is proportional. The race detector slows the bounded path and a regressed one
+      by the same factor, so the margin stays the same.
+    - The unscaled bounds are enforced by the quick gate. The full gate and CI run with -race
+      only.
+    - The 20 s and 120 s caps are sized for -race already.
+- Files: internal/terraform/{convert_internal_test.go,conditional_internal_test.go,
+  race_on_test.go,race_ext_on_test.go}, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - Before: TestConditionalsChargeConversions failed four full runs today (2.17–2.48 s against
+    2 s, 0.2–0.4 s alone), and TestConversionsOverNestedTuples one run (5.12 s against 5 s).
+    These failures blocked T-0116b.
+- Attempts: T-0116b is set aside in stash "T-0116b attempt 1: round-2 fixes done; gates blocked
+  by flaky unscaled timing test (T-0123)" on fix/T-0116b-set-comparisons. It resumes next.
+- Review: iace-reviewer, APPROVE.
+  - It found no other unscaled limit in internal/terraform. The fsutil FIFO hang detector stays
+    fixed, because it detects a block that never ends.
+  - Its three minors were fixed in the note: the proportional argument, which gate enforces
+    what, and the measured ratios.
+- Next: resume T-0116b.

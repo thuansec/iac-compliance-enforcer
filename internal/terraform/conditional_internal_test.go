@@ -49,7 +49,7 @@ func TestConditionalsOverLargeTuples(t *testing.T) {
 			start := time.Now()
 			m, v := evalLocal(t, tc.expr, vars)
 			// About 50 ms; unifying took over 10 s at this length.
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if v.IsKnown() != tc.known {
@@ -160,7 +160,7 @@ func TestConditionalsChargeTheType(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			m, _ := evalLocal(t, expr, vars)
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if !slices.ContainsFunc(m.Diagnostics, func(d Diagnostic) bool { return d.Summary == "Conditional too large" }) {
@@ -245,7 +245,7 @@ func TestConditionalsOverNestedTuples(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			m, v := evalLocal(t, expr, vars)
-			if elapsed := time.Since(start); elapsed > 5*time.Second {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if v.IsKnown() {
@@ -284,7 +284,7 @@ func TestConditionalsChargeConversions(t *testing.T) {
 			t.Parallel()
 			start := time.Now()
 			m, v := evalLocal(t, expr, vars)
-			if elapsed := time.Since(start); elapsed > 2*time.Second {
+			if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if v.IsKnown() || !slices.ContainsFunc(m.Diagnostics, func(d Diagnostic) bool { return d.Summary == "Conditional too large" }) {

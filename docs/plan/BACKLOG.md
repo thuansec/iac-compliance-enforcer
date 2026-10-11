@@ -626,12 +626,13 @@ locations and without executing anything.
     - a module call's providers map (`providers = { aws = aws.eu }`) is recorded, so a child resource's provider configuration can be traced to the caller's
   - attempts: 0
 
-- [ ] T-0123 · Scale the fixed wall-clock limits of the terraform tests by raceSlowdown
+- [x] T-0123 · Scale the fixed wall-clock limits of the terraform tests by raceSlowdown
   - skills: iace-testing
   - depends: none
   - accept:
     - timing assertions in internal/terraform that use a fixed limit under `-race` (for example TestConversionsOverNestedTuples at 5 s and TestConditionalsChargeConversions at 2 s) scale it by raceSlowdown, as the newer tests do. Under `-race` and the full parallel suite they each failed once at 5.12 s and 2.17 s, against 0.6 s and 0.3 s alone, on HEAD and on the T-0114k branch alike (T-0114k review). Without `-race` the limits are unchanged, so the bounds they prove still hold; an ADR or test note records why the race scale is not a weakening
-  - attempts: 0
+  - attempts: 1
+  - result: the six fixed 2 s and 5 s wall-clock limits in convert_internal_test.go and conditional_internal_test.go are scaled by raceSlowdown; the raceSlowdown note says why scaling is proportional, not a weakening, that the quick gate enforces the unscaled bounds while the full gate and CI run with -race, and which caps (20 s, 120 s) are already sized for -race
 
 ## M2 · Policy engine and walking skeleton — status: planned
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.
