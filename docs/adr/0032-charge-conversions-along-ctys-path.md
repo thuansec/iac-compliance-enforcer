@@ -4,6 +4,7 @@
 - Date: 2026-10-10
 - Task: T-0114g
 - Extends: ADR 0029, ADR 0031
+- Extended by: ADR 0034 (conditionals, cty's general unify path, set hashing)
 
 ## Context
 ADR 0029 charged a conversion from the value alone: every tuple, object or map in it cost
