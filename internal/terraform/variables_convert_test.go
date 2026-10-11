@@ -388,10 +388,12 @@ func TestRefusedSetVariablesSpendTheirEstimate(t *testing.T) { // not parallel: 
 // A set(any) value whose element types do not unify is refused, but finding that out unifies
 // them, which is real work: each refusal spends it, so a module instantiated many times reaches
 // the tree's budget instead of repeating the unification for free (T-0116 review: 50 instances
-// with four such defaults took 22 s).
+// with four such defaults took 22 s). With 25 instances of two, it takes about 6 s without both
+// guards, the work marked done after unifying and the early return before it when the repeated
+// unification does not fit (T-0116c review), against the 3 s limit.
 func TestRefusedSetAnyDefaultsSpendTheirUnification(t *testing.T) { // not parallel: it measures time
 	var child strings.Builder
-	for v := range 4 {
+	for v := range 2 {
 		fmt.Fprintf(&child, "variable \"x%d\" {\n  type    = set(any)\n  default = [{ x = 1 }", v)
 		for i := range 4_000 {
 			fmt.Fprintf(&child, ", \"%d\"", i)
@@ -399,7 +401,7 @@ func TestRefusedSetAnyDefaultsSpendTheirUnification(t *testing.T) { // not paral
 		child.WriteString("]\n}\n")
 	}
 	dir := files(t, map[string]string{
-		"main.tf":   "module \"c\" {\n  source = \"./c\"\n  count  = 50\n}\n",
+		"main.tf":   "module \"c\" {\n  source = \"./c\"\n  count  = 25\n}\n",
 		"c/main.tf": child.String(),
 	})
 	start := time.Now()

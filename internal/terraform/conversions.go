@@ -3,6 +3,8 @@ package terraform
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
@@ -398,8 +400,14 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 		target = v.Type().ElementType() // already one type: nothing to unify
 	default:
 		// cty converts a tuple's elements to their unified type first, and hashes them in it.
-		// The caller charged that unification, and the walk is not over.
-		if u, _ := convert.UnifyUnsafe(elementTypes(v)); u != cty.NilType {
+		// The caller charged that unification once, for cty; finding the type here repeats it,
+		// so it is charged again first (T-0116c).
+		types := elementTypes(v)
+		w.unify(types)
+		if w.over() {
+			return
+		}
+		if u, _ := convert.UnifyUnsafe(types); u != cty.NilType {
 			target = u
 		}
 	}
@@ -420,6 +428,19 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 		_, e := it.Element()
 		e, _ = e.UnmarkDeep()
 		if e.IsKnown() && !e.IsNull() && target != cty.DynamicPseudoType && !e.Type().Equals(target) {
+			// Converting an element repeats the conversion cty does, which the caller charged
+			// once: it is charged again before it runs, a compound element its conversion and
+			// a primitive its formatting (T-0116c).
+			if e.Type().IsPrimitiveType() {
+				weight, _ := comparisonWeight(e)
+				w.add(weight)
+			} else {
+				w.add(conversionCostWith(&unifyWalk{limit: w.limit - w.cost, noSetBuild: true}, e, target, false))
+			}
+			if w.over() {
+				w.markDone()
+				return
+			}
 			if c, err := convert.Convert(e, target); err == nil {
 				e = c // a numeric string becomes the number it hashes as
 			}
@@ -448,8 +469,8 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 		}
 		b.n++
 		b.weight = min(b.weight+weight, maxFunctionWork+1)
-		// cty keeps one copy of equal values. Unknown and compound values count as distinct.
-		if key, ok := primitiveKey(e); !ok || !b.seen[key] {
+		// cty keeps one copy of equal values. Values holding unknowns count as distinct.
+		if key, ok := valueKey(e); !ok || !b.seen[key] {
 			b.distinct++
 			b.distinctWeight = min(b.distinctWeight+weight, maxFunctionWork+1)
 			if ok {
@@ -475,6 +496,52 @@ func (w *unifyWalk) markDone() {
 // allocates its hash bytes and a bucket entry (T-0114k: about 540 ns per repeated string,
 // whose hash is one byte long).
 const setInsertWork = 4
+
+// valueKey is a key equal for equal values that hold no unknowns, compound ones included (cty
+// keeps one copy of them in a set, T-0116c), and ok false for any other value. Primitives use
+// primitiveKey, and collections, tuples, maps and objects their elements' keys in order,
+// framed so that no two different values share one. v must have been measured and its
+// comparison weight charged: the key is about that long.
+func valueKey(v cty.Value) (string, bool) {
+	var b strings.Builder
+	ok := appendValueKey(&b, v)
+	return b.String(), ok
+}
+
+// appendValueKey writes v's key to b, and reports false at the first unknown.
+func appendValueKey(b *strings.Builder, v cty.Value) bool {
+	if !v.IsKnown() {
+		return false
+	}
+	ty := v.Type()
+	if v.IsNull() || ty.IsPrimitiveType() {
+		key, ok := primitiveKey(v)
+		if !ok {
+			return false
+		}
+		b.WriteString(strconv.Itoa(len(key)))
+		b.WriteByte(':')
+		b.WriteString(key)
+		return true
+	}
+	if !v.CanIterateElements() {
+		return false // capsules: never in configurations
+	}
+	b.WriteByte('(')
+	for it := v.ElementIterator(); it.Next(); {
+		k, e := it.Element()
+		if ty.IsMapType() || ty.IsObjectType() {
+			if !appendValueKey(b, k) {
+				return false
+			}
+		}
+		if !appendValueKey(b, e) {
+			return false
+		}
+	}
+	b.WriteByte(')')
+	return true
+}
 
 // primitiveKey is a key equal for equal known primitive values and for nulls, and ok false for
 // any other value. A number's key is its exact decimal text, whose cost its comparison weight counts.

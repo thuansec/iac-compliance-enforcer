@@ -204,9 +204,10 @@ func TestLongTokensAreCharged(t *testing.T) {
 	}
 }
 
-// EvaluateRoots gives a scan without a budget a fresh one of MaxScanTokens: four 1 MiB operator
-// chains cost about 1.08M budget tokens each, so the fourth root is refused.
+// EvaluateRoots gives a scan without a budget a fresh one of MaxScanTokens: three 1 MiB operator
+// chains cost about 1.08M budget tokens each, so the third root is refused.
 func TestEvaluateRootsCreatesABudget(t *testing.T) {
+	t.Parallel()
 	limit := int(DefaultLimits().MaxFileSize)
 	src := "locals {\n  a = 1" + strings.Repeat("+1", limit/2-16) + "\n}\n"
 	r := budgetRoot(t, map[string]string{"a/main.tf": src, "b/main.tf": src, "c/main.tf": src})

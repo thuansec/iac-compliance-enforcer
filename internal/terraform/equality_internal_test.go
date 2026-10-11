@@ -165,11 +165,12 @@ func TestHandWrittenComparisonWrapperFails(t *testing.T) {
 }
 
 // Repeating a refused comparison stops at the module's work instead of costing seconds per
-// repetition (T-0116b). Each iteration pays its references to var.s (the for body's charge),
-// which bounds this before the refusal's own spending of the work it measured does: this guards
-// the end-to-end bound, and TestSetEqualityIsBounded the charge itself.
+// repetition (T-0116b): each refusal spends the work it charged, so the loop ends at about the
+// module's whole work (1.4 s without -race; with equalityCost removed it took 192 s, T-0116c
+// review). Each iteration also pays its references to var.s, but at 600 elements those alone no
+// longer stop it.
 func TestRepeatedRefusedComparisonsAreBounded(t *testing.T) { // not parallel: it measures time
-	_, colliding := colliding1500()
+	_, colliding := collidingSet(600) // refused, and quick to build
 	start := time.Now()
 	m, v := evalLocal(t, `[for i in range(200) : var.s == var.s]`, map[string]Variable{"s": {Name: "s", Value: colliding}})
 	if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
