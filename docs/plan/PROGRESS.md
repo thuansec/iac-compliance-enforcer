@@ -2521,3 +2521,13 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     per-site fnWork tests.
   - Moved to T-0116f: the first walk of a set of sets, which can't be counted up front.
 - Next: CI on the PR, then T-0116e, T-0116f, T-0124, T-0125.
+
+## 2026-10-12 · harness · thesis documentation step (owner request)
+- What: the loop now delegates to a local `iace-technical-writer` subagent after every merge
+  (new step 9a in the iace-loop skill, also reached from milestone wrap-up). The agent keeps the
+  owner's thesis chapters in the gitignored `materials/` in step with `main`; it never blocks the
+  loop. `.claude/agents/*` is gitignored for local-only agents (iace-reviewer stays tracked).
+- Files: .claude/skills/iace-loop/SKILL.md, .gitignore, docs/plan/PROGRESS.md
+- Evidence: `gates.sh full` 13 pass (hook tests included).
+- Review: harness and docs only; owner approved in an attended session.
+- Next: T-0116f.

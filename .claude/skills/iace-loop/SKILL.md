@@ -136,7 +136,8 @@ and the component skill. If a contract changes, update its reference doc and add
 - **Green (0)**: read `headRefOid`, `mergeable` and `mergeStateStatus` with `gh pr view <n> --json`,
   then `gh pr merge <n> --squash --delete-branch --match-head-commit <headRefOid>`. The guard
   re-verifies: open, not a draft, conflict-free, up to date with `main`, the latest run of every
-  workflow passed, `ci-ok` included. Then `git switch main && git pull --ff-only`.
+  workflow passed, `ci-ok` included. Then `git switch main && git pull --ff-only`, and document
+  the merge (step 9a).
   If `merge_pull_requests` is false, leave the PR for a human and end with `LOOP_STATUS: paused`.
 - **Red (1)**: the output names the failed jobs and the log command
   (`gh run view <run-id> --log-failed`). Fix on the branch, run the gates, commit, push, and wait
@@ -148,6 +149,14 @@ and the component skill. If a contract changes, update its reference doc and add
   iteration with `LOOP_STATUS: waiting`; the next iteration resumes at step 10.
 - **Unknown (3)**: run it once more. If it fails again, record the error as a `needs-human`
   blocker in PROGRESS and end with `LOOP_STATUS: blocked`.
+
+### 9a. Document for the thesis
+After a merge, on the updated `main`, delegate to the `iace-technical-writer` subagent with the
+task ID, PR number, merge commit and any new ADRs or measurements. It writes only under the
+gitignored `materials/`, so the tree stays clean. Delegate after every merged task, not only big
+ones: the writer decides what is worth documenting and summarizes small changes in aggregate.
+Put its `DOCS:` line in the iteration report. If the agent is not installed (`.claude/agents/` is
+gitignored) or it fails, note that in the report and carry on: documentation never blocks the loop.
 
 ### 10. PR follow-up (verdict `pr-open`)
 `git fetch origin && git switch <headRefName>`, read that branch's task and PROGRESS entries,
@@ -161,7 +170,8 @@ When the last task of a milestone is `[x]` on `main`, use a `chore/M<n>-wrap-up`
   follow-up tasks.
 - Set the milestone to `done`. If `pause_at_milestone_end: yes`, set the next milestone to
   `awaiting-approval`; otherwise set it to `active`.
-- Merge the PR as in step 9, then end the loop if paused. The human reviews and flips the status.
+- Merge the PR as in step 9; its step 9a delegation names the milestone, so the writer records
+  the milestone summary. Then end the loop if paused. The human reviews and flips the status.
 
 ### 12. Loop control
 - End every iteration with a short report (task, outcome, PR number, merge commit, what's next)
@@ -189,4 +199,5 @@ When the last task of a milestone is `[x]` on `main`, use a `chore/M<n>-wrap-up`
 - `scripts/ci_state.py [--sha SHA] [--wait] [--json]`: CI verdict for a commit from the Actions API, using the merge gate's rule (step 9).
 - `scripts/run-loop.sh [--max-iterations N] [--budget-usd X] ...`: fresh-context runner (`--help`).
 - `.claude/agents/iace-reviewer.md`: the independent reviewer used in step 6.
+- `.claude/agents/iace-technical-writer.md` (local, gitignored): keeps the thesis chapters in `materials/` current (step 9a).
 - `docs/ci/branch-workflow.md`, `.github/workflows/ci.yml`: the merge gate, CI and the optional GitHub ruleset.
