@@ -42,3 +42,6 @@ __pycache__/
 
 # materials
 /materials/
+
+# local-only subagents (already tracked agents, such as iace-reviewer, stay tracked)
+.claude/agents/*
