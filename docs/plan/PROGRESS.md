@@ -2557,3 +2557,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - The result line hands the review cases to T-0116i and T-0124, and T-0124 now has the
     8,192-bit case.
 - Next: CI on the PR, then T-0116g.
+
+## 2026-10-13 · T-0116g · done
+- What: the sensitivity checks reuse the measuring walk instead of a second, uncharged ContainsMarked walk that sorted every set again (ADR 0038).
+  - valueMarksWalk is valueSizeWalk that also reports marks; a walk that stops early reports
+    marked (fail closed).
+  - These now take their marks from their measurements: refused calls (measureArgs into
+    limited()), the locals estimate (inputsSensitive through b.marked and size, and evaluated
+    locals in evalLocal), and the resource decoder (references, count/each instances and
+    dynamic iterators).
+- Files: internal/terraform/{setwalk.go,functions.go,locals.go,resources.go,resources_dynamic.go,
+  resources_expand.go,setwalk_internal_test.go,typepass_internal_test.go},
+  docs/adr/0038-take-marks-from-the-measuring-walk.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 428 s.
+  - Regression: three locals `length(true ? var.t : toset([["a", …, "g"]]))` over a set of
+    12,000 seven-number tuples went from 1.67 s to 0.84 s, about one walk of the set. With the
+    same tuples passed as a tuple they went from 3.07 s to 2.0 s; the rest is cty's own marks
+    walk of the set the conditional's conversion builds (T-0116h).
+  - TestMarksChecksDoNotWalkAgain fails on the old call sites (2.06 s against a 0.96 s walk).
+  - The refused-call test fails 8 times when limited() ignores the marks.
+- Review: iace-reviewer, CHANGES_REQUIRED, then APPROVE.
+  - Major fixed: the refused-call test never reached limited(), because the locals estimate
+    refused first. A direct test now covers both refusal paths and the fail-closed case. The
+    old test was renamed for the locals' inputs it guards.
+  - Pre-existing gap recorded as T-0116j: a local refused as too large drops its marks.
+  - The first gate run caught a panic in a test that builds the budget without its sensitive
+    map; setMarked now creates the map, like setSort.
+- Next: CI on the PR, then T-0116h.

@@ -161,11 +161,12 @@ func placeholder() instanceSpec {
 func (d *resourceDecoder) setInstance(vars map[string]cty.Value) {
 	d.inst, d.instSizes, d.instSensitive = vars, map[string]int{}, map[string]bool{}
 	for name, v := range vars {
-		n, ok := valueSize(v, maxLocalValueSize, maxNesting)
+		// Its marks come from the same walk: ContainsMarked would sort its sets again.
+		n, _, marked, ok := valueMarksWalk(v, maxLocalValueSize, maxFunctionWork, maxNesting)
 		if !ok {
 			n = maxLocalValueSize + 1
 		}
-		d.instSizes[name], d.instSensitive[name] = n, v.ContainsMarked()
+		d.instSizes[name], d.instSensitive[name] = n, marked
 	}
 }
 

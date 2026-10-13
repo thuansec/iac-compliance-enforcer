@@ -245,7 +245,10 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 		}
 		l.Unknown = unknownPaths(l.Value)
 		m.usage.unknown += pathSteps(l.Unknown)
-		b.sensitive["local."+name] = l.Value.ContainsMarked()
+		if _, measured := b.sensitive["local."+name]; !measured {
+			// Not measured by evalLocal: an unknown result, which has no sets to sort.
+			b.setMarked("local."+name, l.Value.ContainsMarked())
+		}
 		out[name] = l
 		m.usage.locals, m.usage.refs = b.total, refEntries
 	}
@@ -386,17 +389,13 @@ func localReferences(s *localState, done map[string]Local, vars map[string]Varia
 }
 
 // inputsSensitive reports whether any local or variable s uses is, or contains, a sensitive
-// value. Each value is checked once, so many locals using one large value stay cheap.
+// value. A variable or module value is checked by its measurement (size), which records its
+// marks from the same walk: ContainsMarked would walk it again, sorting every set in it (0.8 s
+// for a set of 12,000 tuples, T-0116g). Each value is checked once, so many locals using one
+// large value stay cheap.
 func (b *localsBudget) inputsSensitive(s *localState) bool {
-	if s.allVars {
-		marked, ok := b.sensitive["var"]
-		if !ok {
-			marked = b.vars.ContainsMarked()
-			b.sensitive["var"] = marked
-		}
-		if marked {
-			return true
-		}
+	if s.allVars && b.marked("var") {
+		return true
 	}
 	for _, dep := range s.deps {
 		if b.sensitive["local."+dep] {
@@ -404,28 +403,26 @@ func (b *localsBudget) inputsSensitive(s *localState) bool {
 		}
 	}
 	for _, name := range s.mods {
-		key := "module." + name
-		marked, ok := b.sensitive[key]
-		if !ok {
-			marked = b.modules[name].ContainsMarked()
-			b.sensitive[key] = marked
-		}
-		if marked {
+		if b.marked("module." + name) {
 			return true
 		}
 	}
 	for _, name := range s.vars {
-		key := "var." + name
-		marked, ok := b.sensitive[key]
-		if !ok {
-			marked = b.vars.Type().HasAttribute(name) && b.vars.GetAttr(name).ContainsMarked()
-			b.sensitive[key] = marked
-		}
-		if marked {
+		if b.marked("var." + name) {
 			return true
 		}
 	}
 	return false
+}
+
+// marked reports whether the value of key ("var", "var.<name>" or "module.<name>") contains a
+// marked value, measuring it (size) if it was not measured yet. A measurement that stopped
+// reports marked (valueMarksWalk).
+func (b *localsBudget) marked(key string) bool {
+	if _, ok := b.sensitive[key]; !ok {
+		b.size(key)
+	}
+	return b.sensitive[key]
 }
 
 // localsBudget tracks the sizes of evaluated locals and variables against the limits.
@@ -445,7 +442,8 @@ type localsBudget struct {
 	// once up to maxLocalValueSize: the values never change once set, and many locals reading
 	// one path into a large value must not walk it each time.
 	pathSizes map[string]int
-	// sensitive caches whether "local.<name>" or "var.<name>" contains a sensitive value.
+	// sensitive caches whether "local.<name>", "var", "var.<name>" or "module.<name>" contains a
+	// marked value; size records it for all but locals.
 	sensitive map[string]bool
 	total     int
 	// totalWarned: a warning already says the locals together reached maxLocalsSize.
@@ -475,6 +473,14 @@ func (b *localsBudget) estimate(s *localState, limit int, done map[string]Local)
 		}
 	}
 	return est
+}
+
+// setMarked records whether the value of key contains a marked value, from its measurement.
+func (b *localsBudget) setMarked(key string, marked bool) {
+	if b.sensitive == nil {
+		b.sensitive = map[string]bool{}
+	}
+	b.sensitive[key] = marked
 }
 
 // setSort records the sort work of the value measured for key (sorts), and charges it: the
@@ -688,12 +694,13 @@ func (b *localsBudget) size(key string) int {
 		if n, ok := b.varSizes["\x00all"]; ok {
 			return n
 		}
-		n, sort, ok := valueSizeWalk(b.vars, maxLocalValueSize, b.m.workLeft(), maxNesting)
+		n, sort, marked, ok := valueMarksWalk(b.vars, maxLocalValueSize, b.m.workLeft(), maxNesting)
 		if !ok {
 			n = maxLocalValueSize + 1
 		}
 		b.varSizes["\x00all"] = n
 		b.setSort(key, sort)
+		b.setMarked(key, marked)
 		return n
 	}
 	if name, ok := strings.CutPrefix(key, "local."); ok {
@@ -703,25 +710,27 @@ func (b *localsBudget) size(key string) int {
 		if n, ok := b.varSizes[key]; ok {
 			return n
 		}
-		n, sort, ok := valueSizeWalk(b.modules[name], maxLocalValueSize, b.m.workLeft(), maxNesting)
+		n, sort, marked, ok := valueMarksWalk(b.modules[name], maxLocalValueSize, b.m.workLeft(), maxNesting)
 		if !ok {
 			n = maxLocalValueSize + 1
 		}
 		b.varSizes[key] = n // module values never change once set, and no variable has a dot
 		b.setSort(key, sort)
+		b.setMarked(key, marked)
 		return n
 	}
 	name, _ := strings.CutPrefix(key, "var.")
 	if n, ok := b.varSizes[name]; ok {
 		return n
 	}
-	n := 1
+	n, marked := 1, false
 	if b.vars.Type().HasAttribute(name) {
 		var sort int
-		n, sort, _ = valueSizeWalk(b.vars.GetAttr(name), maxLocalValueSize, b.m.workLeft(), maxNesting)
+		n, sort, marked, _ = valueMarksWalk(b.vars.GetAttr(name), maxLocalValueSize, b.m.workLeft(), maxNesting)
 		b.setSort(key, sort)
 	}
 	b.varSizes[name] = n
+	b.setMarked("var."+name, marked)
 	return n
 }
 
@@ -807,7 +816,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 			s.file, r.Start.Line, r.Start.Column)
 		return unknown
 	}
-	size, sort, ok := valueSizeWalk(val, maxLocalValueSize, m.workLeft(), maxNesting)
+	size, sort, marked, ok := valueMarksWalk(val, maxLocalValueSize, m.workLeft(), maxNesting)
 	if !ok {
 		// The walk done is spent, a refusal for sorting past the work left: the next local
 		// cannot repeat it for free (T-0116d review).
@@ -819,6 +828,7 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 	}
 	b.sizes[s.attr.Name] = size
 	b.setSort("local."+s.attr.Name, sort)
+	b.setMarked("local."+s.attr.Name, marked) // its marks, from the same walk (T-0116g)
 	b.total += size
 	return val
 }

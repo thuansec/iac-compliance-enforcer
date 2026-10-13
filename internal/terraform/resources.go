@@ -736,15 +736,17 @@ func (d *resourceDecoder) size(key string, v cty.Value) int {
 	if n, ok := d.sizes[key]; ok {
 		return n
 	}
-	n, ok := valueSize(v, maxLocalValueSize, maxNesting)
+	n, _, marked, ok := valueMarksWalk(v, maxLocalValueSize, maxFunctionWork, maxNesting)
 	if !ok {
 		n = maxLocalValueSize + 1
 	}
 	d.sizes[key] = n
+	d.sensitive[key] = marked // from the same walk: ContainsMarked would sort its sets again
 	return n
 }
 
-// isSensitive returns whether a variable or local's value contains a sensitive value, cached.
+// isSensitive returns whether a variable or local's value contains a sensitive value, cached:
+// size records it when it measures v, which a reference always does first.
 func (d *resourceDecoder) isSensitive(key string, v cty.Value) bool {
 	s, ok := d.sensitive[key]
 	if !ok {

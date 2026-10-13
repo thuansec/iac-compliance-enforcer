@@ -124,14 +124,15 @@ func (d *resourceDecoder) expandDynamic(spec dynamicSpec, path cty.Path, blocks 
 	entry := func(key, val cty.Value) {
 		saved, had := d.iters[iterName]
 		it := cty.ObjectVal(map[string]cty.Value{"key": key, "value": val})
-		size, fits := valueSize(it, maxLocalValueSize, maxNesting)
+		// Its marks come from the same walk: ContainsMarked would sort its sets again.
+		size, _, marked, fits := valueMarksWalk(it, maxLocalValueSize, maxFunctionWork, maxNesting)
 		if !fits {
 			size = maxLocalValueSize + 1
 		}
 		if d.iters == nil {
 			d.iters = map[string]iterator{}
 		}
-		d.iters[iterName] = iterator{val: it, size: size, sensitive: it.ContainsMarked() || len(marks) > 0}
+		d.iters[iterName] = iterator{val: it, size: size, sensitive: marked || len(marks) > 0}
 		e := spec.decode(len(blocks[name]))
 		if had {
 			d.iters[iterName] = saved
