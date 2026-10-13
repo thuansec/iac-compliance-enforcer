@@ -573,12 +573,19 @@ locations and without executing anything.
     - the estimators' own walks are charged or bounded before they run: equalityCost (ADR 0035) iterates and hashes every set it charges before it can refuse (T-0116b review: 4.6 s for 30 sets of 500 strings, 16.4 s for 12 × 12 × 48 sets nested three deep, 3.3 s for 100 numbers with 8,192 fractional bits); marksWalk and setSort iterate each set to count its sort; check them against valueSizeWalk's up-front estimate (ADR 0036)
   - attempts: 1
   - result: comparisons measure each operand with valueSizeWalk (refusing a set too costly to sort before iterating it) and charge size + sort + equalityEstimateWork (2 × (size + sort)) before equalityCost runs, refusing without it when that passes the work left (ADR 0037); refusing 20 sets of 200 strings costs one walk instead of about three plus cty's 1.9 s. The review's three cases still spend seconds in their first measuring walk: 30 × 500 strings and 12 × 12 × 48 nested sets belong to T-0116i, 100 × 8,192-bit numbers to T-0124. T-0116g and T-0116h hold the rest of the original task.
-- [ ] T-0116g · Charge the uncharged marks walks of sets
+- [x] T-0116g · Charge the uncharged marks walks of sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116f
   - accept:
     - the uncharged marks walks (ContainsMarked) sort every set they meet: the locals estimate's inputsSensitive (about 0.5 s for a 12,000-tuple set, T-0116d), and a refused call's limited() result. Charge them or reuse a measurement's result
     - regression: `length(true ? var.t : toset([["a", …, "g"]]))` over 12,000 tuples of numbers took 3.7 s per local (T-0114k review), and three such locals 1.8 s after T-0116d, within the per-module time budget
+  - attempts: 1
+  - result: valueMarksWalk measures a value and reports its marks from the same walk (a stopped walk reports marked, fail closed); refused calls, the locals estimate's inputs and evaluated locals, and the resource decoder's references, instances and dynamic iterators take their marks from their measurements instead of ContainsMarked (ADR 0038). Three locals over a set of 12,000 number tuples 1.67 s → 0.84 s (one walk); as a tuple 3.1 s → 2.0 s, the rest being cty's marks walk of the converted set (T-0116h). Follow-up: T-0116j
+- [ ] T-0116j · Keep the marks of a local refused as too large
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116g
+  - accept:
+    - evalLocal's refusal of a value too large to measure (valueMarksWalk not ok) drops the value's marks: `sensitive(<a value past the size limit>)` comes back as an unknown without the sensitive mark when its inputs are not sensitive (T-0116g review). The unknown keeps the marks the walk reached, or is marked (fail closed) when the walk stopped, with a test for each and the effect on too-large locals recorded
   - attempts: 0
 - [ ] T-0116h · Charge the sorts of sets that conversions iterate
   - skills: iace-terraform-parsing, iace-security, iace-testing

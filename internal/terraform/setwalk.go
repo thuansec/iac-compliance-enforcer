@@ -24,6 +24,15 @@ import (
 // work passes work. A refusal for sorting reports a size past limit and a sort past work, so
 // callers that only read the size still treat the value as too large.
 func valueSizeWalk(v cty.Value, limit, work, depth int) (size, sort int, ok bool) {
+	size, sort, _, ok = valueMarksWalk(v, limit, work, depth)
+	return size, sort, ok
+}
+
+// valueMarksWalk is valueSizeWalk, also reporting whether v contains a marked value, as
+// ContainsMarked does, from the same walk: ContainsMarked walks v again, sorting every set in it
+// (0.8 s for a set of 12,000 tuples, T-0116d). A walk that stops before the end reports marked,
+// since a mark may lie in what it did not reach (fail closed).
+func valueMarksWalk(v cty.Value, limit, work, depth int) (size, sort int, marked, ok bool) {
 	type item struct {
 		val   cty.Value
 		depth int
@@ -54,9 +63,10 @@ func valueSizeWalk(v cty.Value, limit, work, depth int) (size, sort int, ok bool
 		it := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if it.depth > depth {
-			return size, sort, false
+			return size, sort, true, false
 		}
-		val, _ := it.val.Unmark()
+		val, marks := it.val.Unmark()
+		marked = marked || len(marks) > 0
 		size++
 		ty := val.Type()
 		switch {
@@ -81,7 +91,7 @@ func valueSizeWalk(v cty.Value, limit, work, depth int) (size, sort int, ok bool
 				// Bounded by work too: perElement past it refuses anyway.
 				perElement := base + typeSize(ety, min(work, limit), depth-it.depth-1)/divisor
 				if saturatingMul(saturatingMul(n, bits.Len(uint(n))), perElement) > work {
-					return limit + 1, work + 1, false
+					return limit + 1, work + 1, true, false
 				}
 				sets = append(sets, open{
 					below: len(stack), start: size, n: n, base: base, divisor: divisor,
@@ -100,21 +110,21 @@ func valueSizeWalk(v cty.Value, limit, work, depth int) (size, sort int, ok bool
 				}
 				stack = append(stack, item{val: ev, depth: it.depth + 1})
 				if size+len(stack) > limit {
-					return size + len(stack), sort, false
+					return size + len(stack), sort, true, false
 				}
 			}
 		}
 		if size > limit {
-			return size, sort, false
+			return size, sort, true, false
 		}
 		if len(sets) > 0 {
 			closeSets(len(stack))
 			if sort > work {
-				return limit + 1, sort, false
+				return limit + 1, sort, true, false
 			}
 		}
 	}
-	return size, sort, true
+	return size, sort, marked, true
 }
 
 // nonIntegerSortWork is the extra work, per level of a sort, of an element of a set of numbers:

@@ -265,15 +265,16 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 		p.Type = cty.DynamicPseudoType
 		varParam = &p
 	}
-	// measure returns the arguments' sizes, their total and the work before converting them.
-	// measured is false when the arguments together pass the size limit, and affordable when
-	// the module can also pay for that work; a call is converted only then.
-	measure := func(args []cty.Value) (sizes []int, total, pre int, measured, affordable bool) {
+	// measure returns the arguments' sizes, their total, the work before converting them, and
+	// whether they contain a marked value (true when measuring stopped, measureArgs). measured
+	// is false when the arguments together pass the size limit, and affordable when the module
+	// can also pay for that work; a call is converted only then.
+	measure := func(args []cty.Value) (sizes []int, total, pre int, marked, measured, affordable bool) {
 		var sort int
-		sizes, sort, measured = measureArgs(args, m.functionArgsLimit(), m.workLeft()/2)
+		sizes, sort, marked, measured = measureArgs(args, m.functionArgsLimit(), m.workLeft()/2)
 		if !measured {
 			m.spendFunctionWork(sort) // the sorts of the walk done before it stopped
-			return sizes, 0, 0, false, false
+			return sizes, 0, 0, true, false, false
 		}
 		for _, n := range sizes {
 			total += n
@@ -284,7 +285,7 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 		// Measuring the arguments sorted every set in them, and cty sorts them again when it
 		// walks them for marks before the call: twice the sort (T-0116d).
 		pre = min(pre+m.conversionWork(f, args, unify, buildsSets)+saturatingMul(sort, 2), maxFunctionWork+1)
-		return sizes, total, pre, true, m.canChargeFunctionWork(total, pre)
+		return sizes, total, pre, marked, true, m.canChargeFunctionWork(total, pre)
 	}
 	return function.New(&function.Spec{
 		Description: f.Description(),
@@ -294,7 +295,7 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 			// cty calls Impl only when every argument is known, so the conversion here,
 			// which can build sets, is charged here: a call with an unknown argument would
 			// otherwise repeat it for free.
-			_, total, pre, measured, affordable := measure(args)
+			_, total, pre, _, measured, affordable := measure(args)
 			// When Impl will not run (cty skips it, or this pass fails), the walk measure just
 			// made is all that is done: it is charged here, once, or such calls would walk
 			// their arguments for free (T-0114j). Impl charges it otherwise.
@@ -332,16 +333,19 @@ func (m *ParsedModule) bounded(f function.Function, before, cost callCost, unify
 			return ty, err
 		},
 		Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+			argsLimit := m.functionArgsLimit()
+			sizes, total, pre, marked, measured, affordable := measure(args)
+			// limited is the refused call's result. Its marks come from the measurement, which
+			// walked the arguments already: ContainsMarked would walk them again, sorting every
+			// set in them (T-0116g).
 			limited := func() (cty.Value, error) {
 				m.fnLimited = true
 				unknown := cty.UnknownVal(retType)
-				if slices.ContainsFunc(args, cty.Value.ContainsMarked) {
+				if marked {
 					unknown = unknown.Mark(SensitiveMark) // fail closed
 				}
 				return unknown, nil
 			}
-			argsLimit := m.functionArgsLimit()
-			sizes, total, pre, measured, affordable := measure(args)
 			if !measured {
 				// Measuring stopped at argsLimit; a refused call still spends that work, so
 				// refused calls cannot repeat for free.
@@ -409,22 +413,24 @@ func (m *ParsedModule) functionArgsLimit() int {
 	return min(maxFunctionValueSize, maxFunctionWork-m.fnWork)
 }
 
-// measureArgs returns the size of each of args, which together may not pass limit, and the sort
-// work of walking them (valueSizeWalk), which may not pass work. ok is false when either does;
-// measuring stops there.
-func measureArgs(args []cty.Value, limit, work int) (sizes []int, sort int, ok bool) {
+// measureArgs returns the size of each of args, which together may not pass limit, the sort
+// work of walking them (valueSizeWalk), which may not pass work, and whether they contain a
+// marked value (valueMarksWalk). ok is false when either limit is passed; measuring stops there,
+// and marked is then true (fail closed).
+func measureArgs(args []cty.Value, limit, work int) (sizes []int, sort int, marked, ok bool) {
 	sizes = make([]int, len(args))
 	total := 0
 	for i, a := range args {
-		n, w, ok := valueSizeWalk(a, limit-total, work-sort, maxNesting)
+		n, w, m, ok := valueMarksWalk(a, limit-total, work-sort, maxNesting)
 		sort = min(sort+w, maxFunctionWork+1)
+		marked = marked || m
 		if !ok {
-			return sizes, sort, false
+			return sizes, sort, true, false
 		}
 		sizes[i] = n
 		total += n
 	}
-	return sizes, sort, true
+	return sizes, sort, marked, true
 }
 
 // conversionWork is the work of the conversions f makes of args (ADR 0029, ADR 0032): an

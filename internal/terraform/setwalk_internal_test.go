@@ -3,6 +3,7 @@ package terraform
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -252,5 +253,121 @@ func TestNestedSetSortsAreCharged(t *testing.T) {
 	// Each level of the outer sort sorts every inner set at least twice, once per side.
 	if nested < inners*2*levels {
 		t.Errorf("nested sort %d; want at least the inner sorts %d, twice per level of %d", nested, inners, levels)
+	}
+}
+
+// numberTupleSet is a set of n distinct seven-number tuples.
+func numberTupleSet(n int) cty.Value {
+	elems := make([]cty.Value, n)
+	for i := range elems {
+		row := make([]cty.Value, 7)
+		row[0] = cty.NumberIntVal(int64(i))
+		for j := 1; j < len(row); j++ {
+			row[j] = cty.NumberIntVal(int64(j))
+		}
+		elems[i] = cty.TupleVal(row)
+	}
+	return cty.SetVal(elems)
+}
+
+// The measuring walk reports marks as ContainsMarked does, wherever they are, and a walk that
+// stops before the end reports marked (fail closed), since it did not see the rest.
+func TestMeasuringReportsMarks(t *testing.T) {
+	t.Parallel()
+	secret := cty.StringVal("x").Mark(SensitiveMark)
+	for name, tc := range map[string]struct {
+		v      cty.Value
+		limit  int
+		marked bool
+	}{
+		"plain":            {cty.ListVal([]cty.Value{cty.StringVal("a")}), 100, false},
+		"deep in a list":   {cty.ObjectVal(map[string]cty.Value{"l": cty.ListVal([]cty.Value{cty.StringVal("a"), secret})}), 100, true},
+		"in a set":         {cty.TupleVal([]cty.Value{cty.SetVal([]cty.Value{secret, cty.StringVal("b")})}), 100, true},
+		"marked unknown":   {cty.UnknownVal(cty.String).Mark(SensitiveMark), 100, true},
+		"map value":        {cty.MapVal(map[string]cty.Value{"k": secret}), 100, true},
+		"stopped":          {tupleOf(50, cty.StringVal("a")), 10, true},
+		"plain set":        {tupleSet(100, 3), maxFunctionWork, false},
+		"plain set, short": {tupleSet(100, 3), 10, true},
+	} {
+		_, _, marked, _ := valueMarksWalk(tc.v, tc.limit, maxFunctionWork, maxNesting)
+		if marked != tc.marked {
+			t.Errorf("%s: marked %v, want %v", name, marked, tc.marked)
+		}
+		if _, _, ok := valueSizeWalk(tc.v, tc.limit, maxFunctionWork, maxNesting); ok && marked != tc.v.ContainsMarked() {
+			t.Errorf("%s: marked %v, ContainsMarked %v", name, marked, tc.v.ContainsMarked())
+		}
+	}
+}
+
+// A local whose input is sensitive stays sensitive when its call is refused: the locals estimate
+// takes the input's marks from measuring it (inputsSensitive).
+func TestRefusedLocalsKeepTheirInputsMarks(t *testing.T) {
+	t.Parallel()
+	s := tupleSet(12_000, 7) // measured by the local, too costly to walk for the call
+	for _, sensitive := range []bool{false, true} {
+		v := s
+		if sensitive {
+			v = s.Mark(SensitiveMark)
+		}
+		m, got := evalLocal(t, `length(var.s)`, map[string]Variable{"s": {Name: "s", Value: v}})
+		if got.IsKnown() || got.IsMarked() != sensitive {
+			t.Errorf("sensitive %v: got known %v, marked %v: %v", sensitive, got.IsKnown(), got.IsMarked(), m.Diagnostics)
+		}
+		if !slices.ContainsFunc(m.Diagnostics, func(d Diagnostic) bool { return d.Code == DiagFunctionLimit }) {
+			t.Errorf("sensitive %v: the call was not refused: %v", sensitive, m.Diagnostics)
+		}
+	}
+}
+
+// A refused call's unknown result takes its arguments' marks from measuring them, for
+// functions that accept marked arguments (cty marks the others' results itself), whether
+// measuring stopped or the call was not affordable. An argument too large to measure may hold a
+// mark measuring did not reach, so the result is marked (fail closed).
+func TestRefusedCallsKeepTheirArgumentsMarks(t *testing.T) {
+	t.Parallel()
+	plain := tupleOf(1_000, cty.StringVal("a"))
+	for name, tc := range map[string]struct {
+		left   int
+		arg    cty.Value
+		marked bool
+	}{
+		"not measured, sensitive":   {10, plain.Mark(SensitiveMark), true},
+		"not measured, plain":       {10, plain, true},
+		"not affordable, sensitive": {3_000, plain.Mark(SensitiveMark), true},
+		"not affordable, deep mark": {3_000, tupleOf(999, cty.StringVal("a"), cty.StringVal("x").Mark(SensitiveMark)), true},
+		"not affordable, plain":     {3_000, plain, false},
+	} {
+		for _, fn := range []string{"concat", "reverse"} {
+			m := &ParsedModule{fnWork: maxFunctionWork - tc.left}
+			got, err := m.functions(nil, nil)[fn].Call([]cty.Value{tc.arg})
+			if err != nil {
+				t.Fatalf("%s, %s: %v", name, fn, err)
+			}
+			if got.IsKnown() || !m.fnLimited || got.IsMarked() != tc.marked {
+				t.Errorf("%s, %s: known %v, limited %v, marked %v; want a refused unknown, marked %v",
+					name, fn, got.IsKnown(), m.fnLimited, got.IsMarked(), tc.marked)
+			}
+		}
+	}
+}
+
+// Whether a local's inputs are sensitive, and whether a refused call's arguments are, was a
+// ContainsMarked walk of each, sorting every set in it again without a charge: three locals
+// `length(true ? var.t : toset([["a", …, "g"]]))` over a set of 12,000 tuples of numbers took
+// 1.8 s after T-0116d, about two walks of the set (one of them that check). Both now come from
+// the measurements made anyway, so the locals cost about one walk (T-0116g).
+func TestMarksChecksDoNotWalkAgain(t *testing.T) { // not parallel: it measures time
+	s := numberTupleSet(12_000)
+	start := time.Now()
+	_, _, _ = valueSizeWalk(s, maxFunctionWork, maxFunctionWork, maxNesting)
+	walk := time.Since(start)
+	const local = `length(true ? var.t : toset([["a", "b", "c", "d", "e", "f", "g"]]))`
+	m := parseLocalsModule(t, "locals {\n  a = "+local+"\n  b = "+local+"\n  c = "+local+"\n}\n")
+	start = time.Now()
+	if _, err := m.EvaluateLocals(context.Background(), map[string]Variable{"t": {Name: "t", Value: s}}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > walk*3/2+100*time.Millisecond*raceSlowdown {
+		t.Errorf("took %v; one walk of the set takes %v", elapsed, walk)
 	}
 }
