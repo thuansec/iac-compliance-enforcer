@@ -304,3 +304,20 @@ func TestRefusedConversionsSpendTheirSorts(t *testing.T) {
 		t.Errorf("cost %d, done %d with limit %d; want refused, having done the sort it walked", cost, done, limit)
 	}
 }
+
+// A set whose elements hold sets sorts them again on every comparison of its own sort (each
+// comparison hashes both elements), so the conversion estimate charges the inner sets' sorts
+// per level of the outer sort, as valueSizeWalk does (nestedSortFactor), and the walks that
+// measure each element, which sort them too (T-0116i).
+func TestConvertingSetsOfSetsChargesTheInnerSorts(t *testing.T) {
+	t.Parallel()
+	s := setOfStringSets(8, 100)
+	_, sort, ok := valueSizeWalk(s, maxFunctionWork, maxFunctionWork, maxNesting)
+	if !ok {
+		t.Fatal("measuring refused")
+	}
+	// Converting to a list iterates the set twice, the estimate and cty, each costing a walk.
+	if cost := conversionCost(s, cty.List(cty.Set(cty.String)), maxFunctionWork); cost < 2*sort {
+		t.Errorf("cost %d, below twice the set's sort %d", cost, sort)
+	}
+}

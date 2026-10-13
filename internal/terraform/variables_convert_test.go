@@ -410,3 +410,72 @@ func TestRefusedSetAnyDefaultsSpendTheirUnification(t *testing.T) { // not paral
 		t.Errorf("evaluating %d instances took %v", len(instances), elapsed)
 	}
 }
+
+// setsSource is an HCL tuple of k tuples of n distinct strings.
+func setsSource(k, n int) string {
+	inner := make([]string, k)
+	for i := range inner {
+		s := make([]string, n)
+		for j := range s {
+			s[j] = fmt.Sprintf(`"u-%d-%d"`, i, j)
+		}
+		inner[i] = "[" + strings.Join(s, ", ") + "]"
+	}
+	return "[" + strings.Join(inner, ", ") + "]"
+}
+
+// cty sorts a set of sets before any walk can count the inner sets, hashing, and so sorting,
+// both elements' sets on every comparison: one walk of 100 sets of 200 strings took 2.7 s
+// (T-0116d). Such a value is bounded where it is made: every way a scan makes a set whose
+// elements hold sets (a variable's default, tfvars or --var value, toset, setunion, a
+// conditional) charges building it as if every element collided (setBuildCost: its weight
+// squared), so a set of sets holds at most a few thousand units and walks quickly. Larger ones
+// are refused before they exist (T-0116i). The bound sits below one 2.7 s walk, well above the
+// fixture's own parsing and converting (about 0.6 s under load). Optional() defaults are not
+// bounded yet (T-0116k).
+func TestSetsOfSetsAreBoundedWhereTheyAreMade(t *testing.T) {
+	t.Parallel()
+	src := setsSource(100, 200)
+	list := "variable \"t\" {\n  type    = list(list(string))\n  default = " + src + "\n}\n"
+	for name, tc := range map[string]struct {
+		files map[string]string
+		opts  terraform.VarOptions
+		local bool // the set is made by a local, not a variable
+	}{
+		"default": {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = set(set(string))\n  default = " + src + "\n}\n"}},
+		"tfvars": {
+			files: map[string]string{"main.tf": "variable \"t\" {\n  type = set(set(string))\n}\n", "a.tfvars": "t = " + src + "\n"},
+			opts:  terraform.VarOptions{VarFiles: []string{"a.tfvars"}},
+		},
+		"--var": {
+			files: map[string]string{"main.tf": "variable \"t\" {\n  type = set(set(string))\n}\n"},
+			opts:  terraform.VarOptions{Vars: []string{"t=" + src}},
+		},
+		"toset":       {files: map[string]string{"main.tf": list + "locals {\n  s = toset([for l in var.t : toset(l)])\n}\n"}, local: true},
+		"setunion":    {files: map[string]string{"main.tf": list + "locals {\n  s = setunion([for l in var.t : toset(l)])\n}\n"}, local: true},
+		"conditional": {files: map[string]string{"main.tf": list + "locals {\n  s = true ? [for l in var.t : toset(l)] : toset([toset([\"x\"])])\n}\n"}, local: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			start := time.Now()
+			m, vars, err := evalVars(t, ".", tc.files, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := vars["t"].Value
+			if tc.local {
+				locals, err := m.EvaluateLocals(t.Context(), vars)
+				if err != nil {
+					t.Fatal(err)
+				}
+				v = locals["s"].Value
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
+				t.Errorf("took %v", elapsed)
+			}
+			if v.IsKnown() {
+				t.Errorf("the set of sets was made: %v", codes(m))
+			}
+		})
+	}
+}

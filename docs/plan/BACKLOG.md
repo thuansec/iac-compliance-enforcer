@@ -595,12 +595,21 @@ locations and without executing anything.
     - conversions that iterate sets (conversionCostWith, condConversionCost, setBuild) charge the sort of each iteration of a set argument, as valueSizeWalk does
   - attempts: 1
   - result: the conversion estimate iterates sets through unifyWalk.elements, which charges one sort per iteration in valueSizeWalk's model (elementSortWork, 69–92 ns per unit), refuses before iterating when the lower bound (elementSortFloor) passes the limit, and records the sort as done so refused variable conversions spend it; converting a set charges cty's iteration too, and setBuild one sort of the set it builds (distinct elements) (ADR 0039). Three conditionals over 12,000 number tuples 2.1 s → 1.0 s; refusing a set of 40,000 tuples 2.6 s → immediate. Nested sets' inner sorts left to T-0116i
-- [ ] T-0116i · Bound the first walk of a set of sets
+- [x] T-0116i · Bound the first walk of a set of sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116f
   - accept:
-    - a set whose elements hold sets is sorted, hashing (and so sorting) every inner set per comparison, before any walk can count it: one walk of 100 sets of 200 strings takes about 2.7 s, of 50 sets of 500 about 3 s (T-0116d sweep); valueSizeWalk's up-front estimate sees only `set(set(string))`. Bound the inner sets' sizes where such values are made (variables, conversions, toset) or estimate them without iterating the outer set
+    - a set whose elements hold sets is sorted, hashing (and so sorting) every inner set per comparison, before any walk can count it: one walk of 100 sets of 200 strings takes about 2.7 s, of 50 sets of 500 about 3 s (T-0116d sweep); valueSizeWalk's up-front estimate sees only `set(set(string))`. Bound the inner sets' sizes where such values are made (variables, conversions, toset) or estimate them without iterating the outer set (done the first way: every path that makes such a set already charges setBuildCost's weight squared, ADR 0040)
     - the conversion estimate's per-iteration sort (unifyWalk.elements, ADR 0039) lacks valueSizeWalk's nested term (nestedSortFactor × levels × inner sorts) for sets whose elements hold sets, and comparisonWeight iterates, and so sorts, those inner sets uncharged: charge them as valueSizeWalk does (T-0116h review)
+  - attempts: 1
+  - result: sets of sets are bounded where they are made, except through optional() defaults (split to T-0116k). Every other path (variable defaults, tfvars, --var, module inputs, toset, setunion, conditionals) charges setBuildCost's weight squared, so a made set of sets holds at most about 2,900 units, and 100 sets of 200 strings are refused in under a second through each (TestSetsOfSetsAreBoundedWhereTheyAreMade). The conversion estimate gains valueSizeWalk's nested term and the element walks' inner sorts (ADR 0040). Plan JSON, not read yet, must keep the bound. Follow-ups: T-0116k, T-0127
+- [ ] T-0116k · Charge optional() defaults in type constraints
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116i
+  - accept:
+    - typeexpr.TypeConstraintWithDefaults converts each `optional(T, default)` default to T itself, uncharged: a `set(set(string))` default of 100 sets of 200 strings took 6.3 s to declare, and one `length(var.t.s)` local 18 s more, with only value_too_large after the walk (T-0116i review). Before calling typeexpr, evaluate each optional() default and charge its conversion to its attribute type (conversionCostDone, setBuild's weight squared for sets of sets), refusing the type as safeTypeExpr does when it does not fit; this bounds every collection conversion there (unification included), not only sets of sets
+    - defaults applied inside the elements of a set rebuild it with the defaults inserted, which the defaults charge does not count: `type = set(object({ k = string, s = optional(set(string), [200 strings]) }))` with 100 elements was declared with no diagnostic, and one `length(var.t)` took 4.4 s (T-0116i review). Charge the value after defaults (about the elements times the default's weight) and the rebuilt set's weight squared before applying them
+    - TestSetsOfSetsAreBoundedWhereTheyAreMade gains both cases
   - attempts: 0
 - [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
   - skills: iace-terraform-parsing, iace-testing
@@ -626,6 +635,12 @@ locations and without executing anything.
     - `sensitive(x)` evaluates to x marked sensitive, and `nonsensitive(x)` to x without the mark (Terraform's semantics, including its errors for nonsensitive of a value that is not sensitive, checked against the Terraform documentation), both bounded like any other function; today both are unsupported_function, so `password = sensitive(var.p)` is an unknown that is not recorded as sensitive (T-0116j)
     - a resource attribute set through sensitive() appears in the input document's sensitive paths; tests in locals, resources and module outputs
     - a local refused as too large, by its estimate or after evaluation, whose expression calls sensitive() is a marked unknown even with plain inputs: the estimate path treats a sensitive() call as a marked input, and evalLocal's refusal after evaluation adds that fact to inputsSensitive's (today the marks come only from inputs, T-0116j). TestTooLargeLocalsAreMarkedByTheirInputs gains such a case for each path
+  - attempts: 0
+- [ ] T-0127 · Mark a refused call's result only by marks its arguments can hold
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116g
+  - accept:
+    - since T-0116g, a refused call's unknown result is marked sensitive whenever measuring its arguments stopped (fail closed). Once a module's work is spent, measuring stops at once, so every later refused call's result is marked even with plain inputs: `n = length(local.s)` after a refused `toset` came back `DynamicVal.Mark("sensitive")` from plain variables (T-0116i probe). Decide, and record in an ADR, how to keep fail-closed without that over-marking: for example, check marks without sorting where no set is involved, or take the marks of values the locals estimate already measured. Tests: plain inputs after the work is spent stay unmarked, and a sensitive input stays marked
   - attempts: 0
 - [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
   - skills: iace-testing, iace-quality-gates

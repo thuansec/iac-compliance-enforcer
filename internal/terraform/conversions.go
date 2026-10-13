@@ -647,7 +647,8 @@ func (w *unifyWalk) eachElement(v cty.Value, f func(cty.Value)) {
 // elements returns the elements of the known collection, tuple or object v, in cty's order.
 // Iterating a set sorts it, every time (ADR 0036), so a set is charged the sort of one
 // iteration, the walk's own (elementSortWork per element and level, the element's comparison
-// weight as its size), and none is returned when the walk is over. A set whose sort cannot fit
+// weight as its size, plus the sorts of the sets inside it as valueSizeWalk counts them), and
+// none is returned when the walk is over. A set whose sort cannot fit
 // is refused before it is iterated: its lower bound (elementSortFloor) is charged first
 // (T-0116h).
 func (w *unifyWalk) elements(v cty.Value) []cty.Value {
@@ -672,12 +673,29 @@ func (w *unifyWalk) setElements(v cty.Value) ([]cty.Value, int) {
 		return nil, lower
 	}
 	sort := 0
+	nested := typeHasSet(v.Type().ElementType())
 	elems := make([]cty.Value, 0, n)
 	for it := v.ElementIterator(); it.Next(); {
 		_, e := it.Element()
 		weight, _ := comparisonWeight(e)
-		sort = min(sort+saturatingMul(elementSortWork(e, weight), levels), maxFunctionWork+1)
+		per := elementSortWork(e, weight)
+		if nested {
+			// Each comparison of the outer sort hashes both elements, sorting the sets inside
+			// them again, as valueSizeWalk charges (nestedSortFactor); measuring the element
+			// here and in comparisonWeight sorts them twice more (T-0116i).
+			_, inner, _ := valueSizeWalk(e, maxFunctionWork, max(w.limit-w.cost, 0), maxNesting)
+			per = min(per+saturatingMul(nestedSortFactor, inner), maxFunctionWork+1)
+			sort = min(sort+saturatingMul(2, inner), maxFunctionWork+1)
+		}
+		sort = min(sort+saturatingMul(per, levels), maxFunctionWork+1)
 		elems = append(elems, e)
+		if sort > w.limit-w.cost+lower {
+			// Past the limit: cty's iteration already sorted the set, but measuring the
+			// remaining elements would only add walks.
+			w.add(sort - lower)
+			w.markDone()
+			return nil, sort
+		}
 	}
 	// The iteration sorted the set: charged, then recorded as done, so a refused conversion
 	// spends it (conversionCostDone).
