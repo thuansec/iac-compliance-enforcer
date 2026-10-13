@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"math/bits"
 	"path"
 	"slices"
 	"strings"
@@ -359,6 +361,9 @@ func (m *ParsedModule) chargeConversion(v *varState, val cty.Value) bool {
 		return true
 	}
 	cost, done := conversionCostDone(val, v.ty, v.defaults != nil, maxFunctionWork-m.fnWork)
+	if v.defaults != nil && cost <= maxFunctionWork-m.fnWork {
+		cost = min(cost+defaultsGrowthCost(val, v.ty, v.defaults), maxFunctionWork+1)
+	}
 	if cost == 0 || m.chargeFunctionWork(cost) {
 		return true
 	}
@@ -368,6 +373,123 @@ func (m *ParsedModule) chargeConversion(v *varState, val cty.Value) bool {
 	// even an unrelated one; but the work done must count, or many variables would each do a
 	// module's worth (T-0116 review).
 	m.spendFunctionWork(done)
+	return false
+}
+
+// defaultsGrowthCost bounds what applying defaults adds to converting val to ty, which the
+// conversion estimate, made on val before defaults, cannot see (T-0116l): typeexpr inserts the
+// default values into every object that lacks them, and applies the child defaults to the
+// inserted values in turn, so each of val's objects can gain at most what the type's defaults
+// can insert into one object (insertedWeight). Each inserted value is walked, and its sets sorted, as
+// valueSizeWalk charges a walk (ADR 0036). When ty holds a set whose elements hold sets, the
+// outer set's first sort also pays, per level, each element's inserted size and nestedSortFactor
+// times its inserted sorts, since every comparison hashes both elements: one walk of 300 objects
+// that each gained a 200-string set took 4.1 s.
+func defaultsGrowthCost(val cty.Value, ty cty.Type, d *typeexpr.Defaults) int {
+	size, sort := insertedWeight(d)
+	if size == 0 {
+		return 0
+	}
+	k := objectCount(val, maxFunctionWork/max(size+sort, 1)+1)
+	cost := saturatingMul(k, size+sort)
+	if typeHasNestedSet(ty) {
+		per := min(size+saturatingMul(nestedSortFactor, sort), maxFunctionWork+1)
+		cost = min(cost+saturatingMul(saturatingMul(bits.Len(uint(k)), k), per), maxFunctionWork+1)
+	}
+	return cost
+}
+
+// insertedWeight bounds the size and walk sort (valueSizeWalk) of what applying the defaults d
+// can insert into any one object. An object takes the defaults of the one node of d's tree its
+// place in the value matches, so the bound is the largest of the nodes' insertions (each
+// component taken at its largest). A node inserts each of its default values, which typeexpr
+// grows in turn by applying the child defaults to it (Defaults.apply:
+// Children[key].apply(default)): so a default counts its own size, plus its objects times the
+// most the child's subtree can insert into one object. Each node is computed once (memo), so the
+// work is linear in the tree (computing a child for each of its uses doubled the work per
+// level, T-0116l review), and a chain of nested optional objects costs about its depth, while
+// defaults that hold many objects with defaults multiply. It saturates past maxFunctionWork.
+func insertedWeight(d *typeexpr.Defaults) (size, sort int) {
+	w := defaultsWeights{}.most(d)
+	return w[0], w[1]
+}
+
+// defaultsWeights memoizes insertedWeight by node.
+type defaultsWeights map[*typeexpr.Defaults][2]int
+
+// most is the most d's subtree can insert into one object, as {size, sort}.
+func (memo defaultsWeights) most(d *typeexpr.Defaults) [2]int {
+	if d == nil {
+		return [2]int{}
+	}
+	if w, ok := memo[d]; ok {
+		return w
+	}
+	var most, own [2]int
+	for _, key := range slices.Sorted(maps.Keys(d.Children)) {
+		c := memo.most(d.Children[key])
+		most = [2]int{max(most[0], c[0]), max(most[1], c[1])}
+	}
+	for _, key := range slices.Sorted(maps.Keys(d.DefaultValues)) {
+		if own[0]+own[1] > maxFunctionWork {
+			break
+		}
+		v := d.DefaultValues[key]
+		n, w, _ := valueSizeWalk(v, maxFunctionWork, maxFunctionWork, maxNesting)
+		if child := d.Children[key]; child != nil {
+			c := memo.most(child)
+			k := objectCount(v, maxFunctionWork)
+			n, w = min(n+saturatingMul(k, c[0]), maxFunctionWork+1), min(w+saturatingMul(k, c[1]), maxFunctionWork+1)
+		}
+		own = [2]int{min(own[0]+n, maxFunctionWork+1), min(own[1]+w, maxFunctionWork+1)}
+	}
+	most = [2]int{max(most[0], own[0]), max(most[1], own[1])}
+	memo[d] = most
+	return most
+}
+
+// objectCount counts the objects and maps in v, which typeexpr may insert defaults into, up to
+// limit. v is a value before conversion, already measured.
+func objectCount(v cty.Value, limit int) int {
+	n := 0
+	stack := []cty.Value{v}
+	for len(stack) > 0 && n <= limit {
+		val, _ := stack[len(stack)-1].Unmark()
+		stack = stack[:len(stack)-1]
+		if !val.IsKnown() || val.IsNull() || !val.CanIterateElements() {
+			continue
+		}
+		if ty := val.Type(); ty.IsObjectType() || ty.IsMapType() {
+			n++
+		}
+		for it := val.ElementIterator(); it.Next(); {
+			_, e := it.Element()
+			stack = append(stack, e)
+		}
+	}
+	return n
+}
+
+// typeHasNestedSet reports whether ty holds a set whose element type holds a set.
+func typeHasNestedSet(ty cty.Type) bool {
+	switch {
+	case ty.IsSetType():
+		return typeHasSet(ty.ElementType()) || typeHasNestedSet(ty.ElementType())
+	case ty.IsListType() || ty.IsMapType():
+		return typeHasNestedSet(ty.ElementType())
+	case ty.IsObjectType():
+		for _, at := range ty.AttributeTypes() {
+			if typeHasNestedSet(at) {
+				return true
+			}
+		}
+	case ty.IsTupleType():
+		for _, et := range ty.TupleElementTypes() {
+			if typeHasNestedSet(et) {
+				return true
+			}
+		}
+	}
 	return false
 }
 

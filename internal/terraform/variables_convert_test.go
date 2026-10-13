@@ -430,12 +430,17 @@ func setsSource(k, n int) string {
 // elements hold sets (a variable's default, tfvars or --var value, toset, setunion, a
 // conditional) charges building it as if every element collided (setBuildCost: its weight
 // squared), so a set of sets holds at most a few thousand units and walks quickly. Larger ones
-// are refused before they exist (T-0116i). The bound sits below one 2.7 s walk, well above the
-// fixture's own parsing and converting (about 0.6 s under load). Optional() defaults are not
-// bounded yet (T-0116k).
+// are refused before they exist (T-0116i), as are optional() defaults that make one (T-0116k,
+// T-0116l). The bound sits below one 2.7 s walk, well above the fixture's own parsing and
+// converting (about 0.6 s under load).
 func TestSetsOfSetsAreBoundedWhereTheyAreMade(t *testing.T) {
 	t.Parallel()
 	src := setsSource(100, 200)
+	objs := make([]string, 300)
+	for i := range objs {
+		objs[i] = fmt.Sprintf("{ k = \"%d\" }", i)
+	}
+	objects300 := strings.Join(objs, ", ")
 	list := "variable \"t\" {\n  type    = list(list(string))\n  default = " + src + "\n}\n"
 	for name, tc := range map[string]struct {
 		files map[string]string
@@ -451,9 +456,10 @@ func TestSetsOfSetsAreBoundedWhereTheyAreMade(t *testing.T) {
 			files: map[string]string{"main.tf": "variable \"t\" {\n  type = set(set(string))\n}\n"},
 			opts:  terraform.VarOptions{Vars: []string{"t=" + src}},
 		},
-		"toset":       {files: map[string]string{"main.tf": list + "locals {\n  s = toset([for l in var.t : toset(l)])\n}\n"}, local: true},
-		"setunion":    {files: map[string]string{"main.tf": list + "locals {\n  s = setunion([for l in var.t : toset(l)])\n}\n"}, local: true},
-		"conditional": {files: map[string]string{"main.tf": list + "locals {\n  s = true ? [for l in var.t : toset(l)] : toset([toset([\"x\"])])\n}\n"}, local: true},
+		"defaults inside a set": {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = set(object({ k = string, s = optional(set(string), " + setsSource(1, 200)[1:len(setsSource(1, 200))-1] + ") }))\n  default = [" + objects300 + "]\n}\n"}},
+		"toset":                 {files: map[string]string{"main.tf": list + "locals {\n  s = toset([for l in var.t : toset(l)])\n}\n"}, local: true},
+		"setunion":              {files: map[string]string{"main.tf": list + "locals {\n  s = setunion([for l in var.t : toset(l)])\n}\n"}, local: true},
+		"conditional":           {files: map[string]string{"main.tf": list + "locals {\n  s = true ? [for l in var.t : toset(l)] : toset([toset([\"x\"])])\n}\n"}, local: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -540,5 +546,124 @@ func TestOptionalDefaultsAreChargedBeforeTypeexpr(t *testing.T) {
 				t.Errorf("defaults applied %v, want %v: %#v", applied, tc.known, v)
 			}
 		})
+	}
+}
+
+// typeexpr applies optional() defaults to every object in a value before it is converted, so a
+// value of a few small objects can become a large set of sets that the conversion, charged on
+// the value before defaults, never counted: 100 elements of
+// set(object({ k = string, s = optional(set(string), [200 strings]) })) were declared with no
+// diagnostic, and one length() of them took 4.4 s (T-0116i review; 4.1 s for the locals of 300
+// here). The growth the defaults can add is charged first, so the variable is refused where it
+// is made (T-0116l).
+func TestDefaultsInsideSetsAreCharged(t *testing.T) {
+	t.Parallel()
+	strs := make([]string, 200)
+	for i := range strs {
+		strs[i] = fmt.Sprintf("%q", fmt.Sprint("u-", i))
+	}
+	def := "[" + strings.Join(strs, ", ") + "]"
+	elems := func(n int) string {
+		e := make([]string, n)
+		for i := range e {
+			e[i] = fmt.Sprintf("{ k = %q }", fmt.Sprint(i))
+		}
+		return "[" + strings.Join(e, ", ") + "]"
+	}
+	// levels nests n lists of objects with 30-object defaults around a set(string) default.
+	levels := func(n int, inner string) string {
+		ty := "object({ x = optional(set(string), " + inner + ") })"
+		for range n {
+			ty = "object({ l = optional(list(" + ty + "), [" + strings.Repeat("{}, ", 30) + "]) })"
+		}
+		return "list(" + ty + ")"
+	}
+	// chain nests n optional objects, each with a small default beside it.
+	chain := func(n int) string {
+		ty := "object({ b = optional(string, \"y\") })"
+		for range n {
+			ty = "object({ a = optional(" + ty + ", {}), b = optional(string, \"y\") })"
+		}
+		return ty
+	}
+	rules := func(n int) string {
+		e := make([]string, n)
+		for i := range e {
+			e[i] = fmt.Sprintf("{ cidr = \"10.0.%d.0/24\", ports = [80, 443] }", i)
+		}
+		return "[" + strings.Join(e, ", ") + "]"
+	}
+	for name, tc := range map[string]struct {
+		src   string
+		known bool
+	}{
+		"set of objects with a set default": {"variable \"t\" {\n  type    = set(object({ k = string, s = optional(set(string), " + def + ") }))\n  default = " + elems(300) + "\n}\nlocals {\n  n = length(var.t)\n}\n", false},
+		"few elements, small default":       {"variable \"t\" {\n  type    = set(object({ k = string, s = optional(set(string), [\"a\", \"b\"]) }))\n  default = " + elems(10) + "\n}\nlocals {\n  n = length(var.t)\n}\n", true},
+		// Child defaults apply inside inserted defaults, multiplying them (T-0116l review: 40
+		// elements each gaining 50 objects that each gain a 200-string set were known after 3 s,
+		// and two length() locals took 43.8 s); four levels of 30 objects take 5.1 s and 414 MB in
+		// Apply itself on main.
+		"defaults within defaults": {"variable \"t\" {\n  type    = set(object({ k = string, s = optional(list(object({ x = optional(set(string), " + def + ") })), [" + strings.Repeat("{}, ", 50) + "]) }))\n  default = " + elems(40) + "\n}\nlocals {\n  n = length(var.t)\n}\n", false},
+		"four levels":              {"variable \"t\" {\n  type    = " + levels(4, def) + "\n  default = [{}]\n}\nlocals {\n  n = length(var.t)\n}\n", false},
+		// A chain of 40 nested optional objects is computed once per level, not twice: the
+		// estimate doubled per level, so a short type could hang the scan (T-0116l review).
+		"deep chain": {"variable \"t\" {\n  type    = list(" + chain(40) + ")\n  default = [{}]\n}\nlocals {\n  n = length(var.t)\n}\n", true},
+		// Security group rules with small optional defaults stay cheap: the default's growth is
+		// charged as a walk prices it, not squared.
+		"rules with small defaults": {"variable \"t\" {\n  type    = set(object({ cidr = string, ports = optional(set(number), []), desc = optional(string, \"managed\") }))\n  default = " + rules(200) + "\n}\nlocals {\n  n = length(var.t)\n}\n", true},
+		"list of objects, linear":   {"variable \"t\" {\n  type    = list(object({ k = string, s = optional(list(string), " + def + ") }))\n  default = " + elems(100) + "\n}\nlocals {\n  n = length(var.t)\n}\n", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			start := time.Now()
+			m, vars, err := evalVars(t, ".", map[string]string{"main.tf": tc.src}, terraform.VarOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The variable is refused where it is made, not at its first use (4.1 s at 300).
+			if v := vars["t"].Value; v.IsKnown() != tc.known {
+				t.Errorf("variable known %v, want %v: %v", v.IsKnown(), tc.known, codes(m))
+			}
+			locals, err := m.EvaluateLocals(t.Context(), vars)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
+				t.Errorf("took %v", elapsed)
+			}
+			if n := locals["n"].Value; n.IsKnown() != tc.known {
+				t.Errorf("length known %v, want %v: %v", n.IsKnown(), tc.known, codes(m))
+			}
+		})
+	}
+}
+
+// Module inputs are converted to the child's variable type like any value, defaults included:
+// a parent passing 300 objects that the child's defaults would each give a 200-string set is
+// refused in the child with value_too_large (T-0116l review).
+func TestModuleInputDefaultsInsideSetsAreCharged(t *testing.T) {
+	t.Parallel()
+	strs := make([]string, 200)
+	for i := range strs {
+		strs[i] = fmt.Sprintf("%q", fmt.Sprint("u-", i))
+	}
+	objs := make([]string, 300)
+	for i := range objs {
+		objs[i] = fmt.Sprintf("{ k = \"%d\" }", i)
+	}
+	dir := files(t, map[string]string{
+		"main.tf":     "module \"net\" {\n  source = \"./net\"\n  t      = [" + strings.Join(objs, ", ") + "]\n}\n",
+		"net/main.tf": "variable \"t\" {\n  type = set(object({ k = string, s = optional(set(string), [" + strings.Join(strs, ", ") + "]) }))\n}\n",
+	})
+	start := time.Now()
+	vars, child, _ := childVariables(t, dir, "net")
+	if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
+		t.Errorf("took %v", elapsed)
+	}
+	if vars["t"].Value.IsKnown() {
+		t.Errorf("known: %v", diagLines(child))
+	}
+	if !slices.ContainsFunc(child.Diagnostics, func(d terraform.Diagnostic) bool { return d.Code == terraform.DiagValueTooLarge }) {
+		t.Errorf("no value_too_large: %v", diagLines(child))
 	}
 }

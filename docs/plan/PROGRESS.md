@@ -2705,3 +2705,42 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - spend the evaluation's work on a refusal;
   - test the tuple, map and 3-argument walks.
 - Next: CI on the PR, then T-0116l.
+
+## 2026-10-13 · T-0116l · done
+- What: what optional() defaults add to a value is charged before typeexpr inserts them
+  (ADR 0042).
+  - chargeConversion adds defaultsGrowthCost: the objects in the value (objectCount, with a
+    limit) times the most the type's defaults can insert into one object (insertedWeight).
+  - When the type holds a set of sets, it also adds the outer sort's per-level inserted size and
+    nestedSortFactor × the inserted sorts.
+  - insertedWeight takes the largest insertion of any one node. Each default counts its size
+    plus its objects times its child's most, because typeexpr applies child defaults to inserted
+    defaults. Nodes are memoized, so the work is linear in the type.
+  - The charge is skipped when the estimate is already past the work left.
+- Files: internal/terraform/{variables.go,variables_convert_test.go},
+  docs/adr/0042-charge-what-optional-defaults-add.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 455 s.
+  - TestDefaultsInsideSetsAreCharged refuses three cases at declaration. All three fail on main:
+    - 300 objects gaining a 200-string set: the locals took 4.1–4.5 s on main;
+    - defaults within defaults: 28.8 s on main;
+    - four levels of 30-object list defaults: 8 min 58 s on main.
+  - TestDefaultsInsideSetsAreCharged keeps three cases known: a 40-deep chain of optional
+    objects (0.03 s), 200 security group rules with small defaults, and a linear list case.
+  - TestModuleInputDefaultsInsideSetsAreCharged refuses a module input with value_too_large and
+    fails on main.
+  - TestSetsOfSetsAreBoundedWhereTheyAreMade gains the "defaults inside a set" case.
+  - Calibration: accepted values with the 200-string default (up to about 40 elements) walk in
+    0.4–0.55 s on first use, about 100 ns per unit.
+- Review: iace-reviewer; CHANGES_REQUIRED twice, then APPROVE.
+  - First blocker fixed: summing the defaults flat ignored child defaults applied inside
+    inserted ones (43.8 s).
+  - Second blocker fixed: the recursion computed each child per use, doubling per level, so a
+    short type could hang the scan.
+  - Minors fixed: the charge is skipped once the estimate is past the limit, objectCount has a
+    limit, and module inputs have a test.
+  - A first attempt that squared the weight refused 100 realistic rules; the walk model replaces
+    it.
+  - Residual, no task: a default set whose elements gain nested sets is charged linearly. It is
+    bounded today at about 0.5 s to declare and 0.25 s per walk, and the walk charges refuse it.
+- Next: CI on the PR, then the next ready task.
