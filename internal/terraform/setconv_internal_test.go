@@ -2,12 +2,14 @@ package terraform
 
 import (
 	"fmt"
+	"math/bits"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // collidingSet returns n numbers that share cty's number hash (it hashes ten significant
@@ -222,5 +224,83 @@ func TestRefusedSetAnyConversionReportsItsWork(t *testing.T) {
 	cost, done := conversionCostDone(v, cty.Set(cty.DynamicPseudoType), false, maxFunctionWork)
 	if cost <= maxFunctionWork || done < 3_000 {
 		t.Errorf("cost %d, done %d; want refused with the hashing of 3,000 elements done", cost, done)
+	}
+}
+
+// Converting a tuple into a set builds a set that whatever receives it iterates, and so sorts,
+// at least once: cty walks a function's arguments for marks before anything can measure them.
+// Three locals `length(true ? var.t : toset([["a", …, "g"]]))` over a tuple of 12,000 tuples of
+// numbers took 2.0 s (T-0116g): each local converted the tuple, and cty walked each set built,
+// sorting it, for free. The conversion now charges the built set's sort, so the first local
+// uses most of the module's work and the others are refused before converting: the three cost
+// about the first one, a few times its conversion estimate (T-0116h).
+func TestConversionsChargeTheSetsTheyBuild(t *testing.T) { // not parallel: it measures time
+	tup := cty.TupleVal(numberTupleSet(12_000).AsValueSlice())
+	start := time.Now()
+	condConversionCost(tup, cty.SetVal([]cty.Value{cty.ListVal([]cty.Value{cty.StringVal("a")})}), maxFunctionWork)
+	estimate := time.Since(start)
+	const local = `length(true ? var.t : toset([["a", "b", "c", "d", "e", "f", "g"]]))`
+	m := parseLocalsModule(t, "locals {\n  a = "+local+"\n  b = "+local+"\n  c = "+local+"\n}\n")
+	start = time.Now()
+	if _, err := m.EvaluateLocals(t.Context(), map[string]Variable{"t": {Name: "t", Value: tup}}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*estimate+100*time.Millisecond*raceSlowdown {
+		t.Errorf("took %v; one conversion estimate takes %v", elapsed, estimate)
+	}
+	// The charge covers one sort of the set built, as measuring it would count it.
+	rows := make([]cty.Value, 1_000)
+	for i := range rows {
+		rows[i] = tupleOf(4, cty.StringVal(fmt.Sprint(i)))
+	}
+	want := cty.Set(cty.List(cty.String))
+	built, err := convert.Convert(cty.TupleVal(rows), want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sort, _ := valueSizeWalk(built, maxFunctionWork, maxFunctionWork, maxNesting)
+	if cost := conversionCost(cty.TupleVal(rows), want, maxFunctionWork); cost < sort {
+		t.Errorf("cost %d, below the built set's sort %d", cost, sort)
+	}
+}
+
+// Converting a set iterates it twice, the estimate and cty, each sorting it: the cost covers
+// both sorts. A set too costly to sort is refused before the estimate iterates it.
+func TestConvertingSetsChargesTheirSorts(t *testing.T) {
+	t.Parallel()
+	s := tupleSet(1_000, 4)
+	_, sort, _ := valueSizeWalk(s, maxFunctionWork, maxFunctionWork, maxNesting)
+	if cost := conversionCost(s, cty.List(cty.List(cty.String)), maxFunctionWork); cost < 2*sort {
+		t.Errorf("cost %d, below twice the set's sort %d", cost, sort)
+	}
+	big := tupleSet(40_000, 7)
+	start := time.Now()
+	if cost := conversionCost(big, cty.List(cty.List(cty.String)), maxFunctionWork/4); cost <= maxFunctionWork/4 {
+		t.Errorf("accepted at %d", cost)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond*raceSlowdown {
+		t.Errorf("refusing took %v; want no iteration", elapsed)
+	}
+}
+
+// A refused conversion spends the work its estimate did (conversionCostDone), the sorts of the
+// sets it iterated included: a set whose lower bound fits but whose sort does not is iterated,
+// and so sorted, before it is refused, and a refused variable conversion must not repeat that
+// for free (T-0116h review: 0.35 s of sorting spent as its lower bound alone).
+func TestRefusedConversionsSpendTheirSorts(t *testing.T) {
+	t.Parallel()
+	s := tupleSet(700, 50)
+	_, sort, ok := valueSizeWalk(s, maxFunctionWork, maxFunctionWork, maxNesting)
+	if !ok {
+		t.Fatal("measuring refused")
+	}
+	floor := 700 * bits.Len(700) * elementSortFloor(s.Type().ElementType(), maxFunctionWork)
+	limit := (floor + sort) / 2 // the lower bound fits, the sort does not
+	if floor >= limit {
+		t.Fatalf("floor %d, sort %d: want a set whose sort passes its lower bound", floor, sort)
+	}
+	cost, done := conversionCostDone(s, cty.List(cty.List(cty.String)), false, limit)
+	if cost <= limit || done < limit {
+		t.Errorf("cost %d, done %d with limit %d; want refused, having done the sort it walked", cost, done, limit)
 	}
 }

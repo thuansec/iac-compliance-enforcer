@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"fmt"
+	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -371,7 +372,14 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		}
 	case (ty.IsListType() || ty.IsSetType()) && (want.IsListType() || want.IsSetType()):
 		ety := want.ElementType()
-		w.eachElement(val, func(e cty.Value) { w.convert(e, ety) })
+		elems, sort := w.setElements(val)
+		w.add(sort) // cty iterates a set it converts, sorting it again
+		for _, e := range elems {
+			if w.over() {
+				return
+			}
+			w.convert(e, ety)
+		}
 		if want.IsSetType() {
 			w.setBuild(val, ety)
 		}
@@ -422,10 +430,16 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 		seen                                map[string]bool
 	}
 	buckets := map[int]*bucket{}
+	// The set built is iterated, and so sorted, by whatever receives it, at least by cty's walk
+	// of a function's arguments for marks before anything can measure them: one sort of it is
+	// charged here, elementSortWork per distinct element and level (T-0116h).
+	built, distinct := 0, 0
 	// Converting the elements does about the work charged so far for converting them, and
 	// hashing them what is walked here: all of it is done, not estimated.
-	for it := v.ElementIterator(); it.Next() && !w.over(); {
-		_, e := it.Element()
+	for _, e := range w.elements(v) {
+		if w.over() {
+			break
+		}
 		e, _ = e.UnmarkDeep()
 		if e.IsKnown() && !e.IsNull() && target != cty.DynamicPseudoType && !e.Type().Equals(target) {
 			// Converting an element repeats the conversion cty does, which the caller charged
@@ -471,6 +485,8 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 		b.weight = min(b.weight+weight, maxFunctionWork+1)
 		// cty keeps one copy of equal values. Values holding unknowns count as distinct.
 		if key, ok := valueKey(e); !ok || !b.seen[key] {
+			built = min(built+elementSortWork(e, weight), maxFunctionWork+1) // per level
+			distinct++
 			b.distinct++
 			b.distinctWeight = min(b.distinctWeight+weight, maxFunctionWork+1)
 			if ok {
@@ -484,6 +500,7 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 			w.add(min(saturatingMul(b.distinct, b.weight)+saturatingMul(b.n, b.distinctWeight), maxFunctionWork+1))
 		}
 	}
+	w.add(saturatingMul(built, bits.Len(uint(distinct))))
 }
 
 // markDone records the walk's work so far as done (unifyWalk.done): call it right after work
@@ -617,12 +634,56 @@ func (w *unifyWalk) replace(in, want cty.Type) {
 	}
 }
 
-// eachElement calls f with each element of the known collection, tuple or object v.
+// eachElement calls f with each element of the known collection, tuple or object v (elements).
 func (w *unifyWalk) eachElement(v cty.Value, f func(cty.Value)) {
-	for it := v.ElementIterator(); it.Next() && !w.over(); {
-		_, e := it.Element()
+	for _, e := range w.elements(v) {
+		if w.over() {
+			return
+		}
 		f(e)
 	}
+}
+
+// elements returns the elements of the known collection, tuple or object v, in cty's order.
+// Iterating a set sorts it, every time (ADR 0036), so a set is charged the sort of one
+// iteration, the walk's own (elementSortWork per element and level, the element's comparison
+// weight as its size), and none is returned when the walk is over. A set whose sort cannot fit
+// is refused before it is iterated: its lower bound (elementSortFloor) is charged first
+// (T-0116h).
+func (w *unifyWalk) elements(v cty.Value) []cty.Value {
+	elems, _ := w.setElements(v)
+	return elems
+}
+
+// setElements is elements, also returning the sort it charged, which is what any other
+// iteration of v costs again.
+func (w *unifyWalk) setElements(v cty.Value) ([]cty.Value, int) {
+	if !v.Type().IsSetType() {
+		elems := make([]cty.Value, 0, v.LengthInt())
+		for it := v.ElementIterator(); it.Next(); {
+			_, e := it.Element()
+			elems = append(elems, e)
+		}
+		return elems, 0
+	}
+	n, levels := v.LengthInt(), bits.Len(uint(v.LengthInt()))
+	lower := saturatingMul(saturatingMul(n, levels), elementSortFloor(v.Type().ElementType(), w.limit))
+	if w.add(lower); w.over() {
+		return nil, lower
+	}
+	sort := 0
+	elems := make([]cty.Value, 0, n)
+	for it := v.ElementIterator(); it.Next(); {
+		_, e := it.Element()
+		weight, _ := comparisonWeight(e)
+		sort = min(sort+saturatingMul(elementSortWork(e, weight), levels), maxFunctionWork+1)
+		elems = append(elems, e)
+	}
+	// The iteration sorted the set: charged, then recorded as done, so a refused conversion
+	// spends it (conversionCostDone).
+	w.add(max(sort-lower, 0))
+	w.markDone()
+	return elems, max(sort, lower)
 }
 
 // valuePart charges converting v to a type the walk does not know (a unified type), counting
@@ -644,10 +705,7 @@ func (w *unifyWalk) valuePart(v cty.Value) {
 		case !ty.IsListType() && !ty.IsSetType():
 			continue
 		}
-		for it := val.ElementIterator(); it.Next(); {
-			_, e := it.Element()
-			stack = append(stack, e)
-		}
+		stack = append(stack, w.elements(val)...)
 	}
 }
 
@@ -669,10 +727,7 @@ func (w *unifyWalk) defaults(v cty.Value, columns int) {
 		case !ty.IsTupleType() && !ty.IsObjectType():
 			continue
 		}
-		for it := val.ElementIterator(); it.Next(); {
-			_, e := it.Element()
-			stack = append(stack, e)
-		}
+		stack = append(stack, w.elements(val)...)
 	}
 }
 
