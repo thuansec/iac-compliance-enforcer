@@ -127,6 +127,32 @@ func valueMarksWalk(v cty.Value, limit, work, depth int) (size, sort int, marked
 	return size, sort, marked, true
 }
 
+// elementSortWork is the work of one element of a set per level of its sort, as valueSizeWalk
+// charges it (ADR 0036), for an element whose size is size: compound elements setSortWork plus
+// their size, primitives primitiveSortWork plus an eighth of it, and non-integer numbers their
+// decimal comparisons too. A timing sweep of sets built from 1,000 to 5,000 tuples measured 69
+// to 92 ns per unit (T-0116h).
+func elementSortWork(e cty.Value, size int) int {
+	if !e.Type().IsPrimitiveType() {
+		return min(setSortWork+size, maxFunctionWork+1)
+	}
+	work := primitiveSortWork + size/primitiveSortDivisor
+	if e.Type() == cty.Number {
+		work += nonIntegerSortWork(e)
+	}
+	return work
+}
+
+// elementSortFloor is elementSortWork's least value for an element of type ety, which bounds a
+// set's sort from below before it is iterated, as valueSizeWalk's up-front estimate does:
+// a compound element is at least as large as its type (typeSize, counted up to limit).
+func elementSortFloor(ety cty.Type, limit int) int {
+	if !ety.IsPrimitiveType() {
+		return min(setSortWork+typeSize(ety, limit, maxNesting), maxFunctionWork+1)
+	}
+	return primitiveSortWork
+}
+
 // nonIntegerSortWork is the extra work, per level of a sort, of an element of a set of numbers:
 // cty compares numbers that are not integers by their exact decimal text, about 20 units, and
 // formatting a number with many fractional bits costs its numberFormatCost (a timing sweep of

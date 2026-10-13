@@ -2613,3 +2613,33 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Fixed: T-0126 had no obligation for too-large locals that call sensitive().
   - Minor fixed: the test did not pin each case's path.
 - Next: CI on the PR, then T-0116h.
+
+## 2026-10-13 · T-0116h · done
+- What: the conversion estimate charges the sorts of the sets it iterates and builds (ADR 0039).
+  - Every set it iterates goes through unifyWalk.elements: one sort per iteration in
+    valueSizeWalk's model (new elementSortWork), the comparison weight standing in for the size.
+  - A set is refused before it is iterated when its lower bound (elementSortFloor: setSortWork
+    plus the type's size for compound elements) passes the limit.
+  - After iterating, the sort is recorded as done, so a refused variable conversion spends it.
+  - Converting a set charges cty's iteration as well.
+  - setBuild charges one sort of the set it builds, over distinct elements, because whatever
+    receives it iterates it (cty's marks walk of function arguments first).
+- Files: internal/terraform/{conversions.go,setwalk.go,setconv_internal_test.go},
+  docs/adr/0039-charge-the-sorts-of-sets-conversions-iterate-and-build.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 465 s.
+  - Three locals `length(true ? var.t : toset([[…]]))` over a tuple of 12,000 number tuples:
+    2.1 s → 1.0 s, about 140 ns per charged unit for the one local still accepted.
+  - Refusing to convert a set of 40,000 seven-string tuples: 2.6 s → immediate.
+  - Sweep of sets built from 1,000 to 5,000 tuples of 2 and 8 strings: valueSizeWalk's model
+    69–92 ns per unit, against 20–38 for equality's setSort model, which was rejected.
+  - The four new tests fail on the old code: TestConversionsChargeTheSetsTheyBuild,
+    TestConvertingSetsChargesTheirSorts and TestRefusedConversionsSpendTheirSorts on the old
+    walk, and the last one also on the old order of charge and markDone.
+- Review: iace-reviewer, CHANGES_REQUIRED, then APPROVE.
+  - Major fixed: markDone ran before the sort was charged, so a refused variable conversion
+    spent only the lower bound after about 0.35 s of real sorting.
+  - Minor fixed: the floor now counts the element type's size.
+  - Minor moved to T-0116i: the nested term for sets of sets and comparisonWeight's uncharged
+    inner sorts.
+- Next: CI on the PR, then T-0116i.

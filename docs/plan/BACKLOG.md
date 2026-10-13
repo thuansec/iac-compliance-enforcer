@@ -588,17 +588,19 @@ locations and without executing anything.
     - (rewritten: the T-0116g review's `sensitive(<a value past the size limit>)` cannot occur, because iace does not support `sensitive`, so the call is unknown at any size; T-0126 adds it) a local refused as too large, by its estimate or after evaluation, is an unknown marked exactly when its inputs are: secrets reach a local only through the variables, module values and locals it uses, which inputsSensitive checks (iace marks only sensitive variables and module outputs; a refused call's fail-closed mark adds nothing over inputs found unmarked). Tests cover both refusal paths with a mark deep inside an input, through a local, and with plain inputs that stay unmarked
   - attempts: 1
   - result: the invariant holds on main until expressions can add marks themselves (T-0126). evalLocal's refusal after evaluation takes its marks from inputsSensitive; a stopped walk's marked (always true) would mark every too-large value. TestTooLargeLocalsAreMarkedByTheirInputs covers both refusal paths, and a comment records why. T-0126 adds sensitive() and nonsensitive()
-- [ ] T-0116h · Charge the sorts of sets that conversions iterate
+- [x] T-0116h · Charge the sorts of sets that conversions iterate
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116f
   - accept:
     - conversions that iterate sets (conversionCostWith, condConversionCost, setBuild) charge the sort of each iteration of a set argument, as valueSizeWalk does
-  - attempts: 0
+  - attempts: 1
+  - result: the conversion estimate iterates sets through unifyWalk.elements, which charges one sort per iteration in valueSizeWalk's model (elementSortWork, 69–92 ns per unit), refuses before iterating when the lower bound (elementSortFloor) passes the limit, and records the sort as done so refused variable conversions spend it; converting a set charges cty's iteration too, and setBuild one sort of the set it builds (distinct elements) (ADR 0039). Three conditionals over 12,000 number tuples 2.1 s → 1.0 s; refusing a set of 40,000 tuples 2.6 s → immediate. Nested sets' inner sorts left to T-0116i
 - [ ] T-0116i · Bound the first walk of a set of sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116f
   - accept:
     - a set whose elements hold sets is sorted, hashing (and so sorting) every inner set per comparison, before any walk can count it: one walk of 100 sets of 200 strings takes about 2.7 s, of 50 sets of 500 about 3 s (T-0116d sweep); valueSizeWalk's up-front estimate sees only `set(set(string))`. Bound the inner sets' sizes where such values are made (variables, conversions, toset) or estimate them without iterating the outer set
+    - the conversion estimate's per-iteration sort (unifyWalk.elements, ADR 0039) lacks valueSizeWalk's nested term (nestedSortFactor × levels × inner sorts) for sets whose elements hold sets, and comparisonWeight iterates, and so sorts, those inner sets uncharged: charge them as valueSizeWalk does (T-0116h review)
   - attempts: 0
 - [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
   - skills: iace-terraform-parsing, iace-testing
