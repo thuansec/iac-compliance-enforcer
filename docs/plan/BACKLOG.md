@@ -581,12 +581,13 @@ locations and without executing anything.
     - regression: `length(true ? var.t : toset([["a", …, "g"]]))` over 12,000 tuples of numbers took 3.7 s per local (T-0114k review), and three such locals 1.8 s after T-0116d, within the per-module time budget
   - attempts: 1
   - result: valueMarksWalk measures a value and reports its marks from the same walk (a stopped walk reports marked, fail closed); refused calls, the locals estimate's inputs and evaluated locals, and the resource decoder's references, instances and dynamic iterators take their marks from their measurements instead of ContainsMarked (ADR 0038). Three locals over a set of 12,000 number tuples 1.67 s → 0.84 s (one walk); as a tuple 3.1 s → 2.0 s, the rest being cty's marks walk of the converted set (T-0116h). Follow-up: T-0116j
-- [ ] T-0116j · Keep the marks of a local refused as too large
+- [x] T-0116j · Keep the marks of a local refused as too large
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116g
   - accept:
-    - evalLocal's refusal of a value too large to measure (valueMarksWalk not ok) drops the value's marks: `sensitive(<a value past the size limit>)` comes back as an unknown without the sensitive mark when its inputs are not sensitive (T-0116g review). The unknown keeps the marks the walk reached, or is marked (fail closed) when the walk stopped, with a test for each and the effect on too-large locals recorded
-  - attempts: 0
+    - (rewritten: the T-0116g review's `sensitive(<a value past the size limit>)` cannot occur, because iace does not support `sensitive`, so the call is unknown at any size; T-0126 adds it) a local refused as too large, by its estimate or after evaluation, is an unknown marked exactly when its inputs are: secrets reach a local only through the variables, module values and locals it uses, which inputsSensitive checks (iace marks only sensitive variables and module outputs; a refused call's fail-closed mark adds nothing over inputs found unmarked). Tests cover both refusal paths with a mark deep inside an input, through a local, and with plain inputs that stay unmarked
+  - attempts: 1
+  - result: the invariant holds on main until expressions can add marks themselves (T-0126). evalLocal's refusal after evaluation takes its marks from inputsSensitive; a stopped walk's marked (always true) would mark every too-large value. TestTooLargeLocalsAreMarkedByTheirInputs covers both refusal paths, and a comment records why. T-0126 adds sensitive() and nonsensitive()
 - [ ] T-0116h · Charge the sorts of sets that conversions iterate
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116f
@@ -615,6 +616,14 @@ locations and without executing anything.
     - the set-build estimate (setBuild) formats each converted number a second time, charged only its comparisonWeight: on `count = 200`, `list(set(any))` took 2.9 s before T-0116 and 4.8 s after, `map(set(any))` 3.1 s and 5.1–5.5 s (T-0116c review). The precision-based charge covers that repeat as well as cty's conversion. A timing sweep over accepted `set(list(number))` values (T-0116c review: 117–126 ns per unit) guards both, scaled by raceSlowdown
     - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals, conversions, arithmetic) or estimate their precision first
     - regression: a child module with a `list(set(any))` default of 300 rows `[i, i + 1, "x"]` under `count = 800` took 12.9 s, with 580 instances evaluated before the tree budget, about 3 times the budget's calibration; with the charge it finishes within about 4 s, as do `map(set(any))` and `set(list(any))` (T-0116 review)
+  - attempts: 0
+- [ ] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116j
+  - accept:
+    - `sensitive(x)` evaluates to x marked sensitive, and `nonsensitive(x)` to x without the mark (Terraform's semantics, including its errors for nonsensitive of a value that is not sensitive, checked against the Terraform documentation), both bounded like any other function; today both are unsupported_function, so `password = sensitive(var.p)` is an unknown that is not recorded as sensitive (T-0116j)
+    - a resource attribute set through sensitive() appears in the input document's sensitive paths; tests in locals, resources and module outputs
+    - a local refused as too large, by its estimate or after evaluation, whose expression calls sensitive() is a marked unknown even with plain inputs: the estimate path treats a sensitive() call as a marked input, and evalLocal's refusal after evaluation adds that fact to inputsSensitive's (today the marks come only from inputs, T-0116j). TestTooLargeLocalsAreMarkedByTheirInputs gains such a case for each path
   - attempts: 0
 - [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
   - skills: iace-testing, iace-quality-gates
