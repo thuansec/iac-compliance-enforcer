@@ -479,3 +479,66 @@ func TestSetsOfSetsAreBoundedWhereTheyAreMade(t *testing.T) {
 		})
 	}
 }
+
+// typeexpr evaluates each optional() default and converts it to its attribute's type itself,
+// outside iace's charges: a set(set(string)) default of 100 sets of 200 strings took 6.3 s to
+// declare, and one use of it 18 s more (T-0116i review). Each default's evaluation and
+// conversion are charged before typeexpr runs; a type whose defaults do not fit is unknown,
+// with a warning, as a type too complex to read is, and the variable's value is taken as
+// given (T-0116k). Only static literal defaults are read.
+func TestOptionalDefaultsAreChargedBeforeTypeexpr(t *testing.T) {
+	t.Parallel()
+	src := setsSource(100, 200)
+	for name, tc := range map[string]struct {
+		files map[string]string
+		known bool
+	}{
+		"set of sets":   {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(set(set(string)), " + src + ") })\n  default = {}\n}\n"}},
+		"nested":        {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = list(object({ o = optional(object({ s = optional(set(set(string)), " + src + ") }), {}) }))\n  default = [{}]\n}\n"}},
+		"tuple element": {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = tuple([object({ s = optional(set(set(string)), " + src + ") })])\n  default = [{}]\n}\n"}},
+		"map element":   {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = map(object({ s = optional(set(set(string)), " + src + ") }))\n  default = { a = {} }\n}\n"}},
+		// typeexpr rejects three arguments, but still reads the inner type and its defaults.
+		"three arguments": {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ o = optional(object({ s = optional(set(set(string)), " + src + ") }), {}, 1) })\n  default = {}\n}\n"}},
+		"json": {files: map[string]string{"main.tf.json": `{"variable": {"t": {"type": "object({ s = optional(set(set(string)), ` +
+			strings.ReplaceAll(src, `"`, `\"`) + `) })", "default": {}}}}`}},
+		"small json default": {files: map[string]string{"main.tf.json": `{"variable": {"t": {"type": "object({ s = optional(set(set(string)), ` +
+			strings.ReplaceAll(setsSource(2, 3), `"`, `\"`) + `) })", "default": {}}}}`}, known: true},
+		// A default that is not a static literal is refused with a warning: iace cannot charge
+		// typeexpr's evaluation of it, and a native one's conditional, rewritten by iace, made
+		// typeexpr drop the defaults silently.
+		"conditional default":      {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(set(set(string)), true ? [[\"a\"]] : [[\"b\"]]) })\n  default = {}\n}\n"}},
+		"object default":           {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(object({ k = string, q = string }), { k = \"v\", \"q\" = \"w\" }), n = optional(number, -1), b = optional(bool, (!true)) })\n  default = {}\n}\n"}, known: true},
+		"json conditional default": {files: map[string]string{"main.tf.json": `{"variable": {"t": {"type": "object({ s = optional(set(set(string)), true ? [[\"a\"]] : [[\"b\"]]) })", "default": {}}}}`}},
+		"small default":            {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(set(set(string)), " + setsSource(2, 3) + ") })\n  default = {}\n}\n"}, known: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			start := time.Now()
+			m, vars, err := evalVars(t, ".", tc.files, terraform.VarOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
+				t.Errorf("took %v", elapsed)
+			}
+			refused := slices.ContainsFunc(m.Diagnostics, func(d terraform.Diagnostic) bool {
+				return d.Code == terraform.DiagExpressionTooComplex && d.Summary == "Optional defaults not read"
+			})
+			if refused == tc.known {
+				t.Errorf("refused %v, want %v: %v", refused, !tc.known, m.Diagnostics)
+			}
+			// A refused type is unknown, so the default value is taken as it is, its optional
+			// defaults not applied.
+			v := vars["t"].Value
+			if v.Type().IsListType() || v.Type().IsTupleType() {
+				v = v.AsValueSlice()[0]
+			}
+			if v.Type().IsMapType() || v.Type().IsObjectType() && v.Type().HasAttribute("a") {
+				v = v.GetAttr("a")
+			}
+			if applied := v.Type().IsObjectType() && v.Type().HasAttribute("s") || v.Type().HasAttribute("o"); applied != tc.known {
+				t.Errorf("defaults applied %v, want %v: %#v", applied, tc.known, v)
+			}
+		})
+	}
+}

@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0124
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -603,13 +603,20 @@ locations and without executing anything.
     - the conversion estimate's per-iteration sort (unifyWalk.elements, ADR 0039) lacks valueSizeWalk's nested term (nestedSortFactor × levels × inner sorts) for sets whose elements hold sets, and comparisonWeight iterates, and so sorts, those inner sets uncharged: charge them as valueSizeWalk does (T-0116h review)
   - attempts: 1
   - result: sets of sets are bounded where they are made, except through optional() defaults (split to T-0116k). Every other path (variable defaults, tfvars, --var, module inputs, toset, setunion, conditionals) charges setBuildCost's weight squared, so a made set of sets holds at most about 2,900 units, and 100 sets of 200 strings are refused in under a second through each (TestSetsOfSetsAreBoundedWhereTheyAreMade). The conversion estimate gains valueSizeWalk's nested term and the element walks' inner sorts (ADR 0040). Plan JSON, not read yet, must keep the bound. Follow-ups: T-0116k, T-0127
-- [ ] T-0116k · Charge optional() defaults in type constraints
+- [x] T-0116k · Charge optional() defaults in type constraints
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116i
   - accept:
     - typeexpr.TypeConstraintWithDefaults converts each `optional(T, default)` default to T itself, uncharged: a `set(set(string))` default of 100 sets of 200 strings took 6.3 s to declare, and one `length(var.t.s)` local 18 s more, with only value_too_large after the walk (T-0116i review). Before calling typeexpr, evaluate each optional() default and charge its conversion to its attribute type (conversionCostDone, setBuild's weight squared for sets of sets), refusing the type as safeTypeExpr does when it does not fit; this bounds every collection conversion there (unification included), not only sets of sets
+    - TestOptionalDefaultsAreChargedBeforeTypeexpr covers native, nested and .tf.json types
+  - attempts: 1
+  - result: chargeOptionalDefaults walks the type as typeexpr does (native and .tf.json) and charges each optional() default's evaluation twice and its conversion to the attribute type before typeexpr runs; only static literal defaults are read, and any other, or one that does not fit, makes the type unknown with "Optional defaults not read" (ADR 0041). The 100 × 200 set(set(string)) default is refused in about 0.2 s (6.3 s + 18 s before). Native conditional defaults, which typeexpr silently dropped, are now refused with a warning. Bullet 2 split to T-0116l
+- [ ] T-0116l · Charge defaults applied inside set elements
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116k
+  - accept:
     - defaults applied inside the elements of a set rebuild it with the defaults inserted, which the defaults charge does not count: `type = set(object({ k = string, s = optional(set(string), [200 strings]) }))` with 100 elements was declared with no diagnostic, and one `length(var.t)` took 4.4 s (T-0116i review). Charge the value after defaults (about the elements times the default's weight) and the rebuilt set's weight squared before applying them
-    - TestSetsOfSetsAreBoundedWhereTheyAreMade gains both cases
+    - TestSetsOfSetsAreBoundedWhereTheyAreMade gains the case
   - attempts: 0
 - [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
   - skills: iace-terraform-parsing, iace-testing

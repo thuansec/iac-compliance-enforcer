@@ -165,6 +165,11 @@ func (m *ParsedModule) declareVariable(b Block) *varState {
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
 			"The type constraint is nested too deeply, or has a for expression, to read safely, so the variable's type is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
+	} else if ok && !m.chargeOptionalDefaults(attr.Expr) {
+		r := attr.Expr.Range()
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Optional defaults not read",
+			"An optional attribute default in the type constraint is not a static value, or is too costly to convert, so the variable's type is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
 	} else if ok {
 		ty, defaults, diags := typeexpr.TypeConstraintWithDefaults(attr.Expr)
 		m.addHCLDiags(b.File, diags)
@@ -411,6 +416,130 @@ func (m *ParsedModule) finishVariable(v *varState) Variable {
 		out.Value = out.Value.Mark(SensitiveMark)
 	}
 	return out
+}
+
+// chargeOptionalDefaults charges, before typeexpr runs, what typeexpr does with the optional()
+// defaults in the type expression expr: it evaluates each default without a context and
+// converts it to its attribute's type, outside iace's charges (T-0116k: a 100 × 200
+// set(set(string)) default took 6.3 s to declare). It walks expr as typeexpr does (hcl.ExprCall,
+// ExprMap, ExprList, so .tf.json types too) and charges each default (chargeDefault). It
+// reports false, having spent the work done, when a default is refused or does not fit. Invalid
+// types are left to typeexpr, which reports them.
+func (m *ParsedModule) chargeOptionalDefaults(expr hcl.Expression) bool {
+	call, diags := hcl.ExprCall(expr)
+	if diags.HasErrors() {
+		return true // a keyword, or not a type: typeexpr reads or reports it
+	}
+	switch {
+	case len(call.Arguments) != 1:
+		return true
+	case call.Name == "list" || call.Name == "set" || call.Name == "map":
+		return m.chargeOptionalDefaults(call.Arguments[0])
+	case call.Name == "tuple":
+		elems, diags := hcl.ExprList(call.Arguments[0])
+		if diags.HasErrors() {
+			return true
+		}
+		for _, e := range elems {
+			if !m.chargeOptionalDefaults(e) {
+				return false
+			}
+		}
+	case call.Name == "object":
+		attrs, diags := hcl.ExprMap(call.Arguments[0])
+		if diags.HasErrors() {
+			return true
+		}
+		for _, attr := range attrs {
+			aty := attr.Value
+			if opt, diags := hcl.ExprCall(aty); !diags.HasErrors() && opt.Name == "optional" && len(opt.Arguments) > 0 {
+				aty = opt.Arguments[0]
+				if !m.chargeOptionalDefaults(aty) {
+					return false
+				}
+				if len(opt.Arguments) == 2 && !m.chargeDefault(aty, opt.Arguments[1]) {
+					return false
+				}
+				continue
+			}
+			if !m.chargeOptionalDefaults(aty) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// chargeDefault charges evaluating the optional() default def twice (here, then typeexpr) and
+// converting it to the type tyExpr reads as (chargeOptionalDefaults). Only a static literal
+// default (staticLiteral) is accepted: it evaluates in linear time, charged twice its size. Any
+// other is refused. Evaluating it could unify or compare uncharged (a .tf.json type string is
+// not one of the module's sources, so evalExpr cannot evaluate it), and typeexpr cannot evaluate
+// a native one, whose conditionals and comparisons iace rewrote into its own functions: the
+// defaults were dropped without a word.
+func (m *ParsedModule) chargeDefault(tyExpr, def hcl.Expression) bool {
+	se, ok := def.(hclsyntax.Expression)
+	if !ok || !staticLiteral(se) {
+		return false
+	}
+	val, diags := def.Value(nil)
+	if diags.HasErrors() {
+		return true // typeexpr reports the default as invalid, converting nothing
+	}
+	// Measuring it walks it once more; a walk stopped early has not counted all of it.
+	n, measured := valueSize(val, maxFunctionWork, maxNesting)
+	evaluated := saturatingMul(2, n)
+	if !measured || !m.canChargeFunctionWork(evaluated) {
+		m.spendFunctionWork(n) // the evaluation and the walk done
+		return false
+	}
+	// TypeConstraint reads the type without evaluating defaults; a nested optional() with a
+	// default is an error there, but the type it returns is the one typeexpr converts to.
+	ty, _ := typeexpr.TypeConstraint(tyExpr)
+	cost, done := conversionCostDone(val, ty, false, m.workLeft()-evaluated)
+	if m.chargeFunctionWork(evaluated, cost) {
+		return true
+	}
+	m.spendFunctionWork(min(done+n, maxFunctionWork+1)) // the estimate, and the evaluation done
+	return false
+}
+
+// staticLiteral reports whether e is built only of literal values, negations, parentheses,
+// tuples, objects with literal or bare-word keys, and templates without interpolations:
+// evaluating it is linear in its source, with no unification or comparison.
+func staticLiteral(e hclsyntax.Expression) bool {
+	stack := []hclsyntax.Expression{e}
+	for len(stack) > 0 {
+		e := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch e := e.(type) {
+		case *hclsyntax.LiteralValueExpr:
+		case *hclsyntax.TupleConsExpr:
+			stack = append(stack, e.Exprs...)
+		case *hclsyntax.ObjectConsExpr:
+			for _, item := range e.Items {
+				stack = append(stack, item.KeyExpr, item.ValueExpr)
+			}
+		case *hclsyntax.ObjectConsKeyExpr:
+			if _, bare := e.Wrapped.(*hclsyntax.ScopeTraversalExpr); bare && !e.ForceNonLiteral && hcl.ExprAsKeyword(e.Wrapped) != "" {
+				continue
+			}
+			stack = append(stack, e.Wrapped)
+		case *hclsyntax.UnaryOpExpr: // -1, !true
+			stack = append(stack, e.Val)
+		case *hclsyntax.ParenthesesExpr:
+			stack = append(stack, e.Expression)
+		case *hclsyntax.TemplateExpr:
+			for _, part := range e.Parts {
+				if _, ok := part.(*hclsyntax.LiteralValueExpr); !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // safeTypeExpr checks a type expression before typeexpr walks it. In .tf.json a type is a string
