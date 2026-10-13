@@ -2531,3 +2531,29 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Evidence: `gates.sh full` 13 pass (hook tests included).
 - Review: harness and docs only; owner approved in an attended session.
 - Next: T-0116f.
+
+## 2026-10-13 · T-0116f · done
+- What: split T-0116f into four slices (f: the equality estimator's walks; g: uncharged marks
+  walks and the 12k-tuple conditional; h: conversions iterating sets; i: the first walk of a set
+  of sets). This slice: `==`/`!=` charge each operand's measuring walk with its sorts
+  (valueSizeWalk instead of valueSize) and the estimate's own walks (equalityEstimateWork,
+  2 × (size + sort)) before equalityCost runs; when that passes the work left the comparison is
+  refused without running the estimate (ADR 0037).
+- Files: internal/terraform/{forexpr.go,equality_internal_test.go},
+  docs/adr/0037-charge-the-equality-estimate-before-it-runs.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full`: tests, coverage, vuln and build passed; fmt/lint failed on one test line,
+    fixed with `make fmt`, then re-run (see PR).
+  - Both new tests fail against the old logic: the refusal of 20 sets of 200 strings took
+    1.28 s against one 0.33 s walk, and the charges missed the walks.
+  - Sweep (equalityCost against one measuring walk per operand): 2 to 2.6 times for sets of
+    sets of strings, lists of sets, tuples, strings and 2,048-bit fractions; about 42 to 74 ns
+    per charged unit.
+  - Whole-module times of the review's three cases are unchanged (2.5 s, 6.7 s, 4.7 s): the
+    locals estimate's first walk dominates them (T-0116i, T-0124).
+- Review: iace-reviewer, APPROVE. Two minor findings, both applied:
+  - ADR 0037 now records 3.0 to 4.3 times the walk for sets nested 2 to 5 deep (42 to 154 ns per
+    unit, within the band), so the constant stays at 2.
+  - The result line hands the review cases to T-0116i and T-0124, and T-0124 now has the
+    8,192-bit case.
+- Next: CI on the PR, then T-0116g.
