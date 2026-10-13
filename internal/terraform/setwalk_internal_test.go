@@ -371,3 +371,53 @@ func TestMarksChecksDoNotWalkAgain(t *testing.T) { // not parallel: it measures 
 		t.Errorf("took %v; one walk of the set takes %v", elapsed, walk)
 	}
 }
+
+// A local refused as too large, before or after it is evaluated, is marked exactly when its
+// inputs are: secrets reach a local only through the variables, module values and locals it
+// uses, which inputsSensitive checks (iace marks only sensitive variables and module outputs;
+// a refused call's fail-closed mark adds nothing over inputs found unmarked). A mark deep inside
+// an input marks the unknown; plain inputs leave it unmarked (T-0116j). Once sensitive() is
+// evaluated, a local calling it must be marked too (T-0126).
+func TestTooLargeLocalsAreMarkedByTheirInputs(t *testing.T) {
+	t.Parallel()
+	deep := cty.TupleVal([]cty.Value{cty.StringVal("abcdefghabcdefgh"), cty.StringVal("x").Mark(SensitiveMark)})
+	plain := cty.TupleVal([]cty.Value{cty.StringVal("abcdefghabcdefgh"), cty.StringVal("x")})
+	for name, tc := range map[string]struct {
+		src       string // locals, the last of which, "v", is too large
+		marked    bool
+		evaluated bool // refused after evaluation, not by its estimate
+	}{
+		"evaluated, sensitive":     {`v = [for i in range(1000) : [for j in range(20) : var.d]]`, true, true},
+		"evaluated, plain":         {`v = [for i in range(1000) : [for j in range(20) : var.p]]`, false, true},
+		"evaluated, through local": {"a = var.d\n  v = [for i in range(1000) : [for j in range(20) : local.a]]", true, true},
+		"estimated, sensitive":     {`v = [var.t, var.t, var.st]`, true, false},
+		"estimated, plain":         {`v = [var.t, var.t, var.t]`, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tup := tupleOf(10_000, cty.StringVal("abcdefgh"))
+			elems := tup.AsValueSlice()
+			elems[0] = elems[0].Mark(SensitiveMark) // a mark deep in a large input
+			m := parseLocalsModule(t, "locals {\n  "+tc.src+"\n}\n")
+			locals, err := m.EvaluateLocals(t.Context(), map[string]Variable{
+				"d": {Name: "d", Value: deep}, "p": {Name: "p", Value: plain},
+				"t": {Name: "t", Value: tup}, "st": {Name: "st", Value: cty.TupleVal(elems)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := locals["v"].Value
+			if v.IsKnown() || v.IsMarked() != tc.marked {
+				t.Errorf("known %v, marked %v; want unknown, marked %v: %v", v.IsKnown(), v.IsMarked(), tc.marked, m.Diagnostics)
+			}
+			if !slices.ContainsFunc(m.Diagnostics, func(d Diagnostic) bool { return d.Summary == "Local value too large" }) {
+				t.Errorf("not refused as too large: %v", m.Diagnostics)
+			}
+			// Evaluating spends function work (range, the for expressions); a refusal by the
+			// estimate spends none on these inputs, which hold no sets.
+			if evaluated := m.fnWork > 0; evaluated != tc.evaluated {
+				t.Errorf("evaluated %v (work %d), want %v: the case no longer takes its refusal path", evaluated, m.fnWork, tc.evaluated)
+			}
+		})
+	}
+}

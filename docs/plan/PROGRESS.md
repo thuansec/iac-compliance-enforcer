@@ -2585,3 +2585,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - The first gate run caught a panic in a test that builds the budget without its sensitive
     map; setMarked now creates the map, like setSort.
 - Next: CI on the PR, then T-0116h.
+
+## 2026-10-13 · T-0116j · done
+- What: the T-0116g review's gap does not occur, so the acceptance was rewritten to the invariant
+  that does hold, and that invariant is now pinned.
+  - The gap was that `sensitive(<too large>)` drops its mark. iace does not support sensitive(),
+    so the call is unknown at any size.
+  - Secrets reach a local only through its inputs, which inputsSensitive checks, because iace
+    marks only sensitive variables and module outputs.
+  - A refused call's fail-closed mark adds nothing over inputs that were found unmarked.
+  - Taking the stopped walk's `marked` would mark every too-large value.
+  - A comment at evalLocal's refusal records this. TestTooLargeLocalsAreMarkedByTheirInputs covers
+    both refusal paths: a deep mark, a mark through a local, and plain inputs. Each case pins its
+    path by the function work it spent.
+  - New T-0126: evaluate sensitive() and nonsensitive(). Today `password = sensitive(var.p)` is an
+    unknown that is not recorded as sensitive. T-0126 carries the obligation to mark too-large
+    locals that call sensitive().
+- Files: internal/terraform/{locals.go,setwalk_internal_test.go}, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 440 s.
+  - The test is a guard and passes on main.
+  - A temporary print confirmed that the evaluated cases reach evalLocal's refusal after
+    evaluation. The reviewer confirmed that forcing every case through the estimate fails the
+    path check.
+- Review: iace-reviewer, CHANGES_REQUIRED, then APPROVE.
+  - Fixed: the first wording missed the refused calls' fail-closed marks.
+  - Fixed: T-0126 had no obligation for too-large locals that call sensitive().
+  - Minor fixed: the test did not pin each case's path.
+- Next: CI on the PR, then T-0116h.
