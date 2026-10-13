@@ -2643,3 +2643,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Minor moved to T-0116i: the nested term for sets of sets and comparisonWeight's uncharged
     inner sorts.
 - Next: CI on the PR, then T-0116i.
+
+## 2026-10-13 · T-0116i · done
+- What: sets of sets are bounded where they are made (ADR 0040).
+  - cty gives no access to a set's elements without sorting it, so the inner sets cannot be
+    estimated without iterating the outer set.
+  - Every path checked that makes a set whose elements hold sets already charges setBuildCost's
+    weight squared: variable defaults, tfvars, --var, module inputs, toset, setunion and
+    conditionals. A set of sets that is made therefore holds at most about 2,900 units. The new
+    guard shows 100 sets of 200 strings refused through each path.
+  - The review found two optional() default paths that are not bounded. They are split to
+    T-0116k.
+  - The conversion estimate now adds valueSizeWalk's nested term (nestedSortFactor × inner sorts
+    per level) and the element walks' inner sorts, and stops measuring elements once the sort
+    passes its limit.
+  - New T-0127: since T-0116g, once the work is spent, refused calls mark their results
+    sensitive even with plain inputs (seen in a probe).
+  - Correction to the T-0116h entry: it names three new tests, not four.
+- Files: internal/terraform/{conversions.go,setconv_internal_test.go,variables_convert_test.go},
+  docs/adr/0040-bound-sets-of-sets-where-they-are-made.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 464 s.
+  - TestConvertingSetsOfSetsChargesTheInnerSorts fails on main (121,417 against 474,824).
+  - TestSetsOfSetsAreBoundedWhereTheyAreMade is a guard and passes on main: 0.4–0.6 s per path
+    against a 2 s bound.
+- Review: iace-reviewer, CHANGES_REQUIRED, then APPROVE.
+  - Two majors split to T-0116k: an optional(set(set(string)), …) default took 6.3 s to declare
+    plus 18 s for one use, and defaults applied inside set elements took 4.4 s for one length().
+  - Major fixed: the guard's 1 s bound flaked under load. It now evaluates once with a 2 s
+    bound.
+  - Minors fixed: the early exit in setElements, and PROGRESS kept append-only.
+- Next: CI on the PR, then T-0116k.
