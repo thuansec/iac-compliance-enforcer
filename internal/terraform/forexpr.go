@@ -635,8 +635,11 @@ func wrapEquality(n hclsyntax.Node) {
 
 // cmpRightFunction is cmpRightName for m: the right operand, unchanged, after charging the
 // comparison with the recorded left operand when cty recurses into them (known, not null, of one
-// type that is not primitive): measuring both, then equalityCost. Over the limit the right operand is a dynamic unknown with its marks, so the
-// comparison is unknown, the measured work is spent, and m.cmpLimited is set.
+// type that is not primitive): measuring both with the sorts of their sets (valueSizeWalk), the
+// estimate's own walks of them (equalityEstimateWork), then equalityCost. The estimate runs only
+// once its walks are charged: it iterates every set, sorting it, before it can refuse (T-0116f).
+// Over the limit the right operand is a dynamic unknown with its marks, so the comparison is
+// unknown, the measured work is spent, and m.cmpLimited is set.
 func (m *ParsedModule) cmpRightFunction(stateParam function.Parameter) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{stateParam, condResultParam},
@@ -651,20 +654,7 @@ func (m *ParsedModule) cmpRightFunction(stateParam function.Parameter) function.
 				!ul.Type().Equals(ur.Type()) || ul.Type().IsPrimitiveType() {
 				return r, nil // cty decides without recursing (cmpRightName)
 			}
-			limit := maxFunctionWork - m.fnWork
-			sl, okl := valueSize(l, limit, maxNesting)
-			cost := sl
-			if okl {
-				sr, okr := valueSize(r, limit-sl, maxNesting)
-				cost = min(cost+sr, maxFunctionWork+1)
-				if okr {
-					cost = min(cost+equalityCost(l, r, limit-cost), maxFunctionWork+1)
-				} else {
-					cost = limit + 1
-				}
-			} else {
-				cost = limit + 1
-			}
+			cost := operandsEqualityCost(l, r, maxFunctionWork-m.fnWork)
 			if m.chargeFunctionWork(cost) {
 				return r, nil
 			}
@@ -675,6 +665,37 @@ func (m *ParsedModule) cmpRightFunction(stateParam function.Parameter) function.
 		},
 	})
 }
+
+// operandsEqualityCost is the work of comparing l and r, which cty recurses into, within limit:
+// each operand's size and the sort of its sets (valueSizeWalk), equalityEstimateWork for the
+// estimate's own walks, then equalityCost. Past limit it is more than limit, having walked no
+// further than the work it counted.
+func operandsEqualityCost(l, r cty.Value, limit int) int {
+	cost := 0
+	for _, v := range []cty.Value{l, r} {
+		size, sort, ok := valueSizeWalk(v, limit-cost, limit-cost, maxNesting)
+		if !ok {
+			return limit + 1
+		}
+		cost = min(cost+size+sort+equalityEstimateWork(size, sort), maxFunctionWork+1)
+		if cost > limit {
+			return cost
+		}
+	}
+	return min(cost+equalityCost(l, r, limit-cost), maxFunctionWork+1)
+}
+
+// equalityEstimateWork is the work of equalityCost's own walks of an operand of size size whose
+// sets sort for sort (valueSizeWalk): it walks the operand for marks (marksWalk), then iterates
+// and hashes the elements of every set it compares, each iteration sorting the set again, about
+// two walks (a sweep of sets of strings, tuples, sets and 2,048-bit fractions measured 2 to
+// 2.6 times the measuring walk per operand).
+func equalityEstimateWork(size, sort int) int {
+	return min(saturatingMul(equalityEstimateWalks, size+sort), maxFunctionWork+1)
+}
+
+// equalityEstimateWalks calibrates equalityEstimateWork.
+const equalityEstimateWalks = 2
 
 // condFalseFunction is condFalseName for m: the false result, unchanged, after charging the
 // unification hcl is about to do with the recorded true result, if it will: not when either

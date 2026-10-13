@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0124
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0124
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -566,14 +566,30 @@ locations and without executing anything.
     - (split to T-0116f) the estimators' own walks, the remaining uncharged marks walks and the conditional over 12k tuples
   - attempts: 1
   - result: valueSizeWalk measures a value and the sort work of every set in it (compound elements setSortWork plus their size, primitives a smaller base, non-integers their decimal comparisons, sets of sets their inner sorts × nestedSortFactor per level; sweep 67–154 ns per unit), refusing up front when a lower-bound estimate passes the work left (ADR 0036). Function arguments are charged twice the sort, the locals estimate each measurement's sort (refusals included), for expressions twice the collection's sort. 6 × length over 8k tuples 14.4 s → 0.8 s; 3 for loops over 12k tuples 4.4 s → 1.2 s; nested 100×200 22.6 s → 2.7 s. Follow-ups: T-0116f, T-0116e, T-0124
-- [ ] T-0116f · Charge the estimators' own walks of sets
+- [x] T-0116f · Charge the equality estimator's own walks of sets
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116d
   - accept:
     - the estimators' own walks are charged or bounded before they run: equalityCost (ADR 0035) iterates and hashes every set it charges before it can refuse (T-0116b review: 4.6 s for 30 sets of 500 strings, 16.4 s for 12 × 12 × 48 sets nested three deep, 3.3 s for 100 numbers with 8,192 fractional bits); marksWalk and setSort iterate each set to count its sort; check them against valueSizeWalk's up-front estimate (ADR 0036)
+  - attempts: 1
+  - result: comparisons measure each operand with valueSizeWalk (refusing a set too costly to sort before iterating it) and charge size + sort + equalityEstimateWork (2 × (size + sort)) before equalityCost runs, refusing without it when that passes the work left (ADR 0037); refusing 20 sets of 200 strings costs one walk instead of about three plus cty's 1.9 s. The review's three cases still spend seconds in their first measuring walk: 30 × 500 strings and 12 × 12 × 48 nested sets belong to T-0116i, 100 × 8,192-bit numbers to T-0124. T-0116g and T-0116h hold the rest of the original task.
+- [ ] T-0116g · Charge the uncharged marks walks of sets
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116f
+  - accept:
     - the uncharged marks walks (ContainsMarked) sort every set they meet: the locals estimate's inputsSensitive (about 0.5 s for a 12,000-tuple set, T-0116d), and a refused call's limited() result. Charge them or reuse a measurement's result
     - regression: `length(true ? var.t : toset([["a", …, "g"]]))` over 12,000 tuples of numbers took 3.7 s per local (T-0114k review), and three such locals 1.8 s after T-0116d, within the per-module time budget
+  - attempts: 0
+- [ ] T-0116h · Charge the sorts of sets that conversions iterate
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116f
+  - accept:
     - conversions that iterate sets (conversionCostWith, condConversionCost, setBuild) charge the sort of each iteration of a set argument, as valueSizeWalk does
+  - attempts: 0
+- [ ] T-0116i · Bound the first walk of a set of sets
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116f
+  - accept:
     - a set whose elements hold sets is sorted, hashing (and so sorting) every inner set per comparison, before any walk can count it: one walk of 100 sets of 200 strings takes about 2.7 s, of 50 sets of 500 about 3 s (T-0116d sweep); valueSizeWalk's up-front estimate sees only `set(set(string))`. Bound the inner sets' sizes where such values are made (variables, conversions, toset) or estimate them without iterating the outer set
   - attempts: 0
 - [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
@@ -590,7 +606,7 @@ locations and without executing anything.
   - accept:
     - converting a number to a string costs about its precision, not its digits. HCL parses number literals at 512 bits, and cty converts them with exact decimal formatting: 14.5 µs for `123` at 512 bits against 1.5 µs at 64 bits, about 30 times its charge (comparisonWeight counts 5, numberFormatCost 0 for integers) (T-0116c probe). Every number-to-string conversion pays: conversions into string types (set(string), list(string), unified mixed tuples), string templates (`"${var.n}"`) and function arguments. Charge it from the number's precision and magnitude, with a timing sweep at or under about 120 ns per unit
     - the set-build estimate (setBuild) formats each converted number a second time, charged only its comparisonWeight: on `count = 200`, `list(set(any))` took 2.9 s before T-0116 and 4.8 s after, `map(set(any))` 3.1 s and 5.1–5.5 s (T-0116c review). The precision-based charge covers that repeat as well as cty's conversion. A timing sweep over accepted `set(list(number))` values (T-0116c review: 117–126 ns per unit) guards both, scaled by raceSlowdown
-    - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals, conversions, arithmetic) or estimate their precision first
+    - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals, conversions, arithmetic) or estimate their precision first
     - regression: a child module with a `list(set(any))` default of 300 rows `[i, i + 1, "x"]` under `count = 800` took 12.9 s, with 580 instances evaluated before the tree budget, about 3 times the budget's calibration; with the charge it finishes within about 4 s, as do `map(set(any))` and `set(list(any))` (T-0116 review)
   - attempts: 0
 - [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout

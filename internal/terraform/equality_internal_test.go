@@ -374,3 +374,74 @@ func TestSetsOfSetsAreChargedByCollision(t *testing.T) {
 		t.Errorf("colliding sets of sets accepted at %d units; cty took %v", cost, time.Since(start))
 	}
 }
+
+// setOfStringSets is a set of k distinct sets of n distinct strings.
+func setOfStringSets(k, n int) cty.Value {
+	sets := make([]cty.Value, k)
+	for i := range sets {
+		strs := make([]cty.Value, n)
+		for j := range strs {
+			strs[j] = cty.StringVal(fmt.Sprint("user-", i, "-", j))
+		}
+		sets[i] = cty.SetVal(strs)
+	}
+	return cty.SetVal(sets)
+}
+
+// equalityCost iterates and hashes every set it charges, each iteration sorting the set, before
+// it can refuse: 30 sets of 500 strings took 4.6 s (T-0116b review). A comparison is charged
+// each operand's measuring walk with its sorts (valueSizeWalk) and the estimate's own walks of
+// it before the estimate runs (T-0116f).
+func TestEqualityEstimateWalksAreCharged(t *testing.T) {
+	t.Parallel()
+	for name, v := range map[string]cty.Value{
+		"sets of sets": setOfStringSets(3, 100),
+		"tuples":       tupleSet(500, 4),
+		"list of sets": cty.ListVal(setOfStringSets(4, 100).AsValueSlice()),
+	} {
+		other := cty.SetVal(slices.Clone(v.AsValueSlice())) // an equal value built apart
+		if v.Type().IsListType() {
+			other = cty.ListVal(slices.Clone(v.AsValueSlice()))
+		}
+		want := equalityCost(v, other, maxFunctionWork)
+		for _, op := range []cty.Value{v, other} {
+			size, sort, ok := valueSizeWalk(op, maxFunctionWork, maxFunctionWork, maxNesting)
+			if !ok {
+				t.Fatalf("%s: measuring refused", name)
+			}
+			want += (1 + equalityEstimateWalks) * (size + sort)
+		}
+		if got := operandsEqualityCost(v, other, maxFunctionWork); got != want || got > maxFunctionWork {
+			t.Errorf("%s: cost %d, want %d within the limit", name, got, want)
+		}
+	}
+}
+
+// When the operands' walks alone pass the work left, the comparison is refused after measuring,
+// without running equalityCost: refusing a set of 20 sets of 200 strings costs about one walk
+// of it, where the estimate added about two more and then cty's comparison 1.9 s (T-0116f probe).
+// A set too costly to sort with the work left is refused before it is iterated at all.
+func TestComparisonsAreRefusedBeforeEstimating(t *testing.T) { // not parallel: it measures time
+	v := setOfStringSets(20, 200)
+	start := time.Now()
+	_, sort, ok := valueSizeWalk(v, maxFunctionWork, maxFunctionWork, maxNesting)
+	walk := time.Since(start)
+	if !ok || 3*sort <= maxFunctionWork {
+		t.Fatalf("sort %d, ok %v: want a set whose estimate walks pass the work", sort, ok)
+	}
+	start = time.Now()
+	if cost := operandsEqualityCost(v, v, maxFunctionWork); cost <= maxFunctionWork {
+		t.Errorf("accepted at %d", cost)
+	}
+	if elapsed := time.Since(start); elapsed > 2*walk+20*time.Millisecond*raceSlowdown {
+		t.Errorf("refusing took %v; one walk takes %v", elapsed, walk)
+	}
+	big := tupleSet(40_000, 7)
+	start = time.Now()
+	if cost := operandsEqualityCost(big, big, maxFunctionWork); cost <= maxFunctionWork {
+		t.Errorf("40,000 tuples accepted at %d", cost)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond*raceSlowdown {
+		t.Errorf("refusing 40,000 tuples took %v; want no iteration", elapsed)
+	}
+}
