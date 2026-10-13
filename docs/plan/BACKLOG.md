@@ -611,13 +611,14 @@ locations and without executing anything.
     - TestOptionalDefaultsAreChargedBeforeTypeexpr covers native, nested and .tf.json types
   - attempts: 1
   - result: chargeOptionalDefaults walks the type as typeexpr does (native and .tf.json) and charges each optional() default's evaluation twice and its conversion to the attribute type before typeexpr runs; only static literal defaults are read, and any other, or one that does not fit, makes the type unknown with "Optional defaults not read" (ADR 0041). The 100 × 200 set(set(string)) default is refused in about 0.2 s (6.3 s + 18 s before). Native conditional defaults, which typeexpr silently dropped, are now refused with a warning. Bullet 2 split to T-0116l
-- [ ] T-0116l · Charge defaults applied inside set elements
+- [x] T-0116l · Charge defaults applied inside set elements
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116k
   - accept:
     - defaults applied inside the elements of a set rebuild it with the defaults inserted, which the defaults charge does not count: `type = set(object({ k = string, s = optional(set(string), [200 strings]) }))` with 100 elements was declared with no diagnostic, and one `length(var.t)` took 4.4 s (T-0116i review). Charge the value after defaults (about the elements times the default's weight) and the rebuilt set's weight squared before applying them
     - TestSetsOfSetsAreBoundedWhereTheyAreMade gains the case
-  - attempts: 0
+  - attempts: 1
+  - result: chargeConversion adds defaultsGrowthCost: each object in the value is charged the size and walk sort of the most the type's defaults can insert into one object (insertedWeight: the largest node insertion, each default grown by its objects times its child's most, memoized so linear in the type), and when the type holds a set of sets, the outer sort's per-level inserted size and nestedSortFactor × inserted sorts (ADR 0042). Defaults within defaults (43.8 s) and four levels of list defaults (about 9 min on main) are refused at declaration; module inputs too. 300 objects gaining a 200-string set are refused at declaration (their first use took 4.1 s); 200 security group rules with small defaults stay known (a weight-squared charge refused 100); accepted values walk at about 100 ns per unit. TestSetsOfSetsAreBoundedWhereTheyAreMade gains the case
 - [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116b
