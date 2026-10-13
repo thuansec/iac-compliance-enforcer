@@ -2674,3 +2674,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     bound.
   - Minors fixed: the early exit in setElements, and PROGRESS kept append-only.
 - Next: CI on the PR, then T-0116k.
+
+## 2026-10-13 · T-0116k · done
+- What: optional() defaults in type constraints are charged before typeexpr reads them (ADR 0041).
+  - chargeOptionalDefaults walks the type as typeexpr does: hcl.ExprCall, ExprMap and ExprList,
+    so native and .tf.json types alike.
+  - Each default is evaluated with Value(nil) and charged twice its size, for this evaluation and
+    typeexpr's. Its conversion to the attribute type (conversionCostDone) is charged too.
+  - Only static literal defaults are read: literals, unary operators, parentheses, tuples,
+    objects and templates without interpolation. Any other default, or one that does not fit,
+    makes the type unknown with "Optional defaults not read".
+  - The task was split: defaults applied inside set elements went to T-0116l. T-0109 now depends
+    on T-0116k and T-0116l.
+- Files: internal/terraform/{variables.go,variables_convert_test.go},
+  docs/adr/0041-read-only-static-optional-defaults.md, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 460 s.
+  - TestOptionalDefaultsAreChargedBeforeTypeexpr refuses the 100 × 200 set(set(string)) default
+    in about 0.2–0.8 s. The case was set directly, nested, in a tuple element, in a map element,
+    behind a 3-argument optional, and in .tf.json. Before, it took 6.3 s to declare plus 18 s
+    per use, and it fails on main.
+  - Small native and .tf.json defaults, an object default with a quoted key, -1 and (!true) are
+    still applied.
+  - On main, a native conditional default was silently dropped by typeexpr, because iace
+    rewrites conditionals. It is now refused with a warning, as is the .tf.json form.
+- Review: iace-reviewer, APPROVE. Its four minors were fixed before commit:
+  - refuse before estimating when the evaluation alone does not fit, so the limit is never
+    negative;
+  - fail closed when the size walk stops early;
+  - spend the evaluation's work on a refusal;
+  - test the tuple, map and 3-argument walks.
+- Next: CI on the PR, then T-0116l.
