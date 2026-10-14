@@ -338,7 +338,8 @@ func rowsDefault(ty string) string {
 // Converting the defaults' numbers to strings formats each at 512 bits, and building the sets
 // formats them again: under count = 800, a list(set(any)) default of 300 rows took 12.9 s, 580
 // instances evaluated before the tree budget, about 3 times its calibration (T-0116 review), and
-// 7.8 s before T-0124. With the formatting charged the tree stops in about 2 s; one instance
+// 7.8 s before T-0124. With the formatting charged the tree stops at its budget in about 3.3 s
+// (2 s with T-0124's first precision root, ADR 0044); one instance
 // still evaluates its default.
 func TestNumberFormattingInDefaultsIsCharged(t *testing.T) { // not parallel: it measures time
 	for _, ty := range []string{"list(set(any))", "map(set(any))", "set(list(any))"} {

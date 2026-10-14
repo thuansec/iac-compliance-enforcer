@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b, T-0124c
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -638,14 +638,20 @@ locations and without executing anything.
     - regression: a child module with a `list(set(any))` default of 300 rows `[i, i + 1, "x"]` under `count = 800` took 12.9 s, with 580 instances evaluated before the tree budget, about 3 times the budget's calibration; with the charge it finishes within about 4 s, as do `map(set(any))` and `set(list(any))` (T-0116 review)
   - attempts: 1
   - result: numberTextCost = max((Prec/32 + 1)², numberFormatCost) + the integer part's digits (d + d²/100,000), charged where the conversion estimate sees a number become a string (convert, toStrings for mixed primitive tuples, objects and maps, setBuild's repeat, scalar string arguments; ADR 0043). Sweep at 512–8,192 bits: 18–80 ns per unit. The 300-row list(set(any)) and map(set(any)) defaults under count = 800 went from 7.8 s to 2.0 s; set(list(any)) takes 1.2 s; one instance still evaluates. Templates, format, number keys, mixes found only after unifying, and huge-precision numbers went to T-0124b
-- [ ] T-0124b · Charge templates and format, and bound numbers of huge precision where they are made
+- [~] T-0124b · Charge numbers that templates, keys and format write as text
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124
   - accept:
     - string templates (`"${var.n}"`, including in for expressions) and format/formatlist (`Text('g', -1)`) charge numberTextCost for each number they format (ADR 0043)
     - numbers used as keys are formatted too: for-expression object keys (`{for i in local.r : i => 1}` over 10,000 512-bit numbers measured about 141 ns per unit, T-0124 review; templates 134), object constructor keys `{(n) = ...}` and indexing a map by a number: charge them or show them bounded by a timing test
+    - (moved to T-0124c) mixes found only after unifying, and bounding numbers of huge precision where they are made
+  - attempts: 1
+- [ ] T-0124c · Charge number-to-string mixes found after unifying, and bound sets of costly fractions
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0124b
+  - accept:
     - conversions whose number-to-string mix is found only after unifying (tuples whose columns unify to strings, such as `[[1, "a"], ["b", "c"]]` into list(any)) are charged too, or shown bounded by a timing test
-    - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals, conversions, arithmetic, parseint of long strings, whose integers have as many bits as the string needs) or estimate their precision first
+    - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
   - attempts: 0
 - [ ] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
   - skills: iace-terraform-parsing, iace-security, iace-testing

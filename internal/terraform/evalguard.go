@@ -28,12 +28,13 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	if !m.safeToEvaluate(expr) {
 		r := expr.Range()
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
-			"The expression is nested too deeply, or has too many operators or chained steps, to evaluate safely, so its value is unknown.",
+			"The expression is nested too deeply, has too many operators or chained steps, or indexes with a number too costly to write as text, to evaluate safely, so its value is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
 	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags, m.condLimited, m.cmpLimited = false, nil, false, nil, false, false
+	m.textLimited = false
 	var val cty.Value
 	var diags hcl.Diagnostics
 	switch {
@@ -56,6 +57,13 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		val = cty.DynamicVal.WithMarks(marks)
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Conditional too large",
 			"Unifying the results of a conditional would pass the work limit for function calls, so the expression is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+	}
+	if m.textLimited {
+		_, marks := val.UnmarkDeep()
+		val = cty.DynamicVal.WithMarks(marks)
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Number formatting too large",
+			"Writing a number as text in a template or a key would pass the work limit for function calls, so the expression is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 	}
 	if m.cmpLimited {
@@ -155,7 +163,7 @@ func (m *ParsedModule) inspectSource(expr hcl.Expression, text []byte) ([]functi
 		return nil, false
 	}
 	if se, ok := expr.(hclsyntax.Expression); ok {
-		return syntaxCalls(se), true
+		return syntaxCalls(se), !costlyLiteralText(se)
 	}
 	return nil, true
 }
@@ -193,6 +201,9 @@ func jsonTemplateCalls(name string, text []byte) ([]functionCall, error) {
 			return nil, err
 		}
 		if tmpl, diags := hclsyntax.ParseTemplate([]byte(s), name, hcl.InitialPos); !diags.HasErrors() {
+			if costlyLiteralText(tmpl) {
+				return nil, errors.New("check JSON expression: a literal number too costly to write as text")
+			}
 			if hasForExpr(tmpl) {
 				// iace evaluates such a value itself (evalJSON), so its for expressions are
 				// charged; the marker makes callsForFunctions choose that path.

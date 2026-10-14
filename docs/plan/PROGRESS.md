@@ -2815,3 +2815,38 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - the mixed-tuple lower bound now compares against an all-string baseline, since it had
     failed on main by under 1%.
 - Next: CI on the PR, then the next ready task.
+
+## 2026-10-14 · T-0124b · in review (CI timings pending)
+- What: numbers that templates, keys, index keys and format/formatlist write as text are
+  charged (ADR 0044).
+  - The wrapper `__iace_text(S, part)` covers template parts beside literal text, for and
+    object keys, and IndexExpr keys.
+  - Literals are priced from the source instead (literalTextCost). One costing over 1,089 units
+    makes the expression unsafe, in .tf.json too; for bodies pay their literals per iteration,
+    and optional() defaults on evaluation.
+  - format and formatlist charge numbersTextCost.
+  - ADR 0043's precision root is recalibrated 32 → 48: with templates charged, the realistic
+    fanout tree reached 59.3% of the tree's work, over its half-budget guard. It is 49.3% now.
+  - The formatting timing tests moved to make test's non-race step (NONRACE_TESTS, run with -v).
+  - Split: T-0124c holds mixes found after unifying and sets of costly fractions; T-0109 depends
+    on it.
+- Files: internal/terraform/{textcharge.go,textcharge_internal_test.go,forexpr.go,evalguard.go,
+  functions.go,locals.go,parse.go,variables.go,forexpr_internal_test.go,modules_eval_test.go,
+  variables_convert_test.go}, Makefile, docs/adr/0043-*.md, docs/adr/0044-*.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 531 s (466 s before the review fixes; the first
+    run timed out at 600 s under -race before the tests moved).
+  - The new tests fail on main: 1,000 templates or format calls over an 8,192-bit number took
+    2.4 s, and nested keys 7 s, all uncharged.
+  - Locally, TestNumberFormattingInDefaultsIsCharged runs 3.2–3.7 s against its 4 s bound over
+    five runs.
+- Review: iace-reviewer, CHANGES_REQUIRED.
+  - Blocker fixed: .tf.json templates skipped the literal check (25 s).
+  - Majors fixed:
+    - literal keys below the threshold were free on every iteration (5.2 s);
+    - wrapping numeric keys broke `optional(map(string), { 80 = "http" })` defaults.
+  - Minor fixed: the `[5]` cost comment.
+  - Major open: root 48 leaves the regression test about 0.3–0.8 s of margin. Per the reviewer's
+    option (b), CI timings are recorded before merging.
+- Next: read the CI timings, then re-review.

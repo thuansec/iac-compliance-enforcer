@@ -1,6 +1,6 @@
 # 0043 · Charge converting numbers to strings by their precision
 
-- Status: accepted
+- Status: accepted; its precision root amended by ADR 0044
 - Date: 2026-10-14
 - Task: T-0124
 - Extends: ADR 0029, ADR 0032

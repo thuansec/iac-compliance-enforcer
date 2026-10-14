@@ -516,6 +516,9 @@ func TestOptionalDefaultsAreChargedBeforeTypeexpr(t *testing.T) {
 		"object default":           {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(object({ k = string, q = string }), { k = \"v\", \"q\" = \"w\" }), n = optional(number, -1), b = optional(bool, (!true)) })\n  default = {}\n}\n"}, known: true},
 		"json conditional default": {files: map[string]string{"main.tf.json": `{"variable": {"t": {"type": "object({ s = optional(set(set(string)), true ? [[\"a\"]] : [[\"b\"]]) })", "default": {}}}}`}},
 		"small default":            {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(set(set(string)), " + setsSource(2, 3) + ") })\n  default = {}\n}\n"}, known: true},
+		// Numeric literal keys stay readable: they are priced from the source, not wrapped
+		// (T-0124b review).
+		"numeric keys default": {files: map[string]string{"main.tf": "variable \"t\" {\n  type    = object({ s = optional(map(string), { 80 = \"http\", 443 = \"https\" }) })\n  default = {}\n}\n"}, known: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

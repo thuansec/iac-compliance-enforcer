@@ -205,7 +205,7 @@ func TestEvalJSONMatchesHCL(t *testing.T) {
 			"var": cty.ObjectVal(map[string]cty.Value{"x": cty.StringVal("ok"), "u": cty.UnknownVal(cty.String)}),
 		}}
 		want, wantDiags := expr.Value(ctx)
-		got, gotDiags := m.evalJSON(expr, ctx)
+		got, gotDiags := m.evalJSON(expr, m.withForFunction(ctx)) // as evalExpr calls it
 		if !got.RawEquals(want) || len(wantDiags) != len(gotDiags) || wantDiags.HasErrors() != gotDiags.HasErrors() {
 			t.Errorf("%s: evalJSON = %#v %v, hcl = %#v %v", src, got, gotDiags, want, wantDiags)
 		}

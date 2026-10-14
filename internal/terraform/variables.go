@@ -608,9 +608,11 @@ func (m *ParsedModule) chargeDefault(tyExpr, def hcl.Expression) bool {
 	if diags.HasErrors() {
 		return true // typeexpr reports the default as invalid, converting nothing
 	}
-	// Measuring it walks it once more; a walk stopped early has not counted all of it.
+	// Measuring it walks it once more; a walk stopped early has not counted all of it. Its
+	// literal number keys are written as text on each evaluation (literalTextCost).
 	n, measured := valueSize(val, maxFunctionWork, maxNesting)
-	evaluated := saturatingMul(2, n)
+	lit, _ := literalTextCost(se)
+	evaluated := saturatingMul(2, min(n+lit, maxFunctionWork+1))
 	if !measured || !m.canChargeFunctionWork(evaluated) {
 		m.spendFunctionWork(n) // the evaluation and the walk done
 		return false

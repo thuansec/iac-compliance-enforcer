@@ -53,6 +53,7 @@ func rewriteForExprs(node hclsyntax.Node) {
 		renameLookup(n) // ADR 0023
 		wrapBranches(n) // ADR 0028
 		wrapEquality(n) // T-0116b
+		wrapText(n)     // T-0124b
 		if j, ok := n.(*hclsyntax.TemplateJoinExpr); ok {
 			if f, ok := j.Tuple.(*hclsyntax.ForExpr); ok {
 				directives[f] = true // visited before its for expression
@@ -77,6 +78,10 @@ func rewriteForExprs(node hclsyntax.Node) {
 			w, i, u := bodyReferences(e, f.KeyVar, f.ValVar)
 			whole, indexed, uses = append(whole, w...), append(indexed, i...), uses+u
 		}
+		// The literal numbers the body writes as text cost as much on every iteration
+		// (literalTextCost; nested for expressions are counted again, an over-count).
+		lit, _ := literalTextCost(f)
+		body = min(body+lit, maxFunctionWork+1)
 		r := f.CollExpr.Range()
 		call := func(name string, args ...hclsyntax.Expression) *hclsyntax.FunctionCallExpr {
 			return &hclsyntax.FunctionCallExpr{Name: name, Args: args, NameRange: r, OpenParenRange: r, CloseParenRange: r}
@@ -378,7 +383,7 @@ func (m *ParsedModule) jsonStringTemplate(expr hcl.Expression) (hclsyntax.Expres
 func (m *ParsedModule) callsForFunctions(expr hcl.Expression) bool {
 	calls, _ := m.inspectExpr(expr)
 	return slices.ContainsFunc(calls, func(c functionCall) bool {
-		return c.name == forFunctionName || c.name == condFalseName || c.name == cmpRightName
+		return c.name == forFunctionName || c.name == condFalseName || c.name == cmpRightName || c.name == textName
 	})
 }
 
@@ -576,6 +581,7 @@ func (m *ParsedModule) condFunctions() map[string]function.Function {
 		}),
 		condFalseName: m.condFalseFunction(stateParam),
 		cmpRightName:  m.cmpRightFunction(stateParam),
+		textName:      m.textFunction(stateParam),
 	}
 }
 
