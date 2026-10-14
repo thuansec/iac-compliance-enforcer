@@ -2744,3 +2744,36 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Residual, no task: a default set whose elements gain nested sets is charged linearly. It is
     bounded today at about 0.5 s to declare and 0.25 s per walk, and the walk charges refuse it.
 - Next: CI on the PR, then the next ready task.
+
+## 2026-10-14 · T-0116e · done
+- What: the sort charges are recalibrated for sets of a few elements and for numbers.
+  - setSort (equalityCost and marksWalk) charges ceil(log2(n)) levels, so a one-element set
+    charges no sort. Sets of at most smallSetSize = 4 elements, which cty insertion-sorts in a
+    few comparisons, charge smallSetSortWork = 4 per element and level instead of 16.
+  - valueSizeWalk, elementSortWork and elementSortFloor take a primitive's fixed part from
+    primitiveSortBase: numberSortWork = 7 for numbers (big.Float comparisons), 2 for others.
+    This amends ADR 0036's single primitive base of 2; no new ADR, as the model is unchanged.
+  - The colliding-number bucket charge is kept. On this tree it is no longer overcharged in
+    time: accepted comparisons of 50–400 colliding numbers measure 38–56 ns per unit, and the
+    repeated refusals of 600 take about 10 ms (the 1.4 s predated T-0116f).
+- Files: internal/terraform/{equality.go,setwalk.go,equality_internal_test.go,
+  setwalk_internal_test.go}, docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 558 s.
+  - Sweep: lists of 1,000–15,000 sets of 1–4 strings, 10–12 → 18–23 ns per unit; sets of such
+    sets 23–30; large string sets 19–21; objects 26–30; integer walks 150 → 73–82, halves
+    77–84, strings 56–67.
+  - TestSmallSetComparisonsAreAccepted (15,000 two-string sets, 8.1M work, 144 ms) and
+    TestSortingIntegersIsCharged fail on main. TestSmallSetSortThreshold pins 2, 4, 5, 8 and 9
+    elements. TestSmallSetsInCostlyComparisonsAreRefused keeps a set of 3,000 small sets (1.2 s
+    in cty) and 5,000 small colliding sets refused.
+  - TestRepeatedRefusedComparisonsAreBounded is tightened from 2 s to 250 ms.
+  - TestSortingNonIntegersIsCharged's ratio is 3× (was 4×): halves take 3.1–3.4 times as long as
+    integers to walk, both near 80 ns per unit, now that integers are charged their cost.
+  - TestEvaluateTreeBoundsTheWholeTree/expansion failed once in the quick gate (21.9 s against
+    20 s), the known non-race flake under load (T-0116d entry); 4.4 s alone.
+- Review: iace-reviewer, APPROVE. Its two minors were fixed before commit:
+  - a test of the small-set threshold and level count (raising smallSetSize had passed every
+    test);
+  - stale calibration figures in the setwalk comments.
+- Next: CI on the PR, then the next ready task.

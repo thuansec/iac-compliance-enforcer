@@ -619,14 +619,15 @@ locations and without executing anything.
     - TestSetsOfSetsAreBoundedWhereTheyAreMade gains the case
   - attempts: 1
   - result: chargeConversion adds defaultsGrowthCost: each object in the value is charged the size and walk sort of the most the type's defaults can insert into one object (insertedWeight: the largest node insertion, each default grown by its objects times its child's most, memoized so linear in the type), and when the type holds a set of sets, the outer sort's per-level inserted size and nestedSortFactor × inserted sorts (ADR 0042). Defaults within defaults (43.8 s) and four levels of list defaults (about 9 min on main) are refused at declaration; module inputs too. 300 objects gaining a 200-string set are refused at declaration (their first use took 4.1 s); 200 security group rules with small defaults stay known (a weight-squared charge refused 100); accepted values walk at about 100 ns per unit. TestSetsOfSetsAreBoundedWhereTheyAreMade gains the case
-- [ ] T-0116e · Recalibrate the sort charge for sets of a few elements
+- [x] T-0116e · Recalibrate the sort charge for sets of a few elements
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0116b
   - accept:
     - repeated refused comparisons of 600 colliding numbers spend the module's work in about 1.4 s, about 160 ns per unit against the 95–120 calibration (T-0116c review): recalibrate the colliding-number bucket charge with the same sweep
     - equalityCost's set-sort charge (setSort: setSortWork per element and level) overcharges sets of one to four elements, which cty sorts cheaply. A list of 5,000 two-element sets is charged a third of the module's work for 57 ms (about 20 ns per unit), so about 15,000 such sets are refused at about 170 ms (T-0116b review). Calibrate small sets separately, for example a lower constant below some size, with a timing sweep that stays at or under about 120 ns per unit for small and large sets, and keep the large-set and colliding cases refused
     - valueSizeWalk's primitive sort charge (primitiveSortWork, primitiveSortDivisor, ADR 0036) measures about 150 ns per unit for sets of 1,000 to 8,000 integers, against 67–79 for strings (T-0116d sweep): recalibrate it in the same sweep
-  - attempts: 0
+  - attempts: 1
+  - result: setSort charges ceil(log2(n)) levels (none for one element), and sets of at most smallSetSize = 4 elements smallSetSortWork = 4 per element and level instead of setSortWork = 16; lists of 1,000 to 15,000 sets of one to four strings went from 10–12 to 18–23 ns per unit, as large string sets measure 19–21, and 15,000 two-element sets are accepted (144 ms). Numbers sort with their own base (primitiveSortBase, numberSortWork = 7, amending ADR 0036's base of 2): integer walks 150 → 73–82 ns per unit. Colliding numbers kept: accepted comparisons measure 38–56 ns per unit and the repeated refusals take about 10 ms since T-0116f
 - [ ] T-0124 · Charge converting numbers to strings by their precision
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116c

@@ -141,7 +141,8 @@ func TestForExpressionsOverSetsAreCharged(t *testing.T) { // not parallel: it me
 
 // cty compares numbers that are not integers by their exact decimal text, so sorting a set of
 // them costs several times a set of integers: a set of 8,000 halves took 243 ms to walk, charged
-// at 640 ns per unit before nonIntegerSortWork.
+// at 640 ns per unit before nonIntegerSortWork. Walking 1,000 halves takes 3.4 times as long as
+// 1,000 integers, both near 80 ns per unit since integers have their own sort base (T-0116e).
 func TestSortingNonIntegersIsCharged(t *testing.T) {
 	t.Parallel()
 	halves, ints := make([]cty.Value, 1_000), make([]cty.Value, 1_000)
@@ -151,8 +152,8 @@ func TestSortingNonIntegersIsCharged(t *testing.T) {
 	}
 	_, intSort, _ := valueSizeWalk(cty.SetVal(ints), maxFunctionWork, maxFunctionWork, maxNesting)
 	_, halfSort, _ := valueSizeWalk(cty.SetVal(halves), maxFunctionWork, maxFunctionWork, maxNesting)
-	if halfSort < 4*intSort {
-		t.Errorf("sorting halves charged %d, integers %d; want at least four times", halfSort, intSort)
+	if halfSort < 3*intSort {
+		t.Errorf("sorting halves charged %d, integers %d; want at least three times", halfSort, intSort)
 	}
 }
 
@@ -419,5 +420,27 @@ func TestTooLargeLocalsAreMarkedByTheirInputs(t *testing.T) {
 				t.Errorf("evaluated %v (work %d), want %v: the case no longer takes its refusal path", evaluated, m.fnWork, tc.evaluated)
 			}
 		})
+	}
+}
+
+// cty sorts numbers by comparing them as big.Float values, which costs about twice comparing
+// strings: a sweep of sets of 1,000 to 8,000 integers measured about 150 ns per unit of the walk
+// charge, as strings measured 56 to 67 (T-0116d, T-0116e sweep). Numbers have their own sort base, so a set of
+// integers is charged more than a set of as many longer strings (73 to 82 ns per unit, T-0116e).
+func TestSortingIntegersIsCharged(t *testing.T) {
+	t.Parallel()
+	ints := make([]cty.Value, 4_000)
+	strs := make([]cty.Value, 4_000)
+	for i := range ints {
+		ints[i] = cty.NumberIntVal(int64(i * 7_919))
+		strs[i] = cty.StringVal(fmt.Sprint("10.0.", i, ".0/24"))
+	}
+	_, intSort, ok := valueSizeWalk(cty.SetVal(ints), maxFunctionWork, maxFunctionWork, maxNesting)
+	_, strSort, ok2 := valueSizeWalk(cty.SetVal(strs), maxFunctionWork, maxFunctionWork, maxNesting)
+	if !ok || !ok2 || intSort <= strSort {
+		t.Errorf("integers sort for %d, strings for %d (ok %v, %v); want the integers charged more", intSort, strSort, ok, ok2)
+	}
+	if got, want := elementSortFloor(cty.Number, maxFunctionWork), numberSortWork; got != want {
+		t.Errorf("number sort floor %d; want %d", got, want)
 	}
 }
