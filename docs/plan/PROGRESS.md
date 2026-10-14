@@ -2850,3 +2850,16 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Major open: root 48 leaves the regression test about 0.3–0.8 s of margin. Per the reviewer's
     option (b), CI timings are recorded before merging.
 - Next: read the CI timings, then re-review.
+
+## 2026-10-14 · T-0124b · blocked (needs-human)
+- What: CI on PR #91 is green, but its timings confirm the review's open major. The precision
+  root that keeps the realistic fanout tree under half its budget (48) leaves
+  TestNumberFormattingInDefaultsIsCharged 7–9% under its 4 s bound on CI.
+- Evidence (CI run 38587555426, test job):
+  - list(set(any)) took 3.62 s and map(set(any)) 3.72 s; set(list(any)) took 1.35 s.
+  - The race-enabled internal/terraform package took 523.8 s of go test's 600 s (T-0125).
+  - The NONRACE_TESTS step took 28.8 s.
+- Blocker: the fix changes a gate either way (Decisions needed: raise the regression bound,
+  relax the realistic-tree guard to about 55%, or raise the tree budget), so the owner decides.
+  The PR stays open as the signal; the loop takes other ready tasks.
+- Next: the owner's decision on the Decisions needed entry, then a re-review of PR #91.
