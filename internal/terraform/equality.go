@@ -215,11 +215,13 @@ func (w *equalityWalk) sets(a, b cty.Value) {
 // cty sorts the set every time, n × log2(n) comparisons, each walking both elements for marks,
 // hashing compound elements and formatting non-integer numbers as exact decimals
 // (setRules.Less, RawEquals). Comparing two sets of 4,000 distinct strings took 127 ms, almost
-// all of it sorting (T-0116b). Each element is charged, per level of the sort, setSortWork plus
-// its comparison weight (times compoundSortFactor for compound elements) plus, for a number,
-// its formatting cost again. A value that is not a set counts nothing.
+// all of it sorting (T-0116b). Each element is charged, per level of the sort (ceil(log2(n)),
+// none for one element), setSortWork plus its comparison weight (times compoundSortFactor for
+// compound elements) plus, for a number, its formatting cost again; a set of at most
+// smallSetSize elements has smallSetSortWork for setSortWork. A value that is not a set counts
+// nothing.
 type setSort struct {
-	levels, factor, total int
+	levels, base, factor, total int
 }
 
 // newSetSort starts counting the sort of v, which must have been measured. A value that is not
@@ -232,7 +234,15 @@ func newSetSort(v cty.Value) *setSort {
 	if !v.Type().ElementType().IsPrimitiveType() {
 		factor = compoundSortFactor
 	}
-	return &setSort{levels: bits.Len(uint(v.LengthInt())), factor: factor}
+	n := v.LengthInt()
+	if n < 2 {
+		return &setSort{}
+	}
+	base := setSortWork
+	if n <= smallSetSize {
+		base = smallSetSortWork
+	}
+	return &setSort{levels: bits.Len(uint(n - 1)), base: base, factor: factor}
 }
 
 // add counts the element e, of comparison weight weight.
@@ -240,7 +250,7 @@ func (s *setSort) add(e cty.Value, weight int) {
 	if s.levels == 0 {
 		return
 	}
-	per := setSortWork + saturatingMul(weight, s.factor)
+	per := s.base + saturatingMul(weight, s.factor)
 	if e.Type() == cty.Number && e.IsKnown() && !e.IsNull() {
 		per += numberFormatCost(e)
 	}
@@ -253,4 +263,14 @@ func (s *setSort) add(e cty.Value, weight int) {
 const (
 	setSortWork        = 16
 	compoundSortFactor = 6
+)
+
+// smallSetSize and smallSetSortWork calibrate the sort of a set of at most smallSetSize
+// elements, which cty insertion-sorts in a few comparisons (sort.SliceStable): with setSortWork
+// a list of 5,000 two-element sets was charged a third of the module's work for 57 ms (T-0116b
+// review). A sweep of lists of 1,000 to 15,000 sets of one to four strings measured 18 to 23 ns
+// per unit, sets of such sets 23 to 30, as large sets of strings measure 19 to 21 (T-0116e).
+const (
+	smallSetSize     = 4
+	smallSetSortWork = 4
 )

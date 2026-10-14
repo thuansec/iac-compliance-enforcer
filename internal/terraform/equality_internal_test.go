@@ -166,14 +166,17 @@ func TestHandWrittenComparisonWrapperFails(t *testing.T) {
 
 // Repeating a refused comparison stops at the module's work instead of costing seconds per
 // repetition (T-0116b): each refusal spends the work it charged, so the loop ends at about the
-// module's whole work (1.4 s without -race; with equalityCost removed it took 192 s, T-0116c
-// review). Each iteration also pays its references to var.s, but at 600 elements those alone no
-// longer stop it.
+// module's whole work (1.4 s without -race when equalityCost walked the sets before refusing,
+// T-0116c review; with equalityCost removed it took 192 s). Since the estimate's walks are
+// charged first (T-0116f) the loop takes about 10 ms, and accepted comparisons of colliding
+// numbers measure 38 to 56 ns per unit (T-0116e sweep, 50 to 400 elements), so the bucket
+// charge is kept. Each iteration also pays its references to var.s, but at 600 elements those
+// alone no longer stop it.
 func TestRepeatedRefusedComparisonsAreBounded(t *testing.T) { // not parallel: it measures time
 	_, colliding := collidingSet(600) // refused, and quick to build
 	start := time.Now()
 	m, v := evalLocal(t, `[for i in range(200) : var.s == var.s]`, map[string]Variable{"s": {Name: "s", Value: colliding}})
-	if elapsed := time.Since(start); elapsed > 2*time.Second*raceSlowdown {
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond*raceSlowdown {
 		t.Errorf("took %v", elapsed)
 	}
 	if v.IsKnown() {
@@ -443,5 +446,95 @@ func TestComparisonsAreRefusedBeforeEstimating(t *testing.T) { // not parallel: 
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond*raceSlowdown {
 		t.Errorf("refusing 40,000 tuples took %v; want no iteration", elapsed)
+	}
+}
+
+// smallSets is a list of n sets of k distinct strings each.
+func smallSets(n, k int) cty.Value {
+	sets := make([]cty.Value, n)
+	for i := range sets {
+		elems := make([]cty.Value, k)
+		for j := range elems {
+			elems[j] = cty.StringVal(fmt.Sprint("v", i, "-", j))
+		}
+		sets[i] = cty.SetVal(elems)
+	}
+	return cty.ListVal(sets)
+}
+
+// cty sorts a set of a few elements in a few comparisons (sort.SliceStable insertion-sorts
+// them), and a set of one element not at all, but the sort charge counted log2(n) + 1 levels
+// at the full per-element work: 5,000 two-element sets were charged a third of the module's work
+// for 57 ms, and 15,000 refused at about 170 ms (T-0116b review). Small sets are charged
+// ceil(log2(n)) levels at smallSetSortWork, which a sweep of lists of 1,000 to 15,000 sets of one
+// to four strings measured at 18 to 23 ns per unit, as large sets of strings measure 19 to 21.
+func TestSmallSetComparisonsAreAccepted(t *testing.T) { // not parallel: it measures time
+	l := smallSets(15_000, 2)
+	other := cty.ListVal(l.AsValueSlice())
+	cost := operandsEqualityCost(l, other, maxFunctionWork)
+	if cost > maxFunctionWork {
+		t.Fatalf("refused (%d)", cost)
+	}
+	start := time.Now()
+	l.Equals(other)
+	if elapsed := time.Since(start); elapsed > time.Second*raceSlowdown {
+		t.Errorf("cty took %v for a charge of %d", elapsed, cost)
+	}
+	// End to end, within the size limit of one local's inputs.
+	m, v := evalLocal(t, `var.l == var.l`, map[string]Variable{"l": {Name: "l", Value: smallSets(2_000, 2)}})
+	if !v.IsKnown() {
+		t.Errorf("unknown: %v", m.Diagnostics)
+	}
+	// A set of one element is not sorted.
+	one := newSetSort(cty.SetVal([]cty.Value{cty.StringVal("a")}))
+	one.add(cty.StringVal("a"), 1)
+	if one.total != 0 {
+		t.Errorf("sort of one element charged %d; want 0", one.total)
+	}
+}
+
+// Recalibrating small sets keeps what cty compares slowly refused: sets of small sets compare
+// their elements pairwise (3,000 sets of two strings took 1.2 s in cty), and lists of small sets
+// of colliding numbers compare every pair in each.
+func TestSmallSetsInCostlyComparisonsAreRefused(t *testing.T) {
+	t.Parallel()
+	collide := make([]cty.Value, 5_000)
+	for i := range collide {
+		collide[i] = cty.SetVal(collidingNumberVals(4))
+	}
+	for name, v := range map[string]cty.Value{
+		"set of small sets":               cty.SetVal(smallSets(3_000, 2).AsValueSlice()),
+		"small sets of colliding numbers": cty.ListVal(collide),
+	} {
+		if cost := operandsEqualityCost(v, v, maxFunctionWork); cost <= maxFunctionWork {
+			t.Errorf("%s: accepted (%d); want refused", name, cost)
+		}
+	}
+}
+
+// The small-set charge stops at smallSetSize: a set of four elements sorts over two levels at
+// smallSetSortWork, one of five over three at setSortWork, and a power of two over log2(n)
+// levels, where bits.Len(n) had counted one more (T-0116e review).
+func TestSmallSetSortThreshold(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ n, levels, base int }{
+		{2, 1, smallSetSortWork},
+		{smallSetSize, 2, smallSetSortWork},
+		{smallSetSize + 1, 3, setSortWork},
+		{8, 3, setSortWork},
+		{9, 4, setSortWork},
+	} {
+		elems := make([]cty.Value, tc.n)
+		for i := range elems {
+			elems[i] = cty.StringVal(fmt.Sprint(i))
+		}
+		s := newSetSort(cty.SetVal(elems))
+		if s.levels != tc.levels || s.base != tc.base {
+			t.Errorf("%d elements: %d levels at %d; want %d at %d", tc.n, s.levels, s.base, tc.levels, tc.base)
+		}
+		s.add(elems[0], 1)
+		if want := (tc.base + 1) * tc.levels; s.total != want {
+			t.Errorf("%d elements: one element charged %d; want %d", tc.n, s.total, want)
+		}
 	}
 }

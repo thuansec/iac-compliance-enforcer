@@ -15,9 +15,10 @@ import (
 // valueSizeWalk is valueSize, plus the sort work of every set it walks: per set of n elements,
 // log2(n) × (n × base + the size of its elements / divisor), where compound elements (each sort
 // comparison hashes both) cost a base of setSortWork per element and their full size, and
-// primitives (compared directly) primitiveSortWork and an eighth of their size: a timing sweep
+// primitives (compared directly) primitiveSortBase and an eighth of their size: a timing sweep
 // of sets of strings, tuples, objects, integers and non-integers (1,000 to 8,000 elements,
-// ADR 0036) measured 67 to 154 ns per unit. Before it iterates a set it
+// ADR 0036) measured 67 to 154 ns per unit; with numbers' own base (T-0116e) integers measure
+// 73 to 82 and strings 56 to 67. Before it iterates a set it
 // estimates that sort from the set's length and element type, a lower bound of its charge, and
 // refuses when the estimate alone passes work, the function work the caller has left: iterating
 // is what sorts, so a set that cannot be afforded is never iterated. It refuses too once the sort
@@ -84,7 +85,7 @@ func valueMarksWalk(v cty.Value, limit, work, depth int) (size, sort int, marked
 		case ty.IsCollectionType() || ty.IsObjectType() || ty.IsTupleType():
 			if ty.IsSetType() {
 				n, ety := val.LengthInt(), ty.ElementType()
-				base, divisor := primitiveSortWork, primitiveSortDivisor
+				base, divisor := primitiveSortBase(ety), primitiveSortDivisor
 				if !ety.IsPrimitiveType() {
 					base, divisor = setSortWork, 1
 				}
@@ -129,14 +130,14 @@ func valueMarksWalk(v cty.Value, limit, work, depth int) (size, sort int, marked
 
 // elementSortWork is the work of one element of a set per level of its sort, as valueSizeWalk
 // charges it (ADR 0036), for an element whose size is size: compound elements setSortWork plus
-// their size, primitives primitiveSortWork plus an eighth of it, and non-integer numbers their
+// their size, primitives primitiveSortBase plus an eighth of it, and non-integer numbers their
 // decimal comparisons too. A timing sweep of sets built from 1,000 to 5,000 tuples measured 69
 // to 92 ns per unit (T-0116h).
 func elementSortWork(e cty.Value, size int) int {
 	if !e.Type().IsPrimitiveType() {
 		return min(setSortWork+size, maxFunctionWork+1)
 	}
-	work := primitiveSortWork + size/primitiveSortDivisor
+	work := primitiveSortBase(e.Type()) + size/primitiveSortDivisor
 	if e.Type() == cty.Number {
 		work += nonIntegerSortWork(e)
 	}
@@ -150,6 +151,17 @@ func elementSortFloor(ety cty.Type, limit int) int {
 	if !ety.IsPrimitiveType() {
 		return min(setSortWork+typeSize(ety, limit, maxNesting), maxFunctionWork+1)
 	}
+	return primitiveSortBase(ety)
+}
+
+// primitiveSortBase is the fixed part of sorting one element of the primitive type ty per level:
+// cty compares numbers as big.Float values (Cmp), which a timing sweep of sets of 1,000 to 8,000
+// integers measured at about 150 ns per unit with primitiveSortWork, against 56 to 67 for
+// strings, and 73 to 82 with numberSortWork (T-0116e).
+func primitiveSortBase(ty cty.Type) int {
+	if ty == cty.Number {
+		return numberSortWork
+	}
 	return primitiveSortWork
 }
 
@@ -157,7 +169,7 @@ func elementSortFloor(ety cty.Type, limit int) int {
 // cty compares numbers that are not integers by their exact decimal text, about 20 units, and
 // formatting a number with many fractional bits costs its numberFormatCost (a timing sweep of
 // sets of 1,000 and 8,000 halves, thirds and 512-bit fractions measured 400 to 940 ns per unit
-// without it, as integers measure 130). Integers, unknowns and nulls cost nothing more.
+// without it, as integers then measured 130; T-0116e's number base brings both near 80). Integers, unknowns and nulls cost nothing more.
 func nonIntegerSortWork(v cty.Value) int {
 	v, _ = v.Unmark()
 	if !v.IsKnown() || v.IsNull() || v.AsBigFloat().IsInt() {
@@ -175,8 +187,10 @@ const nestedSortFactor = 4
 const nonIntegerCompareWork = 20
 
 // primitiveSortWork and primitiveSortDivisor calibrate the sort of a set of primitive values in
-// a walk, per element and level: a fixed part and a share of the element's size.
+// a walk, per element and level: a fixed part and a share of the element's size. numberSortWork
+// is the fixed part for numbers (primitiveSortBase).
 const (
 	primitiveSortWork    = 2
 	primitiveSortDivisor = 8
+	numberSortWork       = 7
 )
