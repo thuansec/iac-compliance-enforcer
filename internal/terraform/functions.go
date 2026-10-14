@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 
@@ -435,7 +436,8 @@ func measureArgs(args []cty.Value, limit, work int) (sizes []int, sort int, mark
 
 // conversionWork is the work of the conversions f makes of args (ADR 0029, ADR 0032): an
 // argument is charged its conversionCost to its parameter type when that type holds a
-// collection type. When unify is not cty.NilType, every argument is charged its conversion to
+// collection type, and a number passed to a string parameter its formatting (numberTextCost,
+// ADR 0043). When unify is not cty.NilType, every argument is charged its conversion to
 // unify instead, or, for the dynamic type, conservativeCost and the arguments' types unified
 // together (coalesce). buildsSets: f's before cost charges building sets (setBuildCosts), so the
 // conversions do not charge it again.
@@ -459,6 +461,8 @@ func (m *ParsedModule) conversionWork(f function.Function, args []cty.Value, uni
 			n = conversionCostWith(&unifyWalk{limit: left, noSetBuild: buildsSets}, a, unify, false)
 		case typeHasCollection(want):
 			n = conversionCostWith(&unifyWalk{limit: left, noSetBuild: buildsSets}, a, want, false)
+		case want == cty.String:
+			n = numberTextCost(a) // a number passed as a string is formatted (T-0124)
 		}
 		work = min(work+n, maxFunctionWork+1)
 	}
@@ -733,6 +737,42 @@ func numberFormatCost(v cty.Value) int {
 	q := frac/fracBitsPerUnitRoot + 1
 	return saturatingMul(q, q)
 }
+
+// numberTextCost bounds the work of converting the number v to a string, which cty does with
+// exact shortest decimal formatting (big.Float.Text('f', -1)). That costs about the square of
+// the number's precision, whatever its value: 14 µs for 123 at the 512 bits HCL parses
+// literals at, against 1.1 µs at 64 bits, 160 µs at 2,048 and 2.4 ms at 8,192 (T-0124 sweep).
+// Numbers far below 1 cost their fractional bits instead when that is more (numberFormatCost),
+// and numbers far above 1 add the digits of their integer part, which grow faster than linearly
+// (numberIntegerTextCost). Conversions sweeping both measured 18 to 80 ns per unit. Anything
+// else costs nothing.
+func numberTextCost(v cty.Value) int {
+	v, _ = v.Unmark()
+	if v.Type() != cty.Number || !v.IsKnown() || v.IsNull() {
+		return 0
+	}
+	f := v.AsBigFloat()
+	if f.IsInf() || f.Sign() == 0 {
+		return 0
+	}
+	q := int(f.Prec())/fracBitsPerUnitRoot + 1
+	return min(max(saturatingMul(q, q), numberFormatCost(v))+numberIntegerTextCost(f), maxFunctionWork+1)
+}
+
+// numberIntegerTextCost is the work of writing the integer part of f in decimal, d digits:
+// d + d² / integerDigitsSquared. At 512 bits 1e10000 took 0.8 ms, 1e100000 20 ms and 1e300000
+// 109 ms, 35 to 100 ns per unit (T-0124 review).
+func numberIntegerTextCost(f *big.Float) int {
+	exp := f.MantExp(nil)
+	if exp <= 0 {
+		return 0
+	}
+	d := int64(exp)/10*3 + 1 // log10(2) is about 0.301; d < 2^30, so d² fits
+	return int(min(d+d*d/integerDigitsSquared, maxFunctionWork+1))
+}
+
+// integerDigitsSquared calibrates numberIntegerTextCost's superlinear part.
+const integerDigitsSquared = 100_000
 
 // typeHasSet reports whether a value of type ty can hold a set.
 func typeHasSet(ty cty.Type) bool {

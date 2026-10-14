@@ -316,10 +316,13 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		w.unify(slices.Repeat([]cty.Type{ety}, val.LengthInt()))
 	}
 	switch {
+	case ty == cty.Number && want == cty.String:
+		w.add(numberTextCost(val))
 	case ty.IsTupleType() && (want.IsListType() || want.IsSetType()):
 		ety, types := want.ElementType(), elementTypes(val)
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
+			w.toStrings(val, types)
 			w.eachElement(val, w.valuePart)
 			w.toUnifiedType(val, types)
 			if want.IsListType() {
@@ -344,6 +347,7 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		ety, types := want.ElementType(), elementTypes(val)
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
+			w.toStrings(val, types)
 			w.eachElement(val, w.valuePart)
 			w.toUnifiedType(val, types)
 			if slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
@@ -448,6 +452,9 @@ func (w *unifyWalk) setBuild(v cty.Value, ety cty.Type) {
 			if e.Type().IsPrimitiveType() {
 				weight, _ := comparisonWeight(e)
 				w.add(weight)
+				if target == cty.String {
+					w.add(numberTextCost(e))
+				}
 			} else {
 				w.add(conversionCostWith(&unifyWalk{limit: w.limit - w.cost, noSetBuild: true}, e, target, false))
 			}
@@ -595,6 +602,19 @@ func (w *unifyWalk) toUnifiedType(v cty.Value, types []cty.Type) {
 	w.eachElement(v, func(e cty.Value) { w.convert(e, u) })
 }
 
+// toStrings charges, when types (the element types of v) are primitive and unify to a string,
+// converting every number in v to a string (numberTextCost): a default of 300 rows
+// `[i, i + 1, "x"]` in a list(set(any)) under count = 800 spent most of 12.9 s formatting
+// them (T-0116 review). Mixes the walk sees only after unifying, such as tuples whose columns
+// unify to strings, are not charged here.
+func (w *unifyWalk) toStrings(v cty.Value, types []cty.Type) {
+	if w.over() || !slices.Contains(types, cty.String) ||
+		slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
+		return
+	}
+	w.eachElement(v, func(e cty.Value) { w.add(numberTextCost(e)) })
+}
+
 // replace charges the type cty gives an unknown or null value converted to want
 // (convert.dynamicReplace): it unifies a tuple's element types for a list or set, and an
 // object's attribute types for a map, whatever the target element type.
@@ -719,7 +739,9 @@ func (w *unifyWalk) valuePart(v cty.Value) {
 		}
 		switch {
 		case ty.IsTupleType() || ty.IsObjectType() || ty.IsMapType():
-			w.unify(elementTypes(val))
+			types := elementTypes(val)
+			w.unify(types)
+			w.toStrings(val, types)
 		case !ty.IsListType() && !ty.IsSetType():
 			continue
 		}
