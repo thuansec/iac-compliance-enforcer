@@ -338,9 +338,11 @@ func rowsDefault(ty string) string {
 // Converting the defaults' numbers to strings formats each at 512 bits, and building the sets
 // formats them again: under count = 800, a list(set(any)) default of 300 rows took 12.9 s, 580
 // instances evaluated before the tree budget, about 3 times its calibration (T-0116 review), and
-// 7.8 s before T-0124. With the formatting charged the tree stops at its budget in about 3.3 s
-// (2 s with T-0124's first precision root, ADR 0044); one instance
-// still evaluates its default.
+// 7.8 s before T-0124. With the formatting charged the tree stops at its budget in 3.2 to 3.7 s
+// (3.62 to 3.72 s on CI; 2 s with T-0124's first precision root, ADR 0044); one instance still
+// evaluates its default. An accurately charged tree that runs to its budget takes about the
+// budget at the 120 ns calibration, 4 s, so the bound is that plus a margin: 5 s (owner's
+// decision, T-0124b).
 func TestNumberFormattingInDefaultsIsCharged(t *testing.T) { // not parallel: it measures time
 	for _, ty := range []string{"list(set(any))", "map(set(any))", "set(list(any))"} {
 		t.Run(ty, func(t *testing.T) {
@@ -350,7 +352,7 @@ func TestNumberFormattingInDefaultsIsCharged(t *testing.T) { // not parallel: it
 			})
 			start := time.Now()
 			instances := mustEvaluateTree(t, dir)
-			if elapsed := time.Since(start); elapsed > 4*time.Second*raceSlowdown {
+			if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
 				t.Errorf("took %v", elapsed)
 			}
 			if evaluated, _, warned := countSkipped(instances); evaluated < 2 || !warned {
@@ -370,5 +372,25 @@ func TestNumberFormattingInDefaultsIsCharged(t *testing.T) { // not parallel: it
 				t.Errorf("one instance: n = %#v; want 300", n)
 			}
 		})
+	}
+}
+
+// Every instance evaluates its expressions again, so the literal numbers they write as text are
+// charged per evaluation: a child module holding one local of 10,000 uses of local.m[1e-150]
+// took 30 s under count = 20 and 75 s under count = 60 (T-0124b review; 1.35 s with
+// local.m["a"]). Each instance now refuses that local at once, and the locals estimate keys
+// its paths by the numbers' exact hexadecimal text, not decimal (3.8 s at count = 20).
+func TestLiteralTextIsChargedPerInstance(t *testing.T) { // not parallel: it measures time
+	key := "0." + strings.Repeat("0", 149) + "1"
+	child := "locals {\n  m = { \"" + key + "\" = 1 }\n  v = [" + strings.Repeat("local.m[1e-150], ", 10_000) + "]\n}\n" +
+		"resource \"x\" \"y\" {\n  n = length(local.v)\n}\n"
+	dir := files(t, map[string]string{
+		"main.tf":   "module \"c\" {\n  source = \"./c\"\n  count  = 60\n}\n",
+		"c/main.tf": child,
+	})
+	start := time.Now()
+	mustEvaluateTree(t, dir)
+	if elapsed := time.Since(start); elapsed > 5*time.Second*raceSlowdown {
+		t.Errorf("took %v", elapsed)
 	}
 }

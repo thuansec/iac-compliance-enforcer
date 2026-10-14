@@ -3,9 +3,11 @@ package terraform
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -146,5 +148,78 @@ func TestCostlyLiteralIndexesInJSONAreRefused(t *testing.T) {
 	}
 	if !locals["w"].Value.RawEquals(cty.NumberIntVal(1)) {
 		t.Errorf("w = %#v; want 1", locals["w"].Value)
+	}
+}
+
+// Outside for expressions an expression's literal numbers are written as text on every
+// evaluation: one local of 10,000 uses of var.m[1e-150] (1,024 units each, under the refusal
+// threshold) took 1.6 s uncharged (T-0124b review). It is charged before it is evaluated, so it
+// is unknown with a warning, while a few such uses evaluate.
+func TestLiteralTextOutsideLoopsIsCharged(t *testing.T) {
+	t.Parallel()
+	key := numberAt(t, "1e-150", 512).AsBigFloat().Text('f', -1)
+	vars := map[string]Variable{"m": {Name: "m", Value: cty.ObjectVal(map[string]cty.Value{key: cty.NumberIntVal(1)})}}
+	m, v := evalLocal(t, "["+strings.Repeat("var.m[1e-150], ", 10_000)+"]", vars)
+	if v.IsKnown() || !hasDiagnostic(m, "Number formatting too large") {
+		t.Errorf("known %v, diagnostics %v; want unknown with Number formatting too large", v.IsKnown(), m.Diagnostics)
+	}
+	if m.fnWork < maxFunctionWork/2 {
+		t.Errorf("function work %d; want the refusal to spend its charge", m.fnWork)
+	}
+	m, v = evalLocal(t, "[var.m[1e-150], var.m[1e-150]]", vars)
+	if !v.IsWhollyKnown() || m.fnWork < 2*numberTextCost(numberAt(t, "1e-150", 512)) {
+		t.Errorf("value %#v, function work %d; want known and both uses charged", v, m.fnWork)
+	}
+	// The refusal happens before evaluation, so the unknown is marked from the local's inputs.
+	vars["s"] = Variable{Name: "s", Value: cty.StringVal("FAKE").Mark(SensitiveMark)}
+	m, v = evalLocal(t, "[var.s, "+strings.Repeat("var.m[1e-150], ", 10_000)+"]", vars)
+	if v.IsKnown() || !v.HasMark(SensitiveMark) {
+		t.Errorf("known %v, sensitive %v; want unknown and sensitive: %v", v.IsKnown(), v.HasMark(SensitiveMark), m.Diagnostics)
+	}
+	// .tf.json templates are charged the same way (T-0124b review).
+	for uses, known := range map[int]bool{10_000: false, 2: true} {
+		src := `{"locals": {"m": {"` + key + `": "a"}, "v": "` + strings.Repeat("${local.m[1e-150]}", uses) + `"}}`
+		jm := parseFilesModule(t, map[string]string{"main.tf.json": src})
+		locals, err := jm.EvaluateLocals(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := locals["v"].Value.IsKnown(); got != known || !known && !hasDiagnostic(jm, "Number formatting too large") {
+			t.Errorf(".tf.json, %d uses: known %v, want %v: %v", uses, got, known, jm.Diagnostics)
+		}
+		if jm.fnWork < uses*numberTextCost(numberAt(t, "1e-150", 512)) && known {
+			t.Errorf(".tf.json, %d uses: function work %d; want them charged", uses, jm.fnWork)
+		}
+		if !known && jm.fnWork < maxFunctionWork/2 {
+			t.Errorf(".tf.json, %d uses: function work %d; want the refusal to spend its charge", uses, jm.fnWork)
+		}
+	}
+}
+
+// The locals estimate keys the paths it caches by their steps, and numeric keys by the exact
+// hexadecimal text of the number: decimal text took 3.8 s for 10,000 keys of 1e-150 (T-0124b).
+// One value at different precisions gets one key.
+func TestPathKeysWriteNumbersCheaply(t *testing.T) {
+	t.Parallel()
+	steps := make(hcl.Traversal, 10_000)
+	for i := range steps {
+		steps[i] = hcl.TraverseIndex{Key: numberAt(t, "1e-150", 512)}
+	}
+	start := time.Now()
+	if _, ok := (usePath{key: "local.m", steps: steps}).cacheKey(); !ok {
+		t.Fatal("not cached")
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond*raceSlowdown {
+		t.Errorf("took %v", elapsed)
+	}
+	key := func(v cty.Value) string {
+		k, _ := usePath{key: "local.m", steps: hcl.Traversal{hcl.TraverseIndex{Key: v}}}.cacheKey()
+		return k
+	}
+	if a, b := key(numberAt(t, "0.5", 53)), key(numberAt(t, "0.5", 512)); a != b {
+		t.Errorf("0.5 keys %q and %q; want one", a, b)
+	}
+	if a, b := key(numberAt(t, "1e-150", 512)), key(numberAt(t, "1.0000000001e-150", 512)); a == b {
+		t.Errorf("distinct numbers share key %q", a)
 	}
 }

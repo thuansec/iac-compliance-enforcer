@@ -99,6 +99,13 @@ func (m *ParsedModule) textFunction(stateParam function.Parameter) function.Func
 // keys, and the index steps of traversals (hcl parses local.m[1e-2466] as a traversal, which
 // wrapText cannot wrap). total is their numberTextCost summed, and costliest the largest. A
 // 512-bit integer costs 121 units, and 1e10000 about 11,000.
+//
+// An expression whose costliest literal passes maxSetNumberFormatCost (1,089 units, a fraction
+// with 1,024 fractional bits) is not safe to evaluate (inspectSource): repeating
+// local.m[1e-2466] took 2.2 ms per use. Below that, evalExpr charges total on every evaluation,
+// and a for expression charges its body's total on every iteration. Index keys into lists and
+// tuples are charged too, though hcl makes them numbers, not text: an accepted over-count (122
+// units per `x[0]`).
 func literalTextCost(expr hclsyntax.Node) (total, costliest int) {
 	add := func(v cty.Value) {
 		c := numberTextCost(v)
@@ -140,14 +147,4 @@ func literalTextCost(expr hclsyntax.Node) (total, costliest int) {
 		return nil
 	})
 	return total, costliest
-}
-
-// costlyLiteralText reports whether a literal number that expr makes a string costs more than
-// maxSetNumberFormatCost to write (literalTextCost): such an expression is not safe to evaluate.
-// Repeating local.m[1e-2466] took 2.2 ms per use (T-0124b), and evaluations outside for
-// expressions, which charge their literals per iteration, do not pay for it. Ordinary keys cost
-// far less: `[5]` 121 units, a fraction with 1,024 fractional bits 1,089.
-func costlyLiteralText(expr hclsyntax.Node) bool {
-	_, costliest := literalTextCost(expr)
-	return costliest > maxSetNumberFormatCost
 }

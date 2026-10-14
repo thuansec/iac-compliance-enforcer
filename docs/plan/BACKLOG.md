@@ -10,18 +10,7 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - max_attempts_per_task: 3
 
 ## Decisions needed
-- T-0124b (PR #91, open): two calibration guards conflict once template formatting is charged.
-  Charging a 512-bit number written as text at 121 units (precision root 48, 114 ns per unit)
-  keeps TestRealisticTreesStayUnderTheWorkLimit's fanout tree at 49.3% of the tree's work,
-  under its half-budget guard. But TestNumberFormattingInDefaultsIsCharged then runs at its
-  tree budget in 3.62–3.72 s on CI (3.2–3.7 s locally) against its 4 s bound, and the review
-  saw a 4.32 s failure under load. Root 40–44 (83–97 ns per unit) restores that margin, but
-  puts the fanout tree at about 50.6–52%. Options:
-  (a) keep root 48 and raise the regression bound to the budget at the 120 ns ceiling plus
-      margin, for example 5 s;
-  (b) take root 40–44 and let realistic trees use up to about 55% of the tree's work;
-  (c) raise the tree's function budget.
-  Each changes a gate, so the owner decides. The rest of the PR is reviewed and fixed.
+None open.
 
 ## M0 · Foundations — status: done
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -649,15 +638,22 @@ locations and without executing anything.
     - regression: a child module with a `list(set(any))` default of 300 rows `[i, i + 1, "x"]` under `count = 800` took 12.9 s, with 580 instances evaluated before the tree budget, about 3 times the budget's calibration; with the charge it finishes within about 4 s, as do `map(set(any))` and `set(list(any))` (T-0116 review)
   - attempts: 1
   - result: numberTextCost = max((Prec/32 + 1)², numberFormatCost) + the integer part's digits (d + d²/100,000), charged where the conversion estimate sees a number become a string (convert, toStrings for mixed primitive tuples, objects and maps, setBuild's repeat, scalar string arguments; ADR 0043). Sweep at 512–8,192 bits: 18–80 ns per unit. The 300-row list(set(any)) and map(set(any)) defaults under count = 800 went from 7.8 s to 2.0 s; set(list(any)) takes 1.2 s; one instance still evaluates. Templates, format, number keys, mixes found only after unifying, and huge-precision numbers went to T-0124b
-- [!] T-0124b · Charge numbers that templates, keys and format write as text
+- [x] T-0124b · Charge numbers that templates, keys and format write as text
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124
   - accept:
     - string templates (`"${var.n}"`, including in for expressions) and format/formatlist (`Text('g', -1)`) charge numberTextCost for each number they format (ADR 0043)
     - numbers used as keys are formatted too: for-expression object keys (`{for i in local.r : i => 1}` over 10,000 512-bit numbers measured about 141 ns per unit, T-0124 review; templates 134), object constructor keys `{(n) = ...}` and indexing a map by a number: charge them or show them bounded by a timing test
     - (moved to T-0124c) mixes found only after unifying, and bounding numbers of huge precision where they are made
-  - blocked: needs-human — choose how the regression bound and the realistic-tree guard trade off (Decisions needed); PR #91 is open with the rest done
+  - decided: the owner chose to keep precision root 48 and raise TestNumberFormattingInDefaultsIsCharged's bound from 4 s to 5 s (2026-10-14)
   - attempts: 1
+  - result: hcl's own number-to-text writes are charged: `__iace_text` wraps template parts, for, object and IndexExpr keys; literals are priced from the source (literalTextCost), charged per evaluation in evalExpr and per iteration in for bodies, refused over 1,089 units in HCL and .tf.json; format and formatlist charge their numbers. The precision root is recalibrated 32 → 48 (fanout tree 49.3%), and on the owner's decision TestNumberFormattingInDefaultsIsCharged's bound is now 5 s. The locals estimate's path keys use exact hex text (10,000 keys of 1e-150: 3.8 s → 2.5 ms). The math/big timing tests run in make test's non-race step (NONRACE_TESTS). Follow-ups: T-0124c, T-0124d
+- [ ] T-0124d · Test that refused literal text keeps the marks of resource and module inputs
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0124b
+  - accept:
+    - resourceDecoder.evalBounded's textRefused check (resources.go) is covered: a resource attribute and a module input such as `[var.s, var.m[1e-150] × 10,000]` with a sensitive var.s are unknown and carry SensitiveMark, and removing the check fails the test (T-0124b review)
+  - attempts: 0
 - [ ] T-0124c · Charge number-to-string mixes found after unifying, and bound sets of costly fractions
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b

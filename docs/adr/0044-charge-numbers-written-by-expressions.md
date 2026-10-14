@@ -42,8 +42,13 @@ per call, with nothing charged for the text.
     ones count again, an over-count). The review measured 100,000 uses of `var.m[1e-150]` at
     5.2 s and of `var.m[7]` at 1.7 s, both uncharged.
   - chargeDefault adds it to the two evaluations of an optional() default.
-  - Elsewhere a literal is written once per evaluation, at most 1,089 units. A 512-bit integer
-    costs 121.
+  - evalExpr charges an expression's total literal cost on every evaluation, refusing it with
+    "Number formatting too large" when it does not fit, and spending the work. The re-review
+    measured one local holding 10,000 uses of `local.m[1e-150]` (1,024 units each) at 1.6 s
+    uncharged, and a module holding it at 75 s under count = 60. A 512-bit integer costs 121.
+  - Literal index keys into lists and tuples are charged too, though hcl makes them numbers,
+    not text. This is an accepted over-count: 122 units per `x[0]`, about 15% of a module's
+    function work over 10,000 iterations.
 - format and formatlist charge numbersTextCost of their arguments as call work. For formatlist
   that is every list element, plus every scalar once per row.
 - ADR 0043's precision term is recalibrated from (Prec / 32 + 1)² to (Prec / 48 + 1)²
@@ -62,7 +67,10 @@ per call, with nothing charged for the text.
 - 1,000 templates or format calls over an 8,192-bit number, and a sensitive one, stop at the
   module's work in under 1 s each, and the refused values keep their marks.
 - The ADR 0043 regression module now stops at the tree budget in 3.2 to 3.7 s over five local
-  runs (2 s with root 32), against its 4 s bound: the budget at about 100 ns per unit. The
-  review saw one 4.32 s run under load, so CI timings are recorded below before merging.
+  runs, and 3.62 to 3.72 s on CI (2 s with root 32): the budget at about 100 ns per unit. The
+  review saw one 4.32 s run under load. A tree charged accurately to its budget takes about the
+  budget at the 120 ns calibration, 4 s, so the owner chose (2026-10-14) to keep root 48 and
+  raise that test's bound from 4 s to 5 s. The alternatives were root 40–44 with realistic trees
+  allowed about 55% of the tree's work, or a larger tree budget.
 - Left for T-0124c: number-to-string mixes found only after unifying, and sets of numbers with
   many fractional bits sorted before any walk can count them.

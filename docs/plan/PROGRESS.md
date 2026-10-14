@@ -2863,3 +2863,33 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   relax the realistic-tree guard to about 55%, or raise the tree budget), so the owner decides.
   The PR stays open as the signal; the loop takes other ready tasks.
 - Next: the owner's decision on the Decisions needed entry, then a re-review of PR #91.
+
+## 2026-10-14 · T-0124b · done
+- What: the owner chose option (a) on the calibration trade-off. Precision root 48 stays, and
+  TestNumberFormattingInDefaultsIsCharged's bound goes from 4 s to 5 s (ADR 0044, BACKLOG
+  `decided:`). Two more review rounds then closed the remaining gaps.
+  - evalExpr charges an expression's literal text cost (literalTextCost, memoized with its
+    inspection, summed over .tf.json templates) on every evaluation. When it does not fit,
+    the work is spent and the result is unknown with "Number formatting too large".
+    m.textRefused lets evalLocal and evalBounded return their own marked unknown.
+  - usePath.cacheKey, the locals estimate's path key, writes numeric keys as exact hex
+    (Text('p', 0)) instead of shortest decimal, which was iace's own uncharged formatting.
+  - costlyLiteralText was folded into inspectSource. The list and tuple index over-count
+    (122 units per `x[0]`) is recorded as accepted in ADR 0044.
+- Files: as in the entry above, plus internal/terraform/{resources.go}.
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - On CI (run 38587555426) the regression subtests took 3.62 and 3.72 s.
+  - TestLiteralTextOutsideLoopsIsCharged covers 10,000 literal uses (HCL and .tf.json), two
+    uses, and a sensitive input.
+  - TestLiteralTextIsChargedPerInstance: count = 60 took 0.27 s; without the charge 30.8 s.
+  - TestPathKeysWriteNumbersCheaply: decimal keys took 536 ms against a 200 ms bound (20.6 s
+    under -race, review).
+  - Each new test fails when its fix is reverted.
+- Review: iace-reviewer, CHANGES_REQUIRED three times, then APPROVE.
+  - Round 2 major fixed: literals outside for expressions were free on each evaluation (75 s
+    under count = 60).
+  - Round 3 major fixed: the .tf.json charge was untested. Its minors were fixed too: a direct
+    cacheKey test, and marks on refused locals.
+  - Round 4 minor recorded as T-0124d: evalBounded's mark path is untested.
+- Next: CI on the PR, then merge; then T-0124c or the next ready task.

@@ -676,6 +676,9 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 		return unknown, false
 	}
 	val, diags := d.m.evalExpr(expr, ectx)
+	if d.m.textRefused {
+		return unknown, false // marked when an input is sensitive, as evalExpr's unknown is not
+	}
 	if diags.HasErrors() {
 		// hcl's Summary only: its Detail can quote values.
 		summary := diags[0].Summary
