@@ -315,3 +315,59 @@ func TestEvaluateTreeDoesNotChargeTheRootSource(t *testing.T) {
 		t.Errorf("child of a large root skipped: %d instances", len(instances))
 	}
 }
+
+// rowsDefault is a module whose variable v of type ty defaults to 300 rows [i, i + 1, "x"]
+// (keyed for a map), each converted to a set of strings or a list.
+func rowsDefault(ty string) string {
+	var rows []string
+	for i := range 300 {
+		r := fmt.Sprintf("[%d, %d, \"x\"]", i, i+1)
+		if strings.HasPrefix(ty, "map") {
+			r = fmt.Sprintf("k%d = %s", i, r)
+		}
+		rows = append(rows, r)
+	}
+	def := "[" + strings.Join(rows, ", ") + "]"
+	if strings.HasPrefix(ty, "map") {
+		def = "{\n" + strings.Join(rows, "\n") + "\n}"
+	}
+	return "variable \"v\" {\n  type    = " + ty + "\n  default = " + def + "\n}\n" +
+		"resource \"x\" \"y\" {\n  n = length(var.v)\n}\n"
+}
+
+// Converting the defaults' numbers to strings formats each at 512 bits, and building the sets
+// formats them again: under count = 800, a list(set(any)) default of 300 rows took 12.9 s, 580
+// instances evaluated before the tree budget, about 3 times its calibration (T-0116 review), and
+// 7.8 s before T-0124. With the formatting charged the tree stops in about 2 s; one instance
+// still evaluates its default.
+func TestNumberFormattingInDefaultsIsCharged(t *testing.T) { // not parallel: it measures time
+	for _, ty := range []string{"list(set(any))", "map(set(any))", "set(list(any))"} {
+		t.Run(ty, func(t *testing.T) {
+			dir := files(t, map[string]string{
+				"main.tf":   "module \"c\" {\n  source = \"./c\"\n  count  = 800\n}\n",
+				"c/main.tf": rowsDefault(ty),
+			})
+			start := time.Now()
+			instances := mustEvaluateTree(t, dir)
+			if elapsed := time.Since(start); elapsed > 4*time.Second*raceSlowdown {
+				t.Errorf("took %v", elapsed)
+			}
+			if evaluated, _, warned := countSkipped(instances); evaluated < 2 || !warned {
+				t.Errorf("%d evaluated, warned %v; want the tree budget to stop it with a warning", evaluated, warned)
+			}
+			one := mustEvaluateTree(t, files(t, map[string]string{
+				"main.tf":   "module \"c\" {\n  source = \"./c\"\n}\n",
+				"c/main.tf": rowsDefault(ty),
+			}))
+			var n cty.Value
+			for _, inst := range one {
+				for _, r := range inst.Resources {
+					n = r.Value.GetAttr("n")
+				}
+			}
+			if !n.RawEquals(cty.NumberIntVal(300)) {
+				t.Errorf("one instance: n = %#v; want 300", n)
+			}
+		})
+	}
+}

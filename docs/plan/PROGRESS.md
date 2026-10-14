@@ -2777,3 +2777,41 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     test);
   - stale calibration figures in the setwalk comments.
 - Next: CI on the PR, then the next ready task.
+
+## 2026-10-14 · T-0124 · done
+- What: converting numbers to strings is charged by their precision (ADR 0043).
+  - cty formats with big.Float.Text('f', -1), whose cost depends on the float's precision, not
+    its value: 1.1 µs at 64 bits, 14 µs at 512 (HCL's literal precision), 160 µs at 2,048 and
+    2.4 ms at 8,192, integers included.
+  - numberTextCost = max((Prec/32 + 1)², numberFormatCost) plus numberIntegerTextCost
+    (d + d²/100,000 for the d digits of the integer part).
+  - It is charged in unifyWalk.convert (number to string), in toStrings (tuples, objects and
+    maps whose primitive types unify to string, also inside valuePart), in setBuild's repeated
+    conversion, and in conversionWork for a number passed to a string parameter.
+  - The task was split. T-0124b holds templates, format/formatlist, numbers used as keys, mixes
+    found only after unifying, and bounding huge-precision numbers where they are made (the old
+    bullet 3). T-0109 now depends on T-0124b.
+- Files: internal/terraform/{conversions.go,functions.go,numtext_internal_test.go,
+  modules_eval_test.go}, docs/adr/0043-charge-number-formatting-by-precision.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 549 s.
+  - Sweep: tuples of 100–4,000 integers, fractions and mixed values at 512, 2,048 and 8,192
+    bits into list(string), set(string), list(any) and set(any): 18–80 ns per unit accepted.
+    Integer parts: 1e10000 0.8 ms, 1e100000 20 ms, 1e300000 109 ms, 35–100 ns per unit.
+  - TestNumberFormattingInDefaultsIsCharged: list(set(any)) and map(set(any)) defaults of 300
+    rows under count = 800 went from 7.8–9.3 s (failing the 4 s bound on main) to 2.0–2.5 s;
+    set(list(any)) is a guard at 1.2–1.6 s. One instance still evaluates n = 300. It runs
+    non-parallel: under parallel package load it took 8–13 s.
+  - TestNumberToStringConversionsAreCharged, TestAcceptedNumberConversionsAreFast and
+    TestNumberArgumentsToStringsAreCharged fail on main.
+  - Process: this iteration's work began on main and moved to the feature branch before any
+    commit (git switch -c), after the first full gate run.
+- Review: iace-reviewer, APPROVE. Its five minors were fixed before commit:
+  - large integers were charged only their precision (1e100000: 289 units for 20 ms), so
+    numberIntegerTextCost was added;
+  - two stale comments;
+  - number keys were added to T-0124b;
+  - the mixed-tuple lower bound now compares against an all-string baseline, since it had
+    failed on main by under 1%.
+- Next: CI on the PR, then the next ready task.
