@@ -10,7 +10,27 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - max_attempts_per_task: 3
 
 ## Decisions needed
-None open.
+- D-T-0124e (2026-10-16) · How to bound the first sort of a set of non-integer numbers. cty sorts a set every time it is
+  iterated, and every accessor it offers (Values, ElementIterator, EachValue) sorts first, so valueSizeWalk's up-front
+  estimate cannot see whether the numbers in a set are integers. It prices each as an integer (numberSortWork, 7 units
+  per level), and a set of fractions is charged its real sort only after that first sort has run. Measured on main @ 398c595:
+  - Built through set(number) defaults, 2,000 decimals `N.1` (512-bit fractions) form a set; the locals that walk it
+    are refused, but the module's first walk sorts uncharged: 3 locals took 1.04 s, 32 locals 1.11 s (about once per
+    module evaluation). 4,000 of them, and 20 or more multiples of 1e-2466 (8,192 fractional bits), are already
+    refused at conversion. toset() inside one expression is refused quickly in every case.
+  - Today, 32 walks of a set(number) of 4,000 integers are accepted and take 653 ms.
+  Options:
+  - (a) Price every element of a set of numbers as a 512-bit fraction up front (about 7 + 309 units per element and
+    level). This closes the gap, but sets of more than about 2,000 numbers are refused before any walk, integers included
+    (4,000 integers are accepted today).
+  - (b) Keep the estimate and record the residual in an ADR: about one uncounted sort per module evaluation (about
+    1 s for 2,000 512-bit fractions), which the tree budget then counts. T-0124e is then done as an accepted limit
+    with a regression timing test.
+  - (c) Bound fractional bits where numbers are made (literals, tonumber, arithmetic, tfvars) and price set
+    elements at that bound. This is wider than one task and has the same integer-set trade-off as (a), with a smaller
+    per-element price.
+  Recommendation: (b). The residual is bounded per module evaluation, the tree budget counts the refused work, and (a) refuses
+  realistic integer sets. Asked by T-0124e.
 
 ## M0 · Foundations — status: done
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -663,12 +683,13 @@ locations and without executing anything.
     - (split to T-0124e) bound sets of costly fractions
   - attempts: 1
   - result: the tuple-to-list/set(any) and object-to-map(any) estimates charge numberTextCost for each number the unified type makes a string, at any depth (toUnifiedType, toText), instead of valuePart's guess for every nested tuple (unifiedPart). The repeated unification is skipped where nothing can be formatted and charged first otherwise. Nested rows `[[v], "a"]` beside `[["b"], "c"]` went from 11,718 units to 7.4M (100 rows of 1e-2466), and rows whose columns stay numbers from 7.4M to about 3,000. Follow-ups: T-0124f, T-0125b
-- [ ] T-0124e · Bound sets of numbers with many fractional bits
+- [!] T-0124e · Bound sets of numbers with many fractional bits
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
+  - blocked: needs-human — choose how to bound the first sort of a set of non-integer numbers (Decisions needed, D-T-0124e)
   - accept:
     - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
-  - attempts: 0
+  - attempts: 1
 - [ ] T-0124f · Test or remove toText's map-to-object branch
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0124c
