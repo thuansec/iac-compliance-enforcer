@@ -2908,3 +2908,36 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - Removing the check fails both sensitive cases (known false, marked false).
 - Review: iace-reviewer, APPROVE, no findings (it repeated the mutation in a scratch copy).
 - Next: T-0124c or the next ready task.
+
+## 2026-10-16 · T-0124c · done
+- What: split the task. Its second bullet (sets of numbers with many fractional bits) became
+  T-0124e, and T-0110 now depends on it too. The conversion estimate for tuple to list/set(any)
+  and object to map(any) charges the numbers the unified type makes strings.
+  - toUnifiedType unifies the element types, as cty does, and toText charges numberTextCost
+    wherever that type makes a known number a string. It follows list, set and map elements,
+    tuple positions and object attributes, and stops where a type already matches.
+  - These branches use unifiedPart, which is valuePart without its toStrings guess; conservativeCost
+    keeps the guess. Types with sets convert as before.
+  - The repeated unification is skipped when it cannot matter: all-primitive types keep the
+    toStrings rule, and types without both numbers and strings return early. Otherwise it is
+    charged first, as setBuild charges its repeat (review round 1).
+- Files: internal/terraform/{conversions.go,numtext_internal_test.go}, docs/plan/BACKLOG.md.
+- Evidence:
+  - Probe: a variable default of 100 rows [1e-2466, "a"] plus ["b","c"] in list(any) took 237 ms,
+    and 2.8 ms with the last row [2,"c"]. main charged both about 7.4M units, through valuePart's
+    guess. Nested rows [[v],"a"] were charged 11,718 units and are now charged 7.4M; the
+    number-column rows are now charged about 3,000.
+  - TestNumbersUnifiedToStringsAreCharged fails on main (nested rows, number columns) and covers
+    objects, lists, tuples, maps and an unknown element.
+  - TestAcceptedNumberConversionsAreFast now times the estimate too. 6,500 bools and strings
+    take 1.1 ms of estimate (370 ms in round 1, which this test fails with 415 ms).
+  - `gates.sh full` 13 pass. One earlier full run failed in make test's non-race step at a load
+    average of about 6; which test failed was not captured. The step passed when rerun directly,
+    and so did the next full run. Separately, a quick run had TestEvaluateTreeBoundsTheWholeTree/expansion
+    at 28 s (5 s alone, with and without the change). Both are recorded as T-0125b.
+  - The race-enabled test step took 491–519 s of go test's 600 s (T-0125).
+- Review: iace-reviewer. Round 1 was CHANGES_REQUIRED: a major (the unification repeated
+  uncharged) and two minors (untested branches, walking already-typed values), all fixed.
+  Round 2 was APPROVE, with one minor recorded as T-0124f (the map-to-object branch is
+  untested). It also saw the load failures, recorded as T-0125b.
+- Next: T-0124e, or the next ready task.

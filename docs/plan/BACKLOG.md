@@ -331,7 +331,7 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b, T-0124c
+  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b, T-0124c, T-0124e
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
@@ -655,12 +655,25 @@ locations and without executing anything.
     - resourceDecoder.evalBounded's textRefused check (resources.go) is covered: a resource attribute and a module input such as `[var.s, var.m[1e-150] × 10,000]` with a sensitive var.s are unknown and carry SensitiveMark, and removing the check fails the test (T-0124b review)
   - attempts: 1
   - result: TestRefusedLiteralTextKeepsInputMarks: a local of 10,000 uses spends the module's function work, then a resource attribute and a module input `[var.s, var.m[1e-150]]` are refused for their literal text, unknown and marked exactly when var.s is sensitive (one attribute of 10,000 uses passes the attribute size limit first). Removing the check fails both sensitive cases
-- [ ] T-0124c · Charge number-to-string mixes found after unifying, and bound sets of costly fractions
+- [x] T-0124c · Charge number-to-string mixes found after unifying
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
   - accept:
     - conversions whose number-to-string mix is found only after unifying (tuples whose columns unify to strings, such as `[[1, "a"], ["b", "c"]]` into list(any)) are charged too, or shown bounded by a timing test
+    - (split to T-0124e) bound sets of costly fractions
+  - attempts: 1
+  - result: the tuple-to-list/set(any) and object-to-map(any) estimates charge numberTextCost for each number the unified type makes a string, at any depth (toUnifiedType, toText), instead of valuePart's guess for every nested tuple (unifiedPart). The repeated unification is skipped where nothing can be formatted and charged first otherwise. Nested rows `[[v], "a"]` beside `[["b"], "c"]` went from 11,718 units to 7.4M (100 rows of 1e-2466), and rows whose columns stay numbers from 7.4M to about 3,000. Follow-ups: T-0124f, T-0125b
+- [ ] T-0124e · Bound sets of numbers with many fractional bits
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0124b
+  - accept:
     - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
+  - attempts: 0
+- [ ] T-0124f · Test or remove toText's map-to-object branch
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0124c
+  - accept:
+    - TestNumbersUnifiedToStringsAreCharged gains a row whose element types unify to an object while one element is a map (unifyObjectsAsMaps fails and the general path picks the object), and asserts its numbers are charged; if no such row can be built, show the branch is unreachable and remove it (T-0124c review)
   - attempts: 0
 - [ ] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
   - skills: iace-terraform-parsing, iace-security, iace-testing
@@ -683,6 +696,12 @@ locations and without executing anything.
   - accept:
     - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
     - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix
+  - attempts: 0
+- [ ] T-0125b · Keep timing tests from failing under machine load
+  - skills: iace-testing, iace-quality-gates
+  - depends: none
+  - accept:
+    - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing

@@ -279,8 +279,9 @@ func conversionCostWith(w *unifyWalk, v cty.Value, want cty.Type, defaults bool)
 //     for targets holding the dynamic type is charged by conversionCost);
 //   - an unknown or null value is converted from its type alone (replace);
 //   - a tuple converted to a list or set of any first unifies its element types to find the
-//     element type; each element is then converted to that type (charged as valuePart, since
-//     the type is not known here), and for a list the converted elements are unified again;
+//     element type; each element is then converted to that type (its unifications charged as
+//     unifiedPart, the numbers it makes strings exactly by toUnifiedType), and for a list the
+//     converted elements are unified again;
 //   - a tuple converted to a list or set of a known element type converts each element, and for
 //     a list unifies the converted elements: n copies of that type, or, when it holds the
 //     dynamic type, the elements' own types (converted);
@@ -322,8 +323,7 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		ety, types := want.ElementType(), elementTypes(val)
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
-			w.toStrings(val, types)
-			w.eachElement(val, w.valuePart)
+			w.eachElement(val, w.unifiedPart)
 			w.toUnifiedType(val, types)
 			if want.IsListType() {
 				w.unify(types)
@@ -347,8 +347,7 @@ func (w *unifyWalk) convert(v cty.Value, want cty.Type) {
 		ety, types := want.ElementType(), elementTypes(val)
 		if ety == cty.DynamicPseudoType {
 			w.unify(types)
-			w.toStrings(val, types)
-			w.eachElement(val, w.valuePart)
+			w.eachElement(val, w.unifiedPart)
 			w.toUnifiedType(val, types)
 			if slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
 				w.unify(types)
@@ -587,26 +586,98 @@ func primitiveKey(v cty.Value) (key string, ok bool) {
 	return "", false
 }
 
-// toUnifiedType charges, when some of types hold sets, converting every element of v to the type
-// cty unifies them to: building that set can compare every pair (T-0116). The unification
-// itself was charged before, so computing it is affordable unless the walk is over.
+// toUnifiedType charges converting every element of v to the type types unify to, as cty
+// does for a list, set or map of any. When some of types hold sets it converts them (convert),
+// which also charges their numbers made strings; otherwise it charges just those numbers
+// (toText), wherever the unified type makes them strings: rows [v, "a"] beside ["b", "c"]
+// unify to strings column by column, and cty formats every v (T-0124c). A default of 300 rows
+// `[i, i + 1, "x"]` in a list(set(any)) under count = 800 spent most of 12.9 s formatting such
+// numbers (T-0116 review).
+//
+// Unifying here repeats cty's unification, which w.unify charged for cty's own run, so it is
+// charged again first, as setBuild charges its repeat: only when it can matter, types holding
+// sets, or numbers and strings beside compound types. Primitive types unify to a string when
+// one of them is (toStrings), and without both numbers and strings nothing is formatted
+// (T-0124c review: 6,500 bools and strings took 378 ms to estimate uncharged).
 func (w *unifyWalk) toUnifiedType(v cty.Value, types []cty.Type) {
-	if w.over() || !slices.ContainsFunc(types, typeHasSet) {
+	if w.over() {
 		return
+	}
+	sets := slices.ContainsFunc(types, typeHasSet)
+	if !sets {
+		if !slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
+			w.toStrings(v, types)
+			return
+		}
+		holds := func(p cty.Type) func(cty.Type) bool {
+			return func(t cty.Type) bool { return typeHasPrimitive(t, p) }
+		}
+		if !slices.ContainsFunc(types, holds(cty.Number)) || !slices.ContainsFunc(types, holds(cty.String)) {
+			return
+		}
+		w.unify(types)
+		if w.over() {
+			return
+		}
 	}
 	u, _ := convert.UnifyUnsafe(types)
 	w.markDone() // the unification charged before
-	if u == cty.NilType || !typeHasSet(u) {
+	switch {
+	case u == cty.NilType || u == cty.DynamicPseudoType:
+	case typeHasSet(u):
+		w.eachElement(v, func(e cty.Value) { w.convert(e, u) })
+	default:
+		w.eachElement(v, func(e cty.Value) { w.toText(e, u) })
+	}
+}
+
+// toText charges numberTextCost for each known number in v that converting v to want, a type
+// without sets, makes a string. It follows only what cty's conversion keeps: list, set and map
+// elements, tuple elements by position, object and map attributes by want's names.
+func (w *unifyWalk) toText(v cty.Value, want cty.Type) {
+	if w.over() {
 		return
 	}
-	w.eachElement(v, func(e cty.Value) { w.convert(e, u) })
+	w.walked++
+	val, _ := v.Unmark()
+	if !val.IsKnown() || val.IsNull() || want == cty.DynamicPseudoType {
+		return
+	}
+	ty := val.Type()
+	if ty.Equals(want) {
+		return // cty converts nothing
+	}
+	switch {
+	case want == cty.String:
+		w.add(numberTextCost(val))
+	case want.IsListType() || want.IsSetType():
+		if ty.IsTupleType() || ty.IsListType() || ty.IsSetType() {
+			w.eachElement(val, func(e cty.Value) { w.toText(e, want.ElementType()) })
+		}
+	case want.IsMapType():
+		if ty.IsObjectType() || ty.IsMapType() {
+			w.eachElement(val, func(e cty.Value) { w.toText(e, want.ElementType()) })
+		}
+	case want.IsTupleType():
+		if wants := want.TupleElementTypes(); ty.IsTupleType() && len(wants) == val.LengthInt() {
+			i := 0
+			w.eachElement(val, func(e cty.Value) { w.toText(e, wants[i]); i++ })
+		}
+	case want.IsObjectType():
+		for name, at := range want.AttributeTypes() {
+			switch {
+			case ty.IsObjectType() && ty.HasAttribute(name):
+				w.toText(val.GetAttr(name), at)
+			case ty.IsMapType() && val.HasIndex(cty.StringVal(name)).True():
+				w.toText(val.Index(cty.StringVal(name)), at)
+			}
+		}
+	}
 }
 
 // toStrings charges, when types (the element types of v) are primitive and unify to a string,
-// converting every number in v to a string (numberTextCost): a default of 300 rows
-// `[i, i + 1, "x"]` in a list(set(any)) under count = 800 spent most of 12.9 s formatting
-// them (T-0116 review). Mixes the walk sees only after unifying, such as tuples whose columns
-// unify to strings, are not charged here.
+// converting every number in v to a string (numberTextCost). conservativeCost, which does not
+// know the type v converts to, charges it for every tuple, object and map in v (valuePart).
 func (w *unifyWalk) toStrings(v cty.Value, types []cty.Type) {
 	if w.over() || !slices.Contains(types, cty.String) ||
 		slices.ContainsFunc(types, func(t cty.Type) bool { return !t.IsPrimitiveType() }) {
@@ -724,10 +795,18 @@ func (w *unifyWalk) setElements(v cty.Value) ([]cty.Value, int) {
 	return elems, max(sort, lower)
 }
 
-// valuePart charges converting v to a type the walk does not know (a unified type), counting
-// as if every tuple, object or map value in v were converted to a collection: each costs
-// unifying its element types (ADR 0029). It can only over-count.
-func (w *unifyWalk) valuePart(v cty.Value) {
+// valuePart charges converting v to a type the walk does not know, counting as if every tuple,
+// object or map value in v were converted to a collection: each costs unifying its element
+// types (ADR 0029), and formatting its numbers when its elements mix them with strings
+// (toStrings). It can only over-count.
+func (w *unifyWalk) valuePart(v cty.Value) { w.part(v, true) }
+
+// unifiedPart is valuePart without the numbers: the caller knows the unified type, and
+// toUnifiedType charges the numbers it makes strings exactly (T-0124c).
+func (w *unifyWalk) unifiedPart(v cty.Value) { w.part(v, false) }
+
+// part is valuePart, charging toStrings only when text is set.
+func (w *unifyWalk) part(v cty.Value, text bool) {
 	stack := []cty.Value{v}
 	for len(stack) > 0 && !w.over() {
 		val, _ := stack[len(stack)-1].Unmark()
@@ -741,7 +820,9 @@ func (w *unifyWalk) valuePart(v cty.Value) {
 		case ty.IsTupleType() || ty.IsObjectType() || ty.IsMapType():
 			types := elementTypes(val)
 			w.unify(types)
-			w.toStrings(val, types)
+			if text {
+				w.toStrings(val, types)
+			}
 		case !ty.IsListType() && !ty.IsSetType():
 			continue
 		}
@@ -821,6 +902,26 @@ func typeHasDynamic(ty cty.Type) bool {
 	case ty.IsObjectType():
 		for _, at := range ty.AttributeTypes() {
 			if typeHasDynamic(at) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// typeHasPrimitive reports whether a value of type ty can hold a value of the primitive type
+// p. The dynamic type holds only unknowns here, whose text costs nothing.
+func typeHasPrimitive(ty, p cty.Type) bool {
+	switch {
+	case ty.Equals(p):
+		return true
+	case ty.IsCollectionType():
+		return typeHasPrimitive(ty.ElementType(), p)
+	case ty.IsTupleType():
+		return slices.ContainsFunc(ty.TupleElementTypes(), func(t cty.Type) bool { return typeHasPrimitive(t, p) })
+	case ty.IsObjectType():
+		for _, at := range ty.AttributeTypes() {
+			if typeHasPrimitive(at, p) {
 				return true
 			}
 		}
