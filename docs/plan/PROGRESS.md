@@ -2893,3 +2893,18 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     cacheKey test, and marks on refused locals.
   - Round 4 minor recorded as T-0124d: evalBounded's mark path is untested.
 - Next: CI on the PR, then merge; then T-0124c or the next ready task.
+
+## 2026-10-16 · T-0124d · done
+- What: test-only. TestRefusedLiteralTextKeepsInputMarks covers resourceDecoder.evalBounded's
+  textRefused check for a resource attribute and a module input, with var.s sensitive and not.
+  - One attribute of 10,000 `var.m[1e-150]` uses passes maxLocalValueSize ("Attribute value
+    too large") before its text is charged, so a local of 10,000 uses spends the module's
+    function work first; the resource and module input `[var.s, var.m[1e-150]]` are then
+    refused ("Number formatting too large" on lines 12 and 16).
+- Files: internal/terraform/textcharge_internal_test.go.
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - The test takes 0.3 s (about 3 s under -race, review).
+  - Removing the check fails both sensitive cases (known false, marked false).
+- Review: iace-reviewer, APPROVE, no findings (it repeated the mutation in a scratch copy).
+- Next: T-0124c or the next ready task.

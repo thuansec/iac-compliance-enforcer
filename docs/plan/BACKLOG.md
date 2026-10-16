@@ -648,12 +648,13 @@ locations and without executing anything.
   - decided: the owner chose to keep precision root 48 and raise TestNumberFormattingInDefaultsIsCharged's bound from 4 s to 5 s (2026-10-14)
   - attempts: 1
   - result: hcl's own number-to-text writes are charged: `__iace_text` wraps template parts, for, object and IndexExpr keys; literals are priced from the source (literalTextCost), charged per evaluation in evalExpr and per iteration in for bodies, refused over 1,089 units in HCL and .tf.json; format and formatlist charge their numbers. The precision root is recalibrated 32 → 48 (fanout tree 49.3%), and on the owner's decision TestNumberFormattingInDefaultsIsCharged's bound is now 5 s. The locals estimate's path keys use exact hex text (10,000 keys of 1e-150: 3.8 s → 2.5 ms). The math/big timing tests run in make test's non-race step (NONRACE_TESTS). Follow-ups: T-0124c, T-0124d
-- [ ] T-0124d · Test that refused literal text keeps the marks of resource and module inputs
+- [x] T-0124d · Test that refused literal text keeps the marks of resource and module inputs
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
   - accept:
     - resourceDecoder.evalBounded's textRefused check (resources.go) is covered: a resource attribute and a module input such as `[var.s, var.m[1e-150] × 10,000]` with a sensitive var.s are unknown and carry SensitiveMark, and removing the check fails the test (T-0124b review)
-  - attempts: 0
+  - attempts: 1
+  - result: TestRefusedLiteralTextKeepsInputMarks: a local of 10,000 uses spends the module's function work, then a resource attribute and a module input `[var.s, var.m[1e-150]]` are refused for their literal text, unknown and marked exactly when var.s is sensitive (one attribute of 10,000 uses passes the attribute size limit first). Removing the check fails both sensitive cases
 - [ ] T-0124c · Charge number-to-string mixes found after unifying, and bound sets of costly fractions
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
