@@ -2941,3 +2941,22 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   Round 2 was APPROVE, with one minor recorded as T-0124f (the map-to-object branch is
   untested). It also saw the load failures, recorded as T-0125b.
 - Next: T-0124e, or the next ready task.
+
+## 2026-10-16 · T-0124e · blocked
+- What: investigated before writing code. cty sorts a set on every iteration, and all its
+  accessors (Values, ElementIterator, EachValue) sort first, so the up-front estimate cannot see
+  a set's numbers. The fix is a calibration trade-off between refusing large integer sets and
+  accepting about one uncounted sort per module evaluation. That is the owner's call, as for
+  T-0124b.
+- Files: docs/plan/BACKLOG.md (Decisions needed D-T-0124e; T-0124e `[!]`).
+- Evidence (probes on main @ 398c595; not committed):
+  - set(number) default of 2,000 `N.1`: the set is built in 96 ms; 3 locals walking it take
+    1.04 s and 32 take 1.11 s, all refused ("Local value too large").
+  - 4,000 `N.1`, and 20 or more multiples of 1e-2466: refused at conversion ("Variable value too
+    large to convert").
+  - 4,000 integers: 32 walks accepted in 653 ms. Under option (a) they would be refused (about
+    15M units up front against 8.4M).
+  - toset() in one expression: refused within 55 ms for 100 multiples of 1e-2466, 8,000 thirds
+    and 2,000 or 8,000 integers.
+- Review: none (plan-only change).
+- Next: the owner chooses an option for D-T-0124e; the loop takes the next ready task.
