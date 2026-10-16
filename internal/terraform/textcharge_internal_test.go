@@ -2,6 +2,9 @@ package terraform
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +12,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/thuansec/iac-compliance-enforcer/internal/fsutil"
 )
 
 // hasDiagnostic reports whether m has a diagnostic with summary.
@@ -192,6 +197,99 @@ func TestLiteralTextOutsideLoopsIsCharged(t *testing.T) {
 		}
 		if !known && jm.fnWork < maxFunctionWork/2 {
 			t.Errorf(".tf.json, %d uses: function work %d; want the refusal to spend its charge", uses, jm.fnWork)
+		}
+	}
+}
+
+// Resource attributes and module inputs are refused for their literal text like locals, and
+// their unknown keeps the marks of the inputs they use: evalExpr's unknown carries none, so
+// resourceDecoder.evalBounded returns its own (textRefused, T-0124b review). The local drain
+// spends the module's function work first: one attribute of 10,000 uses would pass the size
+// limit for an attribute before its text is charged.
+func TestRefusedLiteralTextKeepsInputMarks(t *testing.T) {
+	t.Parallel()
+	key := numberAt(t, "1e-150", 512).AsBigFloat().Text('f', -1)
+	uses := strings.Repeat("var.m[1e-150], ", 10_000)
+	for _, sensitive := range []bool{true, false} {
+		dir := t.TempDir()
+		files := map[string]string{
+			"main.tf": fmt.Sprintf(`variable "s" {
+  default   = "FAKE"
+  sensitive = %t
+}
+variable "m" {
+  default = { "%s" = 1 }
+}
+locals {
+  drain = [%s]
+}
+resource "x_y" "a" {
+  v = [var.s, var.m[1e-150]]
+}
+module "c" {
+  source = "./c"
+  v      = [var.s, var.m[1e-150]]
+}
+`, sensitive, key, uses),
+			"c/main.tf": "variable \"v\" {}\n",
+		}
+		for name, src := range files {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx := context.Background()
+		r, err := fsutil.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = r.Close() })
+		limits := DefaultLimits()
+		d, err := Discover(ctx, r, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tree, err := LoadModuleTree(ctx, r, d, ".", limits, TreeOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := tree.Root.Module
+		vars, err := root.EvaluateVariables(ctx, r, VarOptions{}, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		locals, err := root.EvaluateLocals(ctx, vars)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := root.DecodeResources(ctx, vars, locals)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res) != 1 || len(tree.Root.Calls) != 1 {
+			t.Fatalf("got %d resources, %d calls; want 1 and 1", len(res), len(tree.Root.Calls))
+		}
+		inputs, err := root.ModuleInputs(ctx, tree.Root.Calls[0], vars, locals)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attr := res[0].Value.GetAttr("v")
+		for what, v := range map[string]cty.Value{"resource attribute": attr, "module input": inputs["v"].Value} {
+			if v.IsKnown() || v.HasMark(SensitiveMark) != sensitive {
+				t.Errorf("sensitive %v, %s: known %v, marked %v; want unknown, marked %v: %v",
+					sensitive, what, v.IsKnown(), v.HasMark(SensitiveMark), sensitive, root.Diagnostics)
+			}
+		}
+		// The drain is refused on line 9, the resource attribute on 12, the module input on 16.
+		for _, line := range []int{9, 12, 16} {
+			if !slices.ContainsFunc(root.Diagnostics, func(d Diagnostic) bool {
+				return d.Summary == "Number formatting too large" && d.Line == line
+			}) {
+				t.Errorf("sensitive %v: diagnostics %v; want Number formatting too large on line %d", sensitive, root.Diagnostics, line)
+			}
 		}
 	}
 }
