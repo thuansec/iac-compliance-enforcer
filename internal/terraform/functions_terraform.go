@@ -250,3 +250,29 @@ var base64DecodeFunc = function.New(&function.Spec{
 		return cty.StringVal(string(b)), nil
 	},
 })
+
+// markParam is the one parameter of sensitive and nonsensitive: any value, marks included, so
+// cty does not convert it (it still walks it for marks: markBounded charges that).
+var markParam = []function.Parameter{{
+	Name:             "value",
+	Type:             cty.DynamicPseudoType,
+	AllowUnknown:     true,
+	AllowNull:        true,
+	AllowMarked:      true,
+	AllowDynamicType: true,
+}}
+
+// markSensitive is sensitive(): its argument marked sensitive, with the same type. Terraform
+// treats it as a sensitive input variable's value.
+func markSensitive(v cty.Value) cty.Value { return v.Mark(SensitiveMark) }
+
+// unmarkSensitive is nonsensitive(): its argument without the sensitive mark on the value
+// itself, with the same type; marks nested inside it stay. A value that is not sensitive is
+// returned as it is, without an error, as Terraform's implementation does: its documentation
+// describes it as making no changes, though its console example still shows the error that
+// older releases returned.
+func unmarkSensitive(v cty.Value) cty.Value {
+	v, marks := v.Unmark()
+	delete(marks, SensitiveMark)
+	return v.WithMarks(marks)
+}

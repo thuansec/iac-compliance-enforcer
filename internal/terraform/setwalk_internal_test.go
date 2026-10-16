@@ -377,8 +377,8 @@ func TestMarksChecksDoNotWalkAgain(t *testing.T) { // not parallel: it measures 
 // inputs are: secrets reach a local only through the variables, module values and locals it
 // uses, which inputsSensitive checks (iace marks only sensitive variables and module outputs;
 // a refused call's fail-closed mark adds nothing over inputs found unmarked). A mark deep inside
-// an input marks the unknown; plain inputs leave it unmarked (T-0116j). Once sensitive() is
-// evaluated, a local calling it must be marked too (T-0126).
+// an input marks the unknown; plain inputs leave it unmarked (T-0116j). A local calling
+// sensitive() is marked whatever its inputs (T-0126).
 func TestTooLargeLocalsAreMarkedByTheirInputs(t *testing.T) {
 	t.Parallel()
 	deep := cty.TupleVal([]cty.Value{cty.StringVal("abcdefghabcdefgh"), cty.StringVal("x").Mark(SensitiveMark)})
@@ -393,6 +393,9 @@ func TestTooLargeLocalsAreMarkedByTheirInputs(t *testing.T) {
 		"evaluated, through local": {"a = var.d\n  v = [for i in range(1000) : [for j in range(20) : local.a]]", true, true},
 		"estimated, sensitive":     {`v = [var.t, var.t, var.st]`, true, false},
 		"estimated, plain":         {`v = [var.t, var.t, var.t]`, false, false},
+		// sensitive() marks a value from plain inputs: a local calling it is marked (T-0126).
+		"evaluated, sensitive()": {`v = [for i in range(1000) : [for j in range(20) : sensitive(var.p)]]`, true, true},
+		"estimated, sensitive()": {`v = [var.t, var.t, sensitive(var.t)]`, true, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

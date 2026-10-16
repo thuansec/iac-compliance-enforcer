@@ -118,6 +118,64 @@ var unboundedFunctions = map[string]function.Function{
 	"try": tryfunc.TryFunc,
 }
 
+// markFunctions only add or remove the sensitive mark of their argument: their parameter takes
+// any type and allows marks, so cty does not convert it, and the result is the argument itself.
+// cty still walks the argument before the call (ContainsMarked, which sorts every set in it)
+// and compares the result's type with the one declared (TestConformance), so each call is
+// charged those walks (markBounded): 400 nested nonsensitive calls over a tuple of 100,000
+// elements took 9.3 s uncharged (T-0126 review).
+var markFunctions = map[string]func(cty.Value) cty.Value{
+	"nonsensitive": unmarkSensitive,
+	"sensitive":    markSensitive,
+}
+
+// markCallWalks is how many walks of its argument a call of a mark function is charged, for
+// iace's measurement, cty's ContainsMarked (which builds every nested value and its path) and
+// its type conformance check of the result: one nested nonsensitive call over a tuple of
+// 100,000 one-byte strings (size 200,000) took about 150 ms, 94 ns per unit at 8 (T-0126).
+const markCallWalks = 8
+
+// markBounded is the function that applies the mark function apply to its one argument,
+// charged markCallWalks walks of the argument, and its sorts twice (iace's walk and cty's),
+// before apply runs. A call that does not fit the function work left is refused: its result
+// is unknown, marked sensitive when marks is set (sensitive(), whose result is sensitive
+// whatever its argument: fail closed), and evalExpr reports it as a call too large. Inside a
+// refused call's caller the unknown is cheap to walk, so a chain of calls stops at the first
+// refusal.
+func (m *ParsedModule) markBounded(apply func(cty.Value) cty.Value, marks bool) function.Function {
+	refused := cty.DynamicVal
+	if marks {
+		refused = refused.Mark(SensitiveMark)
+	}
+	return function.New(&function.Spec{
+		Description: "Adds or removes the sensitive mark of its argument.",
+		Params:      markParam,
+		Type: func(args []cty.Value) (cty.Type, error) {
+			sizes, sort, _, ok := measureArgs(args, m.functionArgsLimit(), m.workLeft()/2)
+			if !ok || !m.chargeFunctionWork(saturatingMul(sizes[0], markCallWalks), saturatingMul(sort, 2)) {
+				m.spendFunctionWork(saturatingMul(sizes[0], markCallWalks) + sort) // the walks already done
+				m.fnLimited = true
+				return cty.DynamicPseudoType, nil
+			}
+			return args[0].Type(), nil
+		},
+		Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+			if retType == cty.DynamicPseudoType && args[0].Type() != cty.DynamicPseudoType {
+				return refused, nil // refused by Type, which otherwise returns the argument's type
+			}
+			return apply(args[0]), nil
+		},
+	})
+}
+
+// callsSensitive reports whether calls include sensitive(), which marks a value whatever its
+// inputs: a refused local or attribute calling it is a marked unknown (T-0126).
+func callsSensitive(calls []functionCall) bool {
+	return slices.ContainsFunc(calls, func(c functionCall) bool {
+		return strings.TrimPrefix(c.name, "core::") == "sensitive"
+	})
+}
+
 // callCost returns a bound on the size of a call's result and the work the call does beyond
 // measuring its arguments and result, for a function whose result or work can grow faster than
 // its arguments. sizes are the arguments' valueSize.
@@ -195,12 +253,15 @@ func syntaxCalls(expr hclsyntax.Expression) []functionCall {
 // "core::" namespace is the built-in function of that name.
 func (m *ParsedModule) functions(expr hcl.Expression, calls []functionCall) map[string]function.Function {
 	if m.fns == nil {
-		m.fns = make(map[string]function.Function, len(supportedFunctions)+len(unboundedFunctions))
+		m.fns = make(map[string]function.Function, len(supportedFunctions)+len(unboundedFunctions)+len(markFunctions))
 		for name, f := range supportedFunctions {
 			m.fns[name] = m.bounded(f, setBuildCosts[name], callCosts[name], unifyingFunctions[name], setBuildCosts[name] != nil)
 		}
 		for name, f := range unboundedFunctions {
 			m.fns[name] = f
+		}
+		for name, f := range markFunctions {
+			m.fns[name] = m.markBounded(f, name == "sensitive")
 		}
 		for name, f := range m.fileFunctions() {
 			m.fns[name] = m.bounded(f, nil, nil, cty.NilType, false)

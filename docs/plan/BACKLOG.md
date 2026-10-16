@@ -697,13 +697,20 @@ locations and without executing anything.
     - TestNumbersUnifiedToStringsAreCharged gains a row whose element types unify to an object while one element is a map (unifyObjectsAsMaps fails and the general path picks the object), and asserts its numbers are charged; if no such row can be built, show the branch is unreachable and remove it (T-0124c review)
   - attempts: 1
   - result: kept and tested; the branch is a needed charge. Maps beside an object unify to an object when a bool beside a number one level down makes unifyObjectsAsMaps fail (object{a: object{x: bool, s: tuple(string)}, b: object{y: number}} beside maps of object{x, s: tuple(number), y}): cty's conversion succeeds and formats each number, and only toText's map-to-object case charges them. TestNumbersUnifiedToStringsAreCharged's row of 100 such maps is charged at least 100 × numberTextCost, and 83,047 units with the branch removed. A set-holding shape (charged by convert) and a direct toText check are kept. A first one-level type search had missed the nested case (review)
-- [ ] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
+- [x] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116j
   - accept:
     - `sensitive(x)` evaluates to x marked sensitive, and `nonsensitive(x)` to x without the mark (Terraform's semantics, including its errors for nonsensitive of a value that is not sensitive, checked against the Terraform documentation), both bounded like any other function; today both are unsupported_function, so `password = sensitive(var.p)` is an unknown that is not recorded as sensitive (T-0116j)
     - a resource attribute set through sensitive() appears in the input document's sensitive paths; tests in locals, resources and module outputs
     - a local refused as too large, by its estimate or after evaluation, whose expression calls sensitive() is a marked unknown even with plain inputs: the estimate path treats a sensitive() call as a marked input, and evalLocal's refusal after evaluation adds that fact to inputsSensitive's (today the marks come only from inputs, T-0116j). TestTooLargeLocalsAreMarkedByTheirInputs gains such a case for each path
+  - attempts: 1
+  - result: sensitive(x) is x marked sensitive and nonsensitive(x) is x without the mark on x itself (nested marks stay), both with x's type. Departure from the acceptance text: nonsensitive of a value that is not sensitive returns it unchanged without an error. Terraform's current implementation returns no error, and its documentation says the function makes no changes to such values; only the docs' console example still shows the error of older releases, so do not restore it. Each call is charged 8 walks of its argument and its sorts twice (markBounded: cty's ContainsMarked and type check run before and after every call; 400 nested calls over 100,000 elements took 9.3 s uncharged, now refused in about 0.9 s), and a refused sensitive() is a marked unknown. A local, resource attribute or module input that calls sensitive() and is refused as too large is a marked unknown with plain inputs (callsSensitive). The input document is not built yet (T-0109), so acceptance 2 is shown by the mark on the attribute's path
+- [ ] T-0126b · Keep nested marks on a refused nonsensitive()
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0126
+  - accept:
+    - when markBounded refuses nonsensitive(), its unknown is marked sensitive if measuring the argument found a mark (measureArgs' marked, true when measuring stopped), as bounded's refusal does (T-0116g): `{ a = nonsensitive(var.d) }` with a mark nested in var.d, after the work is spent, keeps a.* sensitive. TestMarkFunctionChainsAreBounded gains a case with a nested mark (T-0126 review)
   - attempts: 0
 - [ ] T-0127 · Mark a refused call's result only by marks its arguments can hold
   - skills: iace-terraform-parsing, iace-security, iace-testing
@@ -724,6 +731,7 @@ locations and without executing anything.
   - depends: none
   - accept:
     - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
+    - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
   - attempts: 0
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
