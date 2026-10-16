@@ -690,12 +690,13 @@ locations and without executing anything.
   - accept:
     - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
   - attempts: 1
-- [ ] T-0124f · Test or remove toText's map-to-object branch
+- [x] T-0124f · Test or remove toText's map-to-object branch
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0124c
   - accept:
     - TestNumbersUnifiedToStringsAreCharged gains a row whose element types unify to an object while one element is a map (unifyObjectsAsMaps fails and the general path picks the object), and asserts its numbers are charged; if no such row can be built, show the branch is unreachable and remove it (T-0124c review)
-  - attempts: 0
+  - attempts: 1
+  - result: kept and tested; the branch is a needed charge. Maps beside an object unify to an object when a bool beside a number one level down makes unifyObjectsAsMaps fail (object{a: object{x: bool, s: tuple(string)}, b: object{y: number}} beside maps of object{x, s: tuple(number), y}): cty's conversion succeeds and formats each number, and only toText's map-to-object case charges them. TestNumbersUnifiedToStringsAreCharged's row of 100 such maps is charged at least 100 × numberTextCost, and 83,047 units with the branch removed. A set-holding shape (charged by convert) and a direct toText check are kept. A first one-level type search had missed the nested case (review)
 - [ ] T-0126 · Evaluate sensitive() and nonsensitive() like Terraform
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0116j

@@ -2960,3 +2960,24 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
     and 2,000 or 8,000 integers.
 - Review: none (plan-only change).
 - Next: the owner chooses an option for D-T-0124e; the loop takes the next ready task.
+
+## 2026-10-16 · T-0124f · done
+- What: test-only. toText's map-to-object branch is reachable and needed, so it is kept and
+  tested.
+  - Maps beside an object unify to an object when unifyObjectsAsMaps fails, and a bool beside
+    a number one level down is enough: object{a: object{x: bool, s: tuple(string)}, b:
+    object{y: number}} beside maps of object{x, s: tuple(number), y}.
+  - cty's conversion succeeds and formats each map's s[0], and only toText's map case charges it.
+- Files: internal/terraform/numtext_internal_test.go.
+- Evidence:
+  - TestNumbersUnifiedToStringsAreCharged: 100 such maps are charged at least 100 ×
+    numberTextCost (73,984 each), and 83,047 units with the branch removed.
+  - A set-holding shape (charged by convert, not toText) and a direct toText check
+    (charged 0 without the branch) are kept.
+  - My first probe searched 46,656 pairs of one-level types and found no set-free shape that
+    formats a number; the review found the nested one.
+- Review: iace-reviewer, CHANGES_REQUIRED. Two majors, both fixed: the nested shape the search
+  missed, and the claims that the branch "can only over-count". One minor, also fixed: the
+  set-holding row is now labelled as convert's path. Round 2: APPROVE, no findings (noted that
+  100 × per sits close to maxFunctionWork if the per-number charge changes).
+- Next: the next ready task.
