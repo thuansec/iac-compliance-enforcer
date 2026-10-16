@@ -178,6 +178,50 @@ func TestNumbersUnifiedToStringsAreCharged(t *testing.T) {
 			t.Errorf("%s: charged %d; want %d to %d", tc.name, c, tc.least, tc.most)
 		}
 	}
+	// A map beside objects is converted to an object when unifying them as maps fails
+	// (unifyObjectsAsMaps): a bool beside a number one level down is enough. Its numbers under
+	// a string are formatted, and only toText's map-to-object branch charges them (T-0124f
+	// review: 74,243 units for one such map with the branch, 0 without; cty's conversion
+	// succeeds).
+	nested := cty.ObjectVal(map[string]cty.Value{
+		"a": cty.ObjectVal(map[string]cty.Value{"x": cty.True, "s": cty.TupleVal([]cty.Value{cty.StringVal("t")})}),
+		"b": cty.ObjectVal(map[string]cty.Value{"y": cty.NumberIntVal(1)}),
+	})
+	e := cty.ObjectVal(map[string]cty.Value{"x": cty.StringVal("true"), "s": cty.TupleVal([]cty.Value{n}), "y": cty.StringVal("2")})
+	maps := []cty.Value{nested}
+	for range 100 {
+		maps = append(maps, cty.MapVal(map[string]cty.Value{"a": e, "b": e}))
+	}
+	beside := cty.TupleVal(maps)
+	if u, _ := convert.UnifyUnsafe(elementTypes(beside)); !u.IsObjectType() || typeHasSet(u) {
+		t.Fatalf("maps beside an object unify to %#v; want an object without sets", u)
+	}
+	if _, err := convert.Convert(beside, cty.List(cty.DynamicPseudoType)); err != nil {
+		t.Fatalf("cty does not convert maps beside an object: %v", err)
+	}
+	if c := conversionCost(beside, cty.List(cty.DynamicPseudoType), maxFunctionWork); c < 100*per || c > maxFunctionWork {
+		t.Errorf("maps converted to an object: charged %d; want %d to %d", c, 100*per, maxFunctionWork)
+	}
+	// With a set in the unified type, convert charges the map instead (its (object or map) to
+	// object case); cty's conversion of this one then fails on "x".
+	obj := cty.ObjectVal(map[string]cty.Value{
+		"a": cty.TupleVal([]cty.Value{cty.StringVal("s"), cty.True}),
+		"b": cty.SetVal([]cty.Value{cty.NumberIntVal(1)}),
+	})
+	row := cty.TupleVal([]cty.Value{n, cty.StringVal("x")})
+	pair := cty.TupleVal([]cty.Value{obj, cty.MapVal(map[string]cty.Value{"a": row, "b": row})})
+	if u, _ := convert.UnifyUnsafe(elementTypes(pair)); !u.IsObjectType() || !typeHasSet(u) {
+		t.Fatalf("a map beside an object with a set unifies to %#v; want an object with a set", u)
+	}
+	if c := conversionCost(pair, cty.List(cty.DynamicPseudoType), maxFunctionWork); c < per || c > maxFunctionWork {
+		t.Errorf("a map converted to an object with a set: charged %d; want %d to %d", c, per, maxFunctionWork)
+	}
+	// toText itself charges only the attributes the object type names.
+	w := &unifyWalk{limit: maxFunctionWork}
+	w.toText(cty.MapVal(map[string]cty.Value{"a": n, "b": n}), cty.Object(map[string]cty.Type{"a": cty.String}))
+	if w.cost != per {
+		t.Errorf("toText of a map to an object: charged %d; want %d (attribute a only)", w.cost, per)
+	}
 	// 1,000 rows do not fit.
 	if c := conversionCost(unifiedRows(n, 1_000), cty.List(cty.DynamicPseudoType), maxFunctionWork); c <= maxFunctionWork {
 		t.Errorf("1,000 rows into list(any): charged %d; want refused", c)
