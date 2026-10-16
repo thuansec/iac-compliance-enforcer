@@ -128,6 +128,13 @@ type ParsedModule struct {
 	// cmpLimited records that the charge of an equality operator over values that hold sets did
 	// not fit the function work left (cmpRightFunction) during the current evaluation.
 	cmpLimited bool
+	// textLimited records that formatting a number where an expression makes it a string (a
+	// template part or a key, textName) did not fit the function work left (T-0124b).
+	textLimited bool
+	// textRefused records that evalExpr refused its last expression before evaluating it, for
+	// the literal numbers it writes as text: its unknown carries no marks, so callers that know
+	// the inputs' sensitivity return their own marked unknown (fail closed).
+	textRefused bool
 	// forDiags are the diagnostics of the expressions the internal functions evaluated
 	// themselves (for-expression collections, lookup arguments) during the current evaluation,
 	// which evalExpr returns with hcl's.

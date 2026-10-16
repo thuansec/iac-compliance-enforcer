@@ -552,7 +552,32 @@ func formatCost(args []cty.Value, sizes []int) (out, work int) {
 		largest = max(largest, n)
 	}
 	f, _ := args[0].Unmark()
-	return formatBound(f.AsString(), largest), 0
+	return formatBound(f.AsString(), largest), numbersTextCost(args[1:])
+}
+
+// numbersTextCost is the work of writing every number in vals as text (numberTextCost), as
+// format and formatlist may: format("%v", 1e-300) took 100 µs per call, charged nothing for it
+// (T-0124b). vals must have been measured, which bounds the walk.
+func numbersTextCost(vals []cty.Value) int {
+	work := 0
+	for _, v := range vals {
+		stack := []cty.Value{v}
+		for len(stack) > 0 && work <= maxFunctionWork {
+			val, _ := stack[len(stack)-1].Unmark()
+			stack = stack[:len(stack)-1]
+			switch {
+			case !val.IsKnown() || val.IsNull():
+			case val.Type() == cty.Number:
+				work = min(work+numberTextCost(val), maxFunctionWork+1)
+			case val.CanIterateElements():
+				for it := val.ElementIterator(); it.Next(); {
+					_, ev := it.Element()
+					stack = append(stack, ev)
+				}
+			}
+		}
+	}
+	return work
 }
 
 // formatListCost bounds formatlist: one format result per row, where the rows are as many as
@@ -562,13 +587,16 @@ func formatListCost(args []cty.Value, sizes []int) (out, work int) {
 		return 0, 0
 	}
 	rows, largest := 1, 0
+	var scalars, lists []cty.Value
 	for i, a := range args[1:] {
 		a, _ = a.Unmark()
 		ty := a.Type()
 		if !a.IsKnown() || a.IsNull() || !ty.IsListType() && !ty.IsTupleType() {
 			largest = max(largest, sizes[i+1])
+			scalars = append(scalars, a)
 			continue
 		}
+		lists = append(lists, a)
 		rows = max(rows, a.LengthInt())
 		for it := a.ElementIterator(); it.Next(); {
 			_, ev := it.Element()
@@ -577,7 +605,9 @@ func formatListCost(args []cty.Value, sizes []int) (out, work int) {
 		}
 	}
 	f, _ := args[0].Unmark()
-	return saturatingMul(rows, formatBound(f.AsString(), largest)), 0
+	// Each row formats one element of every list and every scalar again.
+	work = min(numbersTextCost(lists)+saturatingMul(rows, numbersTextCost(scalars)), maxFunctionWork+1)
+	return saturatingMul(rows, formatBound(f.AsString(), largest)), work
 }
 
 // comparisonCost charges contains and index: they compare the value with each element of the
@@ -744,7 +774,7 @@ func numberFormatCost(v cty.Value) int {
 // literals at, against 1.1 µs at 64 bits, 160 µs at 2,048 and 2.4 ms at 8,192 (T-0124 sweep).
 // Numbers far below 1 cost their fractional bits instead when that is more (numberFormatCost),
 // and numbers far above 1 add the digits of their integer part, which grow faster than linearly
-// (numberIntegerTextCost). Conversions sweeping both measured 18 to 80 ns per unit. Anything
+// (numberIntegerTextCost). Conversions sweeping both measured 40 to 111 ns per unit (ADR 0044). Anything
 // else costs nothing.
 func numberTextCost(v cty.Value) int {
 	v, _ = v.Unmark()
@@ -755,7 +785,7 @@ func numberTextCost(v cty.Value) int {
 	if f.IsInf() || f.Sign() == 0 {
 		return 0
 	}
-	q := int(f.Prec())/fracBitsPerUnitRoot + 1
+	q := int(f.Prec())/precisionBitsPerUnitRoot + 1
 	return min(max(saturatingMul(q, q), numberFormatCost(v))+numberIntegerTextCost(f), maxFunctionWork+1)
 }
 
@@ -841,3 +871,8 @@ func saturatingMul(a, b int) int {
 func isJSON(expr hcl.Expression) bool {
 	return strings.HasSuffix(expr.Range().Filename, ".json")
 }
+
+// precisionBitsPerUnitRoot calibrates numberTextCost's precision term: 123 at 512 bits takes
+// 14 µs to write, 121 units at 114 ns per unit, the least that stays within the 120 ns
+// calibration; 2,048 and 8,192 bits measure about 60 and 80 ns per unit (T-0124b).
+const precisionBitsPerUnitRoot = 48

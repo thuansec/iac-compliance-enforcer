@@ -38,11 +38,14 @@ lint: ## golangci-lint, regal (policies) and actionlint (workflows)
 # Tests that measure the process's live heap run alone and without -race: they test memory, not
 # concurrency, and under the race detector their forced collections took about two minutes,
 # which pushed the package past go test's 10-minute timeout (T-0125).
-HEAP_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken)$$
+# Tests that time math/big number formatting against the work calibration run there too: the
+# race detector slows that formatting about 25 times (157 ms → 3.8 s), past raceSlowdown, and
+# the three took about 190 s under -race (T-0124b).
+NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast)$$
 
-test: ## race-enabled, shuffled tests with a coverage profile, then the heap tests without -race
-	$(GO) test -race -shuffle=on -count=1 -skip '$(HEAP_TESTS)' -coverprofile=coverage.out ./...
-	$(GO) test -count=1 -run '$(HEAP_TESTS)' ./internal/terraform/
+test: ## race-enabled, shuffled tests with a coverage profile, then the heap and formatting-timing tests without -race
+	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./...
+	$(GO) test -count=1 -v -run '$(NONRACE_TESTS)' ./internal/terraform/
 
 cover-check: ## overall Go coverage from coverage.out must be at least COVERAGE_MIN
 	@[[ -f coverage.out ]] || { echo "cover-check: coverage.out is missing; run make test first"; exit 1; }

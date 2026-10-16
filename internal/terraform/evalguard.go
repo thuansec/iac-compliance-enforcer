@@ -28,12 +28,27 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 	if !m.safeToEvaluate(expr) {
 		r := expr.Range()
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Expression too complex",
-			"The expression is nested too deeply, or has too many operators or chained steps, to evaluate safely, so its value is unknown.",
+			"The expression is nested too deeply, has too many operators or chained steps, or indexes with a number too costly to write as text, to evaluate safely, so its value is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 		m.sortDiagnostics()
 		return cty.DynamicVal, nil
 	}
+	m.textRefused = false
+	if lit := m.literalTextOf(expr); lit > 0 && !m.chargeFunctionWork(lit) {
+		// Its literal numbers are written as text on every evaluation (literalTextCost): 10,000
+		// uses of local.m[1e-150] in one local took 1.6 s, and 75 s under count = 60 (T-0124b
+		// review). The refusal pays for it, so it cannot repeat for free.
+		m.spendFunctionWork(lit)
+		r := expr.Range()
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Number formatting too large",
+			"Writing a number as text in a template or a key would pass the work limit for function calls, so the expression is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+		m.sortDiagnostics()
+		m.textRefused = true
+		return cty.DynamicVal, nil
+	}
 	m.fnLimited, m.fnDiags, m.forLimited, m.forDiags, m.condLimited, m.cmpLimited = false, nil, false, nil, false, false
+	m.textLimited = false
 	var val cty.Value
 	var diags hcl.Diagnostics
 	switch {
@@ -56,6 +71,13 @@ func (m *ParsedModule) evalExpr(expr hcl.Expression, ctx *hcl.EvalContext) (cty.
 		val = cty.DynamicVal.WithMarks(marks)
 		m.diag(SeverityWarning, DiagExpressionTooComplex, "Conditional too large",
 			"Unifying the results of a conditional would pass the work limit for function calls, so the expression is unknown.",
+			r.Filename, r.Start.Line, r.Start.Column)
+	}
+	if m.textLimited {
+		_, marks := val.UnmarkDeep()
+		val = cty.DynamicVal.WithMarks(marks)
+		m.diag(SeverityWarning, DiagExpressionTooComplex, "Number formatting too large",
+			"Writing a number as text in a template or a key would pass the work limit for function calls, so the expression is unknown.",
 			r.Filename, r.Start.Line, r.Start.Column)
 	}
 	if m.cmpLimited {
@@ -94,6 +116,7 @@ func (m *ParsedModule) safeToEvaluate(expr hcl.Expression) bool {
 type inspection struct {
 	calls []functionCall
 	safe  bool
+	text  int // literalTextCost's total: the work of writing expr's literal numbers as text
 }
 
 // setSource records a file's bytes for the expression checks, forgetting any inspection of
@@ -132,54 +155,67 @@ func (m *ParsedModule) inspectExpr(expr hcl.Expression) ([]functionCall, bool) {
 	if in, ok := m.inspected[r.Filename][key]; ok {
 		return in.calls, in.safe
 	}
-	calls, safe := m.inspectSource(expr, src[r.Start.Byte:r.End.Byte])
+	calls, safe, text := m.inspectSource(expr, src[r.Start.Byte:r.End.Byte])
 	if m.inspected == nil {
 		m.inspected = map[string]map[[2]int]inspection{}
 	}
 	if m.inspected[r.Filename] == nil {
 		m.inspected[r.Filename] = map[[2]int]inspection{}
 	}
-	m.inspected[r.Filename][key] = inspection{calls, safe}
+	m.inspected[r.Filename][key] = inspection{calls, safe, text}
 	return calls, safe
 }
 
-// inspectSource is inspectExpr without the memo: text is expr's source.
-func (m *ParsedModule) inspectSource(expr hcl.Expression, text []byte) ([]functionCall, bool) {
+// inspectSource is inspectExpr without the memo: text is expr's source. It also returns the work
+// of writing expr's literal numbers as text on each evaluation (literalTextCost).
+func (m *ParsedModule) inspectSource(expr hcl.Expression, text []byte) ([]functionCall, bool, int) {
 	r := expr.Range()
 	if isJSON(expr) {
-		calls, err := jsonTemplateCalls(r.Filename, text)
-		return calls, err == nil
+		calls, lit, err := jsonTemplateCalls(r.Filename, text)
+		return calls, err == nil, lit
 	}
 	tokens, _ := hclsyntax.LexExpression(text, r.Filename, r.Start)
 	if scanTokens(tokens, maxOperators) != nil {
-		return nil, false
+		return nil, false, 0
 	}
 	if se, ok := expr.(hclsyntax.Expression); ok {
-		return syntaxCalls(se), true
+		total, costliest := literalTextCost(se)
+		return syntaxCalls(se), costliest <= maxSetNumberFormatCost, total
 	}
-	return nil, true
+	return nil, true, 0
+}
+
+// literalTextOf is the work of writing expr's literal numbers as text, from its inspection.
+func (m *ParsedModule) literalTextOf(expr hcl.Expression) int {
+	if _, ok := m.inspectExpr(expr); !ok {
+		return 0
+	}
+	r := expr.Range()
+	return m.inspected[r.Filename][[2]int{r.Start.Byte, r.End.Byte}].text
 }
 
 // checkJSONTemplates checks every string in a JSON value, keys included, that hcl would parse as
 // a template.
 func checkJSONTemplates(name string, text []byte) error {
-	_, err := jsonTemplateCalls(name, text)
+	_, _, err := jsonTemplateCalls(name, text)
 	return err
 }
 
 // jsonTemplateCalls checks the templates in a JSON value like checkJSONTemplates and lists the
-// functions they call. It streams tokens, so it does not recurse.
-func jsonTemplateCalls(name string, text []byte) ([]functionCall, error) {
+// functions they call, and the work of writing their literal numbers as text (literalTextCost).
+// It streams tokens, so it does not recurse.
+func jsonTemplateCalls(name string, text []byte) ([]functionCall, int, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(text),
 		jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
 	var calls []functionCall
+	lit := 0
 	for {
 		tok, err := dec.ReadToken()
 		if errors.Is(err, io.EOF) {
-			return calls, nil
+			return calls, lit, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("check JSON expression: %w", err)
+			return nil, 0, fmt.Errorf("check JSON expression: %w", err)
 		}
 		if tok.Kind() != '"' {
 			continue
@@ -190,9 +226,14 @@ func jsonTemplateCalls(name string, text []byte) ([]functionCall, error) {
 		}
 		tokens, _ := hclsyntax.LexTemplate([]byte(s), name, hcl.InitialPos)
 		if err := scanTokens(tokens, maxOperators); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if tmpl, diags := hclsyntax.ParseTemplate([]byte(s), name, hcl.InitialPos); !diags.HasErrors() {
+			total, costliest := literalTextCost(tmpl)
+			if costliest > maxSetNumberFormatCost {
+				return nil, 0, errors.New("check JSON expression: a literal number too costly to write as text")
+			}
+			lit = min(lit+total, maxFunctionWork+1)
 			if hasForExpr(tmpl) {
 				// iace evaluates such a value itself (evalJSON), so its for expressions are
 				// charged; the marker makes callsForFunctions choose that path.

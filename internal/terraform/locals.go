@@ -568,7 +568,9 @@ func (p usePath) cacheKey() (string, bool) {
 			case k.Type() == cty.String:
 				sb.WriteString("[" + strconv.Quote(k.AsString()) + "]")
 			case k.Type() == cty.Number:
-				sb.WriteString("[" + k.AsBigFloat().Text('g', -1) + "]")
+				// The exact hexadecimal mantissa: linear in its bits, where decimal text costs
+				// about their square (numberTextCost: 10,000 keys of 1e-150 took 3.8 s, T-0124b).
+				sb.WriteString("[" + k.AsBigFloat().Text('p', 0) + "]")
 			default:
 				return "", false
 			}
@@ -801,6 +803,9 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 		}
 	}
 	val, diags := m.evalExpr(s.attr.Expr, ectx)
+	if m.textRefused {
+		return unknown // marked when an input is sensitive, as evalExpr's unknown is not
+	}
 	if diags.HasErrors() {
 		// Report where evaluation failed, with hcl's Summary only: its Detail can quote values.
 		summary := diags[0].Summary
@@ -1086,7 +1091,7 @@ func walksArguments(expr hcl.Expression) bool {
 		case *hclsyntax.FunctionCallExpr:
 			switch n.Name {
 			case forFunctionName, forRefsName, forElementsName, lookupFunctionName,
-				condBeginName, condTrueName, condFalseName, cmpRightName:
+				condBeginName, condTrueName, condFalseName, cmpRightName, textName:
 			default:
 				found = true
 			}

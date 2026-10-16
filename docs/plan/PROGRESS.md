@@ -2815,3 +2815,81 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - the mixed-tuple lower bound now compares against an all-string baseline, since it had
     failed on main by under 1%.
 - Next: CI on the PR, then the next ready task.
+
+## 2026-10-14 · T-0124b · in review (CI timings pending)
+- What: numbers that templates, keys, index keys and format/formatlist write as text are
+  charged (ADR 0044).
+  - The wrapper `__iace_text(S, part)` covers template parts beside literal text, for and
+    object keys, and IndexExpr keys.
+  - Literals are priced from the source instead (literalTextCost). One costing over 1,089 units
+    makes the expression unsafe, in .tf.json too; for bodies pay their literals per iteration,
+    and optional() defaults on evaluation.
+  - format and formatlist charge numbersTextCost.
+  - ADR 0043's precision root is recalibrated 32 → 48: with templates charged, the realistic
+    fanout tree reached 59.3% of the tree's work, over its half-budget guard. It is 49.3% now.
+  - The formatting timing tests moved to make test's non-race step (NONRACE_TESTS, run with -v).
+  - Split: T-0124c holds mixes found after unifying and sets of costly fractions; T-0109 depends
+    on it.
+- Files: internal/terraform/{textcharge.go,textcharge_internal_test.go,forexpr.go,evalguard.go,
+  functions.go,locals.go,parse.go,variables.go,forexpr_internal_test.go,modules_eval_test.go,
+  variables_convert_test.go}, Makefile, docs/adr/0043-*.md, docs/adr/0044-*.md,
+  docs/plan/BACKLOG.md
+- Evidence:
+  - `gates.sh full` 13 pass; the test step took 531 s (466 s before the review fixes; the first
+    run timed out at 600 s under -race before the tests moved).
+  - The new tests fail on main: 1,000 templates or format calls over an 8,192-bit number took
+    2.4 s, and nested keys 7 s, all uncharged.
+  - Locally, TestNumberFormattingInDefaultsIsCharged runs 3.2–3.7 s against its 4 s bound over
+    five runs.
+- Review: iace-reviewer, CHANGES_REQUIRED.
+  - Blocker fixed: .tf.json templates skipped the literal check (25 s).
+  - Majors fixed:
+    - literal keys below the threshold were free on every iteration (5.2 s);
+    - wrapping numeric keys broke `optional(map(string), { 80 = "http" })` defaults.
+  - Minor fixed: the `[5]` cost comment.
+  - Major open: root 48 leaves the regression test about 0.3–0.8 s of margin. Per the reviewer's
+    option (b), CI timings are recorded before merging.
+- Next: read the CI timings, then re-review.
+
+## 2026-10-14 · T-0124b · blocked (needs-human)
+- What: CI on PR #91 is green, but its timings confirm the review's open major. The precision
+  root that keeps the realistic fanout tree under half its budget (48) leaves
+  TestNumberFormattingInDefaultsIsCharged 7–9% under its 4 s bound on CI.
+- Evidence (CI run 38587555426, test job):
+  - list(set(any)) took 3.62 s and map(set(any)) 3.72 s; set(list(any)) took 1.35 s.
+  - The race-enabled internal/terraform package took 523.8 s of go test's 600 s (T-0125).
+  - The NONRACE_TESTS step took 28.8 s.
+- Blocker: the fix changes a gate either way (Decisions needed: raise the regression bound,
+  relax the realistic-tree guard to about 55%, or raise the tree budget), so the owner decides.
+  The PR stays open as the signal; the loop takes other ready tasks.
+- Next: the owner's decision on the Decisions needed entry, then a re-review of PR #91.
+
+## 2026-10-14 · T-0124b · done
+- What: the owner chose option (a) on the calibration trade-off. Precision root 48 stays, and
+  TestNumberFormattingInDefaultsIsCharged's bound goes from 4 s to 5 s (ADR 0044, BACKLOG
+  `decided:`). Two more review rounds then closed the remaining gaps.
+  - evalExpr charges an expression's literal text cost (literalTextCost, memoized with its
+    inspection, summed over .tf.json templates) on every evaluation. When it does not fit,
+    the work is spent and the result is unknown with "Number formatting too large".
+    m.textRefused lets evalLocal and evalBounded return their own marked unknown.
+  - usePath.cacheKey, the locals estimate's path key, writes numeric keys as exact hex
+    (Text('p', 0)) instead of shortest decimal, which was iace's own uncharged formatting.
+  - costlyLiteralText was folded into inspectSource. The list and tuple index over-count
+    (122 units per `x[0]`) is recorded as accepted in ADR 0044.
+- Files: as in the entry above, plus internal/terraform/{resources.go}.
+- Evidence:
+  - `gates.sh full` 13 pass.
+  - On CI (run 38587555426) the regression subtests took 3.62 and 3.72 s.
+  - TestLiteralTextOutsideLoopsIsCharged covers 10,000 literal uses (HCL and .tf.json), two
+    uses, and a sensitive input.
+  - TestLiteralTextIsChargedPerInstance: count = 60 took 0.27 s; without the charge 30.8 s.
+  - TestPathKeysWriteNumbersCheaply: decimal keys took 536 ms against a 200 ms bound (20.6 s
+    under -race, review).
+  - Each new test fails when its fix is reverted.
+- Review: iace-reviewer, CHANGES_REQUIRED three times, then APPROVE.
+  - Round 2 major fixed: literals outside for expressions were free on each evaluation (75 s
+    under count = 60).
+  - Round 3 major fixed: the .tf.json charge was untested. Its minors were fixed too: a direct
+    cacheKey test, and marks on refused locals.
+  - Round 4 minor recorded as T-0124d: evalBounded's mark path is untested.
+- Next: CI on the PR, then merge; then T-0124c or the next ready task.
