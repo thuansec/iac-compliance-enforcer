@@ -41,7 +41,7 @@ lint: ## golangci-lint, regal (policies) and actionlint (workflows)
 # Tests that time math/big number formatting against the work calibration run there too: the
 # race detector slows that formatting about 25 times (157 ms → 3.8 s), past raceSlowdown, and
 # the three took about 190 s under -race (T-0124b).
-NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast)$$
+NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast|TestMarkFunctionChainsAreBounded)$$
 
 test: ## race-enabled, shuffled tests with a coverage profile, then the heap and formatting-timing tests without -race
 	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./...

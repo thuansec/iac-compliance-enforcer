@@ -222,7 +222,7 @@ func (m *ParsedModule) evaluateLocals(ctx context.Context, vars map[string]Varia
 				fmt.Sprintf("From the local value %q on, locals past the reference limit record only their own references, not those of the locals they use.", name),
 				s.file, r.Start.Line, r.Start.Column)
 		}
-		sensitive := s.safe && b.inputsSensitive(s)
+		sensitive := s.safe && (callsSensitive(s.calls) || b.inputsSensitive(s))
 		stopped = stopped || (!cyclic && stop != nil && stop())
 		switch {
 		case s.cyclic:
@@ -823,12 +823,12 @@ func (m *ParsedModule) evalLocal(s *localState, b *localsBudget, done map[string
 	}
 	size, sort, marked, ok := valueMarksWalk(val, maxLocalValueSize, m.workLeft(), maxNesting)
 	if !ok {
-		// The unknown is marked through sensitive, from the inputs inputsSensitive checked:
-		// secrets reach a local only through its inputs (iace marks only sensitive variables
-		// and module outputs). Any other mark in val is a refused call's fail-closed mark over
-		// those same inputs, redundant when they were walked and found unmarked. A stopped
-		// walk's marked is always true and would mark every value too large (T-0116j). This
-		// stops holding once an expression can add marks itself (sensitive(), T-0126).
+		// The unknown is marked through sensitive, from the inputs inputsSensitive checked and
+		// any call of sensitive() (T-0126): secrets reach a local only through its inputs
+		// (iace marks only sensitive variables and module outputs) or sensitive(). Any other
+		// mark in val is a refused call's fail-closed mark over those same inputs, redundant
+		// when they were walked and found unmarked. A stopped walk's marked is always true and
+		// would mark every value too large (T-0116j).
 		// The walk done is spent, a refusal for sorting past the work left: the next local
 		// cannot repeat it for free (T-0116d review).
 		m.spendFunctionWork(sort)

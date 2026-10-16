@@ -588,8 +588,8 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 	ectx := &hcl.EvalContext{Variables: map[string]cty.Value{"var": d.vars}}
 	locals, mods := map[string]cty.Value{}, map[string]cty.Value{}
 	est := r.End.Byte - r.Start.Byte
-	used := 0 // the part of est the values it uses make up, which calls and operators walk
-	sensitive := false
+	used := 0                          // the part of est the values it uses make up, which calls and operators walk
+	sensitive := callsSensitive(calls) // marks its value whatever the inputs (T-0126)
 	// Each reference costs map lookups only: sizes and sensitivity are cached per value. A
 	// dynamic block iterator shadows any root of its name, var and local included, as hcl's
 	// child evaluation context does for Terraform.

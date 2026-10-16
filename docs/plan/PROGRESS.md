@@ -2981,3 +2981,44 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   set-holding row is now labelled as convert's path. Round 2: APPROVE, no findings (noted that
   100 × per sits close to maxFunctionWork if the per-number charge changes).
 - Next: the next ready task.
+
+## 2026-10-16 · T-0126 · done
+- What: sensitive() and nonsensitive() are evaluated as in Terraform.
+  - Semantics, from Terraform's current implementation (BUSL; summarized, never copied): both
+    take one value of any type, marks included, and return it with the same type. sensitive
+    adds the mark. nonsensitive removes it from the value itself, keeps nested marks, and
+    returns a plain value unchanged without an error. The docs page's text agrees ("no
+    changes"); its console example shows the error of older releases.
+  - markBounded charges each call 8 walks of its argument and its sorts twice: cty runs
+    ContainsMarked (DeepValues, which sorts sets) before every call and a type conformance check
+    after it. A refused call is unknown, marked for sensitive(), and reported as a call too large.
+  - callsSensitive marks the unknown of a local (every refusal path), resource attribute or
+    module input (evalBounded) that calls sensitive(), whatever its inputs.
+- Files: internal/terraform/{functions.go,functions_terraform.go,locals.go,resources.go,
+  functions_sensitive_internal_test.go,functions_sensitive_test.go,setwalk_internal_test.go},
+  Makefile (TestMarkFunctionChainsAreBounded joins NONRACE_TESTS).
+- Evidence:
+  - TestSensitiveFunctions covers locals (core::, unknowns, tuples, nested marks kept, no
+    diagnostics). TestSensitiveFunctionsInResources covers resources, including a too-large
+    attribute with plain inputs that is a marked unknown. TestSensitiveFunctionsInModuleOutputs
+    covers an output marked only through sensitive(). TestTooLargeLocalsAreMarkedByTheirInputs
+    gains the estimate and after-evaluation cases.
+  - All of these failed before the change, and reverting callsSensitive in locals.go or
+    resources.go fails them.
+  - Calibration: one nested call over 100,000 one-byte strings took about 150 ms (94 ns per
+    unit at 8 walks); over a set of 2,000 strings about 30 ms (43 ns per unit).
+  - TestMarkFunctionChainsAreBounded: 400-call chains are refused in 0.3–0.9 s. Without the
+    charge they took 6–22 s and finished known.
+  - A first full-gates run failed only on TestRepeatedNumberFormattingIsBounded (1.06 s against
+    1 s, load average about 5.8). It passed alone three times; this recurrence belongs to T-0125b.
+  - Gates: the final tree passed `gates.sh full` (13). Earlier runs on it failed three times.
+    The first was the race step at go test's 600 s timeout (600.8 s), while I ran probes at the
+    same time. Twice the non-race step failed, with the failing test cut off by gates.sh's
+    25-line tail; that step passed six times run directly or through `make test`. Recorded
+    under T-0125b.
+- Review: iace-reviewer, CHANGES_REQUIRED. Blocker, fixed: calls were not charged, and my claim
+  that cty does not walk a marked argument was wrong. Minors, both fixed: an output marked only
+  by sensitive(), and the nonsensitive departure recorded in the result. Round 2: APPROVE, with
+  one minor recorded as T-0126b (a refused nonsensitive() drops nested marks; its result is
+  unknown, so nothing leaks).
+- Next: the next ready task (T-0126b, or the first ready one in file order).
