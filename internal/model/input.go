@@ -149,7 +149,7 @@ type SourceLocation struct {
 	Range Range  `json:"range"`
 }
 
-// Range is a 1-based source range; columns count bytes.
+// Range is a 1-based source range; columns count characters as hcl reports them (ADR 0045).
 type Range struct {
 	StartLine   int `json:"start_line"`
 	StartColumn int `json:"start_column"`

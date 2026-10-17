@@ -99,7 +99,7 @@
     },
     "addresses": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "range": {
-      "description": "1-based; columns count bytes.",
+      "description": "1-based; columns count characters as hcl reports them (ADR 0045).",
       "type": "object",
       "additionalProperties": false,
       "required": ["start_line", "start_column", "end_line", "end_column"],
