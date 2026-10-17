@@ -1,0 +1,224 @@
+[
+  {
+    "schema_version": "1",
+    "source": {
+      "kind": "hcl",
+      "root_module": "envs/dev"
+    },
+    "terraform": {
+      "required_version": "",
+      "backend": null,
+      "required_providers": {
+        "aws": {
+          "source": "registry.terraform.io/hashicorp/aws",
+          "version": "~> 6.0"
+        }
+      }
+    },
+    "provider_versions": {},
+    "providers": [],
+    "resources": [
+      {
+        "address": "aws_s3_bucket.dev",
+        "base_address": "aws_s3_bucket.dev",
+        "mode": "managed",
+        "type": "aws_s3_bucket",
+        "name": "dev",
+        "index": null,
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws",
+        "provider_config": "",
+        "values": {
+          "bucket": "example-dev"
+        },
+        "unknown": [],
+        "sensitive": [],
+        "references": {},
+        "meta": {
+          "count_unknown": false,
+          "for_each_unknown": false,
+          "depends_on": [],
+          "lifecycle": {}
+        },
+        "source": {
+          "file": "envs/dev/main.tf",
+          "range": {
+            "start_line": 10,
+            "start_column": 1,
+            "end_line": 12,
+            "end_column": 2
+          },
+          "attributes": {
+            "bucket": {
+              "start_line": 11,
+              "start_column": 12,
+              "end_line": 11,
+              "end_column": 25
+            }
+          }
+        }
+      }
+    ],
+    "module_calls": [
+      {
+        "address": "module.shared",
+        "source": "../../modules/shared",
+        "version": "",
+        "resolved": true,
+        "reason": "",
+        "source_range": {
+          "file": "envs/dev/main.tf",
+          "range": {
+            "start_line": 15,
+            "start_column": 1,
+            "end_line": 18,
+            "end_column": 2
+          }
+        }
+      }
+    ],
+    "variables": [],
+    "outputs": [],
+    "coverage_gaps": []
+  },
+  {
+    "schema_version": "1",
+    "source": {
+      "kind": "hcl",
+      "root_module": "envs/prod"
+    },
+    "terraform": {
+      "required_version": "",
+      "backend": null,
+      "required_providers": {
+        "aws": {
+          "source": "registry.terraform.io/hashicorp/aws",
+          "version": "~> 6.0"
+        }
+      }
+    },
+    "provider_versions": {},
+    "providers": [],
+    "resources": [
+      {
+        "address": "aws_s3_bucket.prod",
+        "base_address": "aws_s3_bucket.prod",
+        "mode": "managed",
+        "type": "aws_s3_bucket",
+        "name": "prod",
+        "index": null,
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws",
+        "provider_config": "",
+        "values": {
+          "bucket": "example-prod"
+        },
+        "unknown": [],
+        "sensitive": [],
+        "references": {},
+        "meta": {
+          "count_unknown": false,
+          "for_each_unknown": false,
+          "depends_on": [],
+          "lifecycle": {}
+        },
+        "source": {
+          "file": "envs/prod/main.tf",
+          "range": {
+            "start_line": 10,
+            "start_column": 1,
+            "end_line": 12,
+            "end_column": 2
+          },
+          "attributes": {
+            "bucket": {
+              "start_line": 11,
+              "start_column": 12,
+              "end_line": 11,
+              "end_column": 26
+            }
+          }
+        }
+      }
+    ],
+    "module_calls": [],
+    "variables": [],
+    "outputs": [],
+    "coverage_gaps": []
+  },
+  {
+    "schema_version": "1",
+    "source": {
+      "kind": "hcl",
+      "root_module": "modules/shared"
+    },
+    "terraform": {
+      "required_version": "",
+      "backend": null,
+      "required_providers": {}
+    },
+    "provider_versions": {},
+    "providers": [],
+    "resources": [
+      {
+        "address": "aws_s3_bucket.shared",
+        "base_address": "aws_s3_bucket.shared",
+        "mode": "managed",
+        "type": "aws_s3_bucket",
+        "name": "shared",
+        "index": null,
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws",
+        "provider_config": "",
+        "values": {
+          "bucket": "example-shared"
+        },
+        "unknown": [],
+        "sensitive": [],
+        "references": {},
+        "meta": {
+          "count_unknown": false,
+          "for_each_unknown": false,
+          "depends_on": [],
+          "lifecycle": {}
+        },
+        "source": {
+          "file": "modules/shared/main.tf",
+          "range": {
+            "start_line": 6,
+            "start_column": 1,
+            "end_line": 8,
+            "end_column": 2
+          },
+          "attributes": {
+            "bucket": {
+              "start_line": 7,
+              "start_column": 12,
+              "end_line": 7,
+              "end_column": 20
+            }
+          }
+        }
+      }
+    ],
+    "module_calls": [],
+    "variables": [
+      {
+        "name": "name",
+        "module": "",
+        "sensitive": false,
+        "has_default": true,
+        "type": "string"
+      }
+    ],
+    "outputs": [],
+    "coverage_gaps": [
+      {
+        "kind": "incomplete_analysis",
+        "detail": "uninstantiated_module: Module scanned on its own: No root module instantiates this local module (its module calls are absent, have count = 0 or an empty for_each, or come from an override file), so it is scanned as a root, with unknown values for variables that have no default.",
+        "file": "modules/shared",
+        "line": 0
+      }
+    ]
+  }
+]
