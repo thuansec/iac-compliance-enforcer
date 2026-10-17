@@ -669,7 +669,7 @@ locations and without executing anything.
   - decided: the owner chose option (b) of D-T-0124e (2026-10-17): keep valueSizeWalk's integer-priced estimate and record the residual, about one uncounted sort of a set of fractions per module evaluation (about 1 s for 2,000 512-bit fractions), which the tree budget then counts; options (a) and (c) were rejected because they refuse realistic integer sets (4,000 integers are accepted today in 653 ms)
   - context: a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
   - accept:
-    - an ADR records the residual of D-T-0124e option (b): cty sorts a set before any accessor returns its elements, so the first sort of a set of fractions is uncounted; it happens about once per module evaluation, is bounded by the conversion refusals (4,000 `N.1` decimals, or 20 or more multiples of 1e-2466, are refused at conversion), and the tree budget counts the refused work afterwards; the threat model's T3 row and the thesis-facing limitation list name it
+    - an ADR records the residual of D-T-0124e option (b): cty sorts a set before any accessor returns its elements, so the first sort of a set of fractions is uncounted; it happens about once per module evaluation, is bounded by the conversion refusals (4,000 `N.1` decimals, or 20 or more multiples of 1e-2466, are refused at conversion), and the tree budget counts the refused work afterwards; the threat model's T3 row and the documented known limitations name it
     - a regression timing test builds 2,000 `N.1` decimals through a set(number) default walked by 32 locals and asserts the module finishes within the per-module time budget, refusing the locals; a second test keeps 32 walks of a set(number) of 4,000 integers accepted
   - attempts: 1
 - [x] T-0124f · Test or remove toText's map-to-object branch
@@ -829,7 +829,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - attempts: 0
 
 ## M13 · Loader hardening — status: planned
-Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then the thesis lists them as known limitations.
+Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then they are documented as known limitations.
 
 - [ ] T-0115 · Bound number magnitude outside function calls
   - skills: iace-terraform-parsing, iace-security, iace-testing
