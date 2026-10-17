@@ -1168,6 +1168,72 @@ as in M6, valid for azurerm 4.x and 5.x, with renamed attributes and changed def
     - standard rule acceptance
   - attempts: 0
 
+## M10 · AI fix suggestions — status: planned
+Goal: opt-in AI suggestions for violations, verified by re-scanning before anyone sees them.
+Decided: in thesis scope, no longer a stretch goal (owner, 2026-10-17): the thesis title promises
+AI-assisted remediation, so M10 runs after the AWS and Azure packs, whose findings its eval harness
+(experiment E8) scores, and before M8 and M9. Retrieval (RAG) to ground fixes stays optional and is
+kept only if E8 shows a benefit.
+
+- [ ] T-1001 · Suggester interface, config and disclosure
+  - skills: iace-ai-remediation, iace-architecture
+  - depends: T-0401
+  - decided: depends on the `.iace.yaml` loader (T-0401) for the `ai:` block instead of plan JSON parity (T-0904), which it never needed; moved with M10 ahead of M8 and M9 (2026-10-17)
+  - accept:
+    - `ai:` config block plus flags; off by default; enabling prints the data disclosure; noop and fake implementations; tests
+  - attempts: 0
+- [ ] T-1002 · Redaction and context minimization
+  - skills: iace-ai-remediation, iace-security
+  - depends: T-1001
+  - accept:
+    - sensitive attributes, sensitive variables and secret patterns are replaced with placeholders; only the offending blocks and their direct dependencies are sent; tests with secret fixtures prove nothing leaks
+  - attempts: 0
+- [ ] T-1003 · Versioned prompt and output schema
+  - skills: iace-ai-remediation
+  - depends: T-1002
+  - accept:
+    - the prompt follows references/prompt-contract.md; golden prompt tests; the structured-output JSON schema lives in schemas/ai-fix.v1.json
+  - attempts: 0
+- [ ] T-1004 · Bedrock provider
+  - skills: iace-ai-remediation, claude-api
+  - depends: T-1003
+  - accept:
+    - uses anthropic-sdk-go's Bedrock Mantle client with default model `anthropic.claude-opus-5-5` and configurable effort; timeouts, retries, refusal handling and prompt caching
+    - region and credentials come only from the AWS environment (never `.iace.yaml`) and are read only when AI is enabled; the disclosure names provider, region and model
+    - all tests use httptest with obviously fake credentials; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
+  - attempts: 0
+- [ ] T-1005 · Fix validator
+  - skills: iace-ai-remediation, iace-security, iace-opa-engine
+  - depends: T-1004
+  - accept:
+    - each fix is applied in memory, re-parsed and checked for dangerous constructs, then the scan is re-run; only fixes that resolve the finding without adding new ones are "verified"; tests cover malicious outputs
+  - attempts: 0
+- [ ] T-1006 · Output integration and `iace fix`
+  - skills: iace-ai-remediation, iace-reporting
+  - depends: T-1005
+  - accept:
+    - text diff, JSON, Markdown and SARIF fixes; `iace fix --ai --write` requires a clean git tree (or --force) and writes atomically; testscript with the fake provider
+  - attempts: 0
+- [ ] T-1007 · Suggestion cache, cost controls and usage summary
+  - skills: iace-ai-remediation
+  - depends: T-1006
+  - accept:
+    - a 0600 cache keyed by prompt version, model and redacted context; max_findings, concurrency and a token budget; token usage in the summary
+  - attempts: 0
+- [x] T-1008 · Bedrock and Vertex providers (optional)
+  - skills: iace-ai-remediation, claude-api
+  - depends: T-1007
+  - accept:
+    - provider selection via config; same validation pipeline; httptest-based tests
+  - attempts: 0
+  - result: superseded by T-1004 (D-05: Amazon Bedrock is the only approved provider; Vertex is not approved)
+- [ ] T-1009 · Opt-in eval harness
+  - skills: iace-ai-remediation, iace-testing
+  - depends: T-1007
+  - accept:
+    - testdata/ai-evals with a runner that reports verified-fix rate, new-finding rate and tokens; it runs only with explicit opt-in and records a baseline in PROGRESS
+  - attempts: 0
+
 ## M8 · Central and external policy sources — status: planned
 Goal: repositories pin a central or org policy bundle to an exact version, and iace verifies it
 before loading it alongside the built-in policies.
@@ -1246,67 +1312,6 @@ Goal: higher-fidelity scans from `terraform show -json` output produced by trust
   - depends: T-0903
   - accept:
     - for fixtures with fully known values, both modes produce identical findings (golden plan JSON is committed, never generated in tests)
-  - attempts: 0
-
-## M10 · AI fix suggestions — status: planned
-Goal: opt-in AI suggestions for violations, verified by re-scanning before anyone sees them.
-
-- [ ] T-1001 · Suggester interface, config and disclosure
-  - skills: iace-ai-remediation, iace-architecture
-  - depends: T-0904
-  - accept:
-    - `ai:` config block plus flags; off by default; enabling prints the data disclosure; noop and fake implementations; tests
-  - attempts: 0
-- [ ] T-1002 · Redaction and context minimization
-  - skills: iace-ai-remediation, iace-security
-  - depends: T-1001
-  - accept:
-    - sensitive attributes, sensitive variables and secret patterns are replaced with placeholders; only the offending blocks and their direct dependencies are sent; tests with secret fixtures prove nothing leaks
-  - attempts: 0
-- [ ] T-1003 · Versioned prompt and output schema
-  - skills: iace-ai-remediation
-  - depends: T-1002
-  - accept:
-    - the prompt follows references/prompt-contract.md; golden prompt tests; the structured-output JSON schema lives in schemas/ai-fix.v1.json
-  - attempts: 0
-- [ ] T-1004 · Bedrock provider
-  - skills: iace-ai-remediation, claude-api
-  - depends: T-1003
-  - accept:
-    - uses anthropic-sdk-go's Bedrock Mantle client with default model `anthropic.claude-opus-5-5` and configurable effort; timeouts, retries, refusal handling and prompt caching
-    - region and credentials come only from the AWS environment (never `.iace.yaml`) and are read only when AI is enabled; the disclosure names provider, region and model
-    - all tests use httptest with obviously fake credentials; there are no live calls unless `live_api_calls` is true in .claude/loop-policy.json
-  - attempts: 0
-- [ ] T-1005 · Fix validator
-  - skills: iace-ai-remediation, iace-security, iace-opa-engine
-  - depends: T-1004
-  - accept:
-    - each fix is applied in memory, re-parsed and checked for dangerous constructs, then the scan is re-run; only fixes that resolve the finding without adding new ones are "verified"; tests cover malicious outputs
-  - attempts: 0
-- [ ] T-1006 · Output integration and `iace fix`
-  - skills: iace-ai-remediation, iace-reporting
-  - depends: T-1005
-  - accept:
-    - text diff, JSON, Markdown and SARIF fixes; `iace fix --ai --write` requires a clean git tree (or --force) and writes atomically; testscript with the fake provider
-  - attempts: 0
-- [ ] T-1007 · Suggestion cache, cost controls and usage summary
-  - skills: iace-ai-remediation
-  - depends: T-1006
-  - accept:
-    - a 0600 cache keyed by prompt version, model and redacted context; max_findings, concurrency and a token budget; token usage in the summary
-  - attempts: 0
-- [x] T-1008 · Bedrock and Vertex providers (optional)
-  - skills: iace-ai-remediation, claude-api
-  - depends: T-1007
-  - accept:
-    - provider selection via config; same validation pipeline; httptest-based tests
-  - attempts: 0
-  - result: superseded by T-1004 (D-05: Amazon Bedrock is the only approved provider; Vertex is not approved)
-- [ ] T-1009 · Opt-in eval harness
-  - skills: iace-ai-remediation, iace-testing
-  - depends: T-1007
-  - accept:
-    - testdata/ai-evals with a runner that reports verified-fix rate, new-finding rate and tokens; it runs only with explicit opt-in and records a baseline in PROGRESS
   - attempts: 0
 
 ## M11 · Release and hardening — status: planned
