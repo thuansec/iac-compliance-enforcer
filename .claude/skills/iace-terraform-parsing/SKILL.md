@@ -19,9 +19,14 @@ config **we** generate with official providers. That is not scanned code.)
 ## Pipeline (internal/terraform)
 1. **Discover**: walk the scan root through `internal/fsutil` (`os.Root`). Skip `.terraform/`,
    `.git/`, hidden dirs and vendored test fixtures when configured. Don't follow symlinks outside
-   the root. Enforce limits: 5 MiB per file, 10k files, 32 module levels. A limit hit becomes a
+   the root. Enforce limits: 1 MiB per file (ADR 0016), 10k files, 32 module levels. A limit hit becomes a
    `limit_exceeded` coverage gap, plus exit 2 when `--fail-on-gaps` is set. A directory with
    `*.tf`/`*.tf.json` that no other scanned directory calls as a local module is a **root module**.
+   A local child module that no evaluated tree instantiates is scanned as a root of its own (an
+   orphan) with its own defaults and tfvars, unknown variables otherwise, an
+   `uninstantiated_module` warning, and no trust in the module manifest (ADR 0014). Remote module
+   calls resolve only through `.terraform/modules/modules.json`, and only when the pipeline trusts
+   it with `--trust-module-manifest` (never `.iace.yaml`; ADR 0013).
 2. **Parse**: `hclparse.Parser` (`ParseHCLFile`, `ParseJSONFile`). Keep every diagnostic.
    Error-severity diagnostics in a root module make that root a `parse_error` gap, and the scan
    exits 2, because Terraform itself would refuse the file. `*_override.tf` files are merged with

@@ -39,6 +39,13 @@ cosmetic defect. Full threat model: [references/threat-model.md](references/thre
 - **Filesystem**: all scanned-content access goes through `internal/fsutil` on `os.Root`, which
   prevents `..` and symlink escapes. It rejects non-regular files and caps reads with `io.LimitReader`.
   Config-supplied paths (module sources, `paths`, `--var-file`) are relative and validated.
+  The file functions (`file`, `fileexists`, `templatefile`) are confined to the **scan root**,
+  not the module directory (ADR 0015), so a module can read any repository file (`.git/config`
+  and a committed `.terraform` included); those values leave only through redaction.
+- **Modules**: remote calls resolve only through `.terraform/modules/modules.json` when the
+  pipeline trusts it (`--trust-module-manifest`, never `.iace.yaml`; ADR 0013), because a pull
+  request can commit a forged manifest. Uninstantiated local modules are scanned as roots with
+  unknown variables and no manifest trust (ADR 0014).
 - **Archives** (bundles): reject absolute paths, `..`, symlinks/hardlinks, device files,
   duplicates and too many entries, and cap the total uncompressed size (decompression bombs).
 - **Parsing**: YAML strict with no anchors; JSON with size caps; HCL with recursion and expression
