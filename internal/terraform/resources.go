@@ -144,6 +144,9 @@ type resourceDecoder struct {
 	extraUnknown []cty.Path
 	// dynamicSource memoizes holdsDynamicSource by source range.
 	dynamicSource map[sourceKey]bool
+	// shared caches size's measurements of var.* and local.* across the call decoders of one
+	// caller (callDecoder); nil for other decoders.
+	shared map[string]measure
 	// modules holds module.<name> for the module's calls: each an object of the called
 	// instance's outputs, or unknown. nil means every module reference is unknown.
 	modules map[string]cty.Value
@@ -693,7 +696,12 @@ func (d *resourceDecoder) evalBounded(expr hcl.Expression, name string, nameRang
 			r.Filename, r.Start.Line, r.Start.Column)
 		return unknown, false
 	}
-	size, ok := valueSize(val, maxLocalValueSize, maxNesting)
+	// The walk sorts every set in val, and cty sorts a set before any walk can count it, so the
+	// sort is spent whether the value is accepted or refused: an attribute or module argument
+	// evaluated once per instance cannot repeat it for free (ADR 0047, T-0124e review: 62 s for
+	// a 2,000-fraction set passed to count = 64 instances).
+	size, sort, ok := valueSizeWalk(val, maxLocalValueSize, d.m.workLeft(), maxNesting)
+	d.m.spendFunctionWork(sort)
 	if !ok || size > d.remaining {
 		d.tooLarge(name, nameRange, ok)
 		return unknown, false
@@ -734,17 +742,44 @@ func (d *resourceDecoder) tooLarge(name string, r hcl.Range, total bool) {
 	}
 }
 
+// measure is a value's size and whether it holds a sensitive value, from one walk.
+type measure struct {
+	size   int
+	marked bool
+}
+
 // size returns the cached size of a variable or local's value.
 func (d *resourceDecoder) size(key string, v cty.Value) int {
 	if n, ok := d.sizes[key]; ok {
 		return n
 	}
-	n, _, marked, ok := valueMarksWalk(v, maxLocalValueSize, maxFunctionWork, maxNesting)
+	// Every instance of a module call evaluates its arguments with the caller's same variables
+	// and locals, so their measurement is shared: without it, each instance walked the value
+	// again, and the walk's first sort of a set of fractions, which the walk prices as integers,
+	// cost about 1 s per instance (ADR 0047, T-0124e review). Module outputs are not shared: a
+	// call evaluated later can change them.
+	stable := d.shared != nil && (strings.HasPrefix(key, "var.") || strings.HasPrefix(key, "local."))
+	if stable {
+		if c, ok := d.shared[key]; ok {
+			d.sizes[key], d.sensitive[key] = c.size, c.marked
+			return c.size
+		}
+	}
+	// The cache lives in the decoder, which each module instance builds anew, so the walk (and
+	// the sorts of v's sets, which cty runs before any walk can count them) repeats per
+	// instance: it is spent from the module's function work, and once that runs out the value
+	// counts as too large, so its references are refused (ADR 0047). A stopped walk reports
+	// marked, which fails closed.
+	n, sort, marked, ok := valueMarksWalk(v, maxLocalValueSize, d.m.workLeft(), maxNesting)
+	d.m.spendFunctionWork(sort)
 	if !ok {
 		n = maxLocalValueSize + 1
 	}
 	d.sizes[key] = n
 	d.sensitive[key] = marked // from the same walk: ContainsMarked would sort its sets again
+	if stable {
+		d.shared[key] = measure{size: n, marked: marked}
+	}
 	return n
 }
 

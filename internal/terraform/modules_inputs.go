@@ -52,6 +52,9 @@ func (m *ParsedModule) NewInstance() *ParsedModule {
 // cannot be evaluated is unknown with a warning; only a cancelled context is an error.
 func (m *ParsedModule) ModuleInputs(ctx context.Context, call *ModuleCall, vars map[string]Variable, locals map[string]Local) (map[string]Input, error) {
 	defer m.forgetInspections()
+	// A caller may pass other vars or locals than a previous call did: measurements shared
+	// between call instances (callMeasures) hold only within one module evaluation.
+	m.callMeasures = nil
 	return m.moduleInputs(ctx, call, vars, locals, nil, nil)
 }
 
@@ -61,6 +64,10 @@ func (m *ParsedModule) callDecoder(vars map[string]Variable, locals map[string]L
 	d = m.newResourceDecoder(vars, locals)
 	d.modules = modules
 	d.remaining = maxResourcesSize - m.usage.inputs
+	if m.callMeasures == nil {
+		m.callMeasures = map[string]measure{}
+	}
+	d.shared = m.callMeasures
 	return d, func() { m.usage.inputs = maxResourcesSize - d.remaining }
 }
 

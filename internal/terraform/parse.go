@@ -97,6 +97,10 @@ type ParsedModule struct {
 	// Diagnostics are sorted by file, line, column, code and summary, without duplicates.
 	Diagnostics []Diagnostic
 
+	// callMeasures caches what the arguments of m's module calls measure of var.* and local.*
+	// (resourceDecoder.shared), so every instance of a call walks them once.
+	callMeasures map[string]measure
+
 	// src holds each file's bytes, so expressions can be checked before evaluation. Set and
 	// remove entries with setSource and dropSource, which keep inspected in step.
 	src map[string][]byte
