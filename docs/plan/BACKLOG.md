@@ -347,6 +347,7 @@ locations and without executing anything.
   - depends: T-0109
   - accept:
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
@@ -380,7 +381,7 @@ locations and without executing anything.
     - redaction is linear in the document's size, and a test shows a fake secret placed at each kind of position never survives
   - attempts: 1
   - result: internal/redact holds the credential names and secret patterns (AWS key IDs, PEM private keys, JWTs, Azure connection strings, storage keys and SAS URLs, connection-string passwords, URLs with credentials, and random-looking runs over 32 characters judged against the Miller-Madow expected entropy of a random string of the same length: at least 95% of random 33-, 40- and 64-character keys caught, resource paths and ARNs kept); Document returns a deep copy with every non-null value at a sensitive path and every string under a credential name or with a secret's form redacted, in resource, provider and backend values and module call sources and versions; linear (200,000 values); follow-ups T-0132 and T-0133
-- [ ] T-0109e · `iace inspect` with golden input documents
+- [x] T-0109e · `iace inspect` with golden input documents
   - skills: iace-architecture, iace-testing, iace-security
   - depends: T-0109d, T-0109f
   - accept:
@@ -388,7 +389,8 @@ locations and without executing anything.
     - inspect never prints a secret: values at sensitive paths, and literal values that match secret patterns or sit under credential-like names (for example backend `access_key`, `secret_key`, `conn_str`, `password`, which the document carries as plain literals, T-0109c review), are redacted in its output; a test with obviously fake secrets in a resource, a sensitive variable and a backend shows none reaches stdout
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - golden tests cover testdata/terraform/e2e/*; the golden set includes a weakening override fixture (`main_override.tf` setting `acl = "public-read"` on a private bucket) whose input document shows the overridden value (T-0112b review; the finding itself is asserted by T-0205)
-  - attempts: 0
+  - attempts: 1
+  - result: internal/app.Inspect discovers, evaluates and normalizes PATH into one redacted input document per root (terraform.Documents, redact.Document); `iace inspect PATH` prints a summary per root, or with --json one indented, deterministic JSON array, and exits 2 after printing when a parse_error gap exists (exitCodeError: one stderr line, no usage hint); --var, --var-file and --trust-module-manifest (also IACE_TRUST_MODULE_MANIFEST; the flag beats the variable; an invalid value is named, never echoed); golden tests over testdata/terraform/e2e/{basic,multi,override,secrets} (two roots and an orphan in order; the override's public-read acl; every fake secret redacted by sensitivity, name and pattern); README describes inspect. The CLI contract reference is in the harness: T-0110b
 - [x] T-0111a · Bound parse memory per file
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0103
@@ -808,9 +810,15 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - one prepared query, Rego v1, strict mode, StrictBuiltinErrors, per-evaluation timeout, input converted once via EvalParsedInput
     - root modules are evaluated concurrently with a bounded errgroup; there is an engine benchmark
   - attempts: 0
+- [ ] T-0134 · Locate attributes that an override file sets in that file
+  - skills: iace-terraform-parsing, iace-architecture, iace-testing
+  - depends: T-0109e
+  - accept:
+    - an attribute set by an override file keeps its range but not its file: source.attributes holds only ranges and the resource's source.file is the base file, so main_override.tf's `acl` (line 3) points at main.tf:3 in the override golden, and a finding on the weakening override would point at the wrong line (T-0109e review). Record the file per attribute (an additive contract change, with an ADR 0004 amendment, schema, model and reference) or fall back to the block range for attributes from another file; the override golden shows the right file
+  - attempts: 0
 - [ ] T-0204 · Decode violations into findings
   - skills: iace-opa-engine, iace-architecture
-  - depends: T-0203
+  - depends: T-0203, T-0134
   - accept:
     - strict decoding; the violation's address must exist in the input; location comes from the attribute range when the path is known, otherwise the block range
     - fingerprints are stable across runs and line shifts; tests cover each
@@ -830,6 +838,7 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - flags follow iace-architecture/references/findings-and-cli.md; exit 0 when clean, 1 for blocking findings, 2 for errors
     - testscript covers a clean repo, a failing repo, a broken policy and a Terraform parse error
     - usage errors never echo flag values (pflag repeats them, e.g. `invalid argument "…" for "--var"`); a testscript with an obviously fake secret in `--var` shows stderr does not contain it (T-0003 review finding)
+    - a scan path with no Terraform root module is decided explicitly (a coverage gap or exit 2), never a silent pass: a mistyped CI path must not look clean (`iace inspect` prints "no Terraform root modules under this path" and exits 0, T-0109e review)
   - attempts: 0
 - [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
@@ -983,6 +992,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0109f
   - accept:
     - a `value` beside a credential-like `name` (app_settings-style `setting { name = "DB_PASSWORD" value = "..." }`, container `env` blocks) is redacted, and strings that parse as JSON objects or arrays (container_definitions, parameters_content = jsonencode({adminPassword = ...})) are walked and redacted inside, within the linear bound; today `[{"name":"DB_PASSWORD","value":"x"}]` is kept (T-0109f review); tests with fake values
+    - credential-like names match as substrings, so values under names such as `private_ip` or `private_dns_name` are redacted in printed output (over-hiding, never a leak); match name parts on word boundaries (`_`, `-`, case changes) without losing `db_password` or `clientSecret` (T-0109f documentation review)
   - attempts: 0
 
 ## M3 · Reports — status: planned

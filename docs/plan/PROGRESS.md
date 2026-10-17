@@ -3184,3 +3184,34 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   T-0110b.
 - Next: T-0109e (`iace inspect` with golden input documents).
 
+### 2026-10-17 · T-0109e · done
+- What: `iace inspect PATH`, the first command that reads Terraform. internal/app.Inspect
+  discovers, evaluates and normalizes PATH into one input document per root with its coverage
+  gaps, and redacts each; the command prints a summary per root (or "no Terraform root modules
+  under this path"), or with --json one indented, deterministic JSON array, and exits 2 after
+  printing when any parse_error gap exists (a new exitCodeError gives one stderr line without the
+  usage hint). --var and --var-file set root variables; --trust-module-manifest (also
+  IACE_TRUST_MODULE_MANIFEST, which the flag beats) resolves remote modules through the manifest,
+  and its help says a trusted step must first remove any committed .terraform (ADR 0013).
+  Golden tests over testdata/terraform/e2e: basic (a module and a lock file), multi (two roots and
+  an orphan, in order), override (the override's public-read acl), secrets (a sensitive variable,
+  a backend key, a credential-named literal and a pattern-shaped literal under a neutral name, all
+  redacted). README describes inspect.
+- Files: internal/app/inspect.go, internal/cli/{cli.go,inspect.go,inspect_test.go},
+  internal/cli/testdata/inspect/*.golden.json, testdata/terraform/e2e/**, README.md,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 484 s); the inspect tests run every fixture
+  twice and compare byte for byte. A quick-gate run during the work failed
+  TestEvaluateTreeBoundsTheWholeTree/expansion again under load (23.8 s against 20 s), unchanged
+  (T-0125b). A contextcheck finding on newRootCommand is a false positive (commands take their
+  context from cmd.Context(), which ExecuteContext sets) and carries a nolint with that reason.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors: the secrets fixture proved only
+  sensitivity-based redaction (a credential-named literal and a pattern-shaped literal added); no
+  fixture had several roots or an orphan (multi added); the CLI contract reference lacks the new
+  flags and variable (a harness file: added to T-0110b). Minors: flag-over-environment test,
+  empty-path message, README fixed; override attribute ranges point at the base file (T-0134,
+  which T-0204 now depends on); the empty-scan decision added to T-0206; the private_ip
+  over-redaction added to T-0133.
+- Next: M1 has T-0124e, T-0125, T-0125b and the owner's T-0110b left; M2 (T-0201) waits for M1's
+  wrap-up only through T-0109e, which is done.
+

@@ -1,0 +1,122 @@
+[
+  {
+    "schema_version": "1",
+    "source": {
+      "kind": "hcl",
+      "root_module": "."
+    },
+    "terraform": {
+      "required_version": "",
+      "backend": null,
+      "required_providers": {
+        "aws": {
+          "source": "registry.terraform.io/hashicorp/aws",
+          "version": "~> 6.0"
+        }
+      }
+    },
+    "provider_versions": {},
+    "providers": [],
+    "resources": [
+      {
+        "address": "aws_s3_bucket.reports",
+        "base_address": "aws_s3_bucket.reports",
+        "mode": "managed",
+        "type": "aws_s3_bucket",
+        "name": "reports",
+        "index": null,
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws",
+        "provider_config": "",
+        "values": {
+          "bucket": "example-reports"
+        },
+        "unknown": [],
+        "sensitive": [],
+        "references": {},
+        "meta": {
+          "count_unknown": false,
+          "for_each_unknown": false,
+          "depends_on": [],
+          "lifecycle": {}
+        },
+        "source": {
+          "file": "main.tf",
+          "range": {
+            "start_line": 10,
+            "start_column": 1,
+            "end_line": 12,
+            "end_column": 2
+          },
+          "attributes": {
+            "bucket": {
+              "start_line": 11,
+              "start_column": 12,
+              "end_line": 11,
+              "end_column": 29
+            }
+          }
+        }
+      },
+      {
+        "address": "aws_s3_bucket_acl.reports",
+        "base_address": "aws_s3_bucket_acl.reports",
+        "mode": "managed",
+        "type": "aws_s3_bucket_acl",
+        "name": "reports",
+        "index": null,
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws",
+        "provider_config": "",
+        "values": {
+          "acl": "public-read",
+          "bucket": null
+        },
+        "unknown": [
+          [
+            "bucket"
+          ]
+        ],
+        "sensitive": [],
+        "references": {
+          "bucket": [
+            "aws_s3_bucket.reports"
+          ]
+        },
+        "meta": {
+          "count_unknown": false,
+          "for_each_unknown": false,
+          "depends_on": [],
+          "lifecycle": {}
+        },
+        "source": {
+          "file": "main.tf",
+          "range": {
+            "start_line": 14,
+            "start_column": 1,
+            "end_line": 17,
+            "end_column": 2
+          },
+          "attributes": {
+            "acl": {
+              "start_line": 3,
+              "start_column": 9,
+              "end_line": 3,
+              "end_column": 22
+            },
+            "bucket": {
+              "start_line": 15,
+              "start_column": 12,
+              "end_line": 15,
+              "end_column": 36
+            }
+          }
+        }
+      }
+    ],
+    "module_calls": [],
+    "variables": [],
+    "outputs": [],
+    "coverage_gaps": []
+  }
+]

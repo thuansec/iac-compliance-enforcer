@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,17 +30,31 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if args == nil {
 		args = []string{} // cobra would read os.Args instead of nil args
 	}
-	root := newRootCommand()
+	root := newRootCommand() //nolint:contextcheck // commands take ctx from cmd.Context(), which ExecuteContext(ctx) below sets
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	if err := root.ExecuteContext(ctx); err != nil {
-		// Nothing else could report a failed write to stderr, so its error is ignored.
+		// Nothing else could report a failed write to stderr, so its errors are ignored.
+		var ce *exitCodeError
+		if errors.As(err, &ce) {
+			_, _ = fmt.Fprintf(stderr, "iace: %s\n", ce.msg)
+			return ce.code
+		}
 		_, _ = fmt.Fprintf(stderr, "iace: %v; see 'iace --help'\n", err)
 		return exitError
 	}
 	return exitOK
 }
+
+// exitCodeError ends a command that already wrote its output with an exit code and a one-line
+// message, without the usage hint: the command ran, but its result is not trustworthy.
+type exitCodeError struct {
+	code int
+	msg  string
+}
+
+func (e *exitCodeError) Error() string { return e.msg }
 
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -47,14 +62,14 @@ func newRootCommand() *cobra.Command {
 		Short: "Check Terraform for security and compliance misconfigurations",
 		Long: "iace statically checks Terraform for security and compliance misconfigurations in AWS and\n" +
 			"Azure. It never runs Terraform, providers or modules from the code it scans.",
-		Example: "  iace version\n  iace version --json",
+		Example: "  iace inspect .\n  iace version --json",
 		// Run prints errors as one line on stderr; full usage text would bury that line.
 		SilenceErrors:      true,
 		SilenceUsage:       true,
 		DisableSuggestions: true,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(newVersionCommand())
+	root.AddCommand(newVersionCommand(), newInspectCommand())
 
 	// cobra adds its help command lazily; create it now so it has an example like every command.
 	root.InitDefaultHelpCmd()
