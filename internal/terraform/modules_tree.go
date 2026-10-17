@@ -383,10 +383,11 @@ func (l *treeLoader) analyze(m *ParsedModule) []callSpec {
 	return specs
 }
 
-// unresolved reports a call that is not loaded, at its source.
+// unresolved reports a call that is not loaded, at its source, naming the call (quoted: the
+// label is source text) and the reason.
 func unresolved(m *ParsedModule, s *callSpec, reason UnresolvedReason) {
 	m.diag(SeverityWarning, DiagModuleUnresolved, "Module not resolved",
-		fmt.Sprintf("%s (%s)", unresolvedDetail[reason], reason),
+		fmt.Sprintf("module %q: %s (%s)", s.b.Labels[0], unresolvedDetail[reason], reason),
 		s.b.File, s.where.Start.Line, s.where.Start.Column)
 }
 

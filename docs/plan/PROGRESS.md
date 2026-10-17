@@ -3125,3 +3125,33 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   minors recorded as T-0129 and T-0130.
 - Next: T-0109d (map skips, diagnostics and truncation to coverage gaps).
 
+### 2026-10-17 · T-0109d · done
+- What: ADR 0046 (amends ADR 0004) adds coverage-gap kinds skipped_file, incomplete_references
+  and incomplete_analysis to the schema and the model, and records that settings iace reads but
+  does not evaluate are unknown, never absent. terraform.Documents builds every root's document
+  with its gaps: every diagnostic through an explicit table of all 39 codes (errors are
+  parse_error; a code missing from the table is incomplete_analysis), the parse diagnostics of
+  every module of the tree (each shared parse once) and the evaluation diagnostics of every
+  instance, tree skips and truncation, the values and references the document cannot express,
+  and discovery skips, each given to every root whose tree loads the skipped file's directory
+  (else the containing root, else the first). When every Terraform file was skipped, a scan-root
+  document reports them. unresolved_module gaps name the call (quoted label). Locals with
+  incomplete references surface through the resources and outputs that use them and through
+  their own diagnostics (local_cycle, references_incomplete).
+- Files: internal/terraform/gaps.go, gaps_test.go, gaps_internal_test.go,
+  internal/terraform/modules_tree.go, internal/model/input.go, schemas/input.v1.json,
+  docs/adr/0046-map-every-diagnostic-to-a-coverage-gap.md, docs/plan/BACKLOG.md,
+  docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 494 s); TestEveryDiagnosticCodeHasAGapKind
+  parses the package source for every DiagCode constant; every document validates against the
+  schema in the tests; the two skip-ownership tests fail with their fixes removed. Two earlier
+  quick-gate runs failed TestEvaluateTreeBoundsTheWholeTree/expansion under load (load average
+  about 4.7; 26.8 s against 20 s), which passed alone in 4.9 s: the known T-0125b flake, unchanged.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors: discovery skips were dropped when
+  no root remained (a repository whose every file was skipped reported nothing); skips owned by
+  directory prefix landed in an unrelated root and were missing from the roots that load the
+  module; unresolved_module gaps did not name the call. Minors fixed: the enumeration test fails
+  on Diag* constants declared another way; shared parses walked once; end-to-end documents
+  schema-validated; a local-cycle test. Second-round minor recorded as T-0131.
+- Next: T-0109e (`iace inspect` with golden input documents).
+

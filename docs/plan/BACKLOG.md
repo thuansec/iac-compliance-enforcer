@@ -342,11 +342,11 @@ locations and without executing anything.
     - the output is deterministic: the same evaluation encodes byte-identically (sorted paths, references and attribute keys)
   - attempts: 1
   - result: terraform.NormalizeResource turns an evaluated Resource into a model.Resource with every field; unknowns are null and listed (the evaluator's list plus any the walk meets, outermost only, sorted index before name), sensitive marks become paths (a mark on the whole value marks every attribute), paths follow the value's type (a step into a set reports the set), numbers are int64-exact or float64 with out-of-range and underflow unknown and no decimal formatting (10,000 numbers of 8,192 bits in about 10 ms); complete=false when the value is not a known object or the evaluator reports it wholly unknown (over 1024 unknown paths collapse into one), which T-0109d turns into a gap. ADR 0045 records the rules and amends the column unit to hcl's characters; the harness reference follows in T-0110b (needs-human)
-- [!] T-0110b · Sync the input-document reference with ADR 0045
+- [!] T-0110b · Sync the input-document reference with ADR 0045 and ADR 0046
   - skills: iace-architecture
   - depends: T-0109
   - accept:
-    - .claude/skills/iace-architecture/references/input-document.md states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
+    - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 - [x] T-0109c · Assemble one input document per evaluated root
@@ -359,7 +359,7 @@ locations and without executing anything.
   - split: 2026-10-17, the ReferencesIncomplete gap moved to T-0109d, which owns the gap kinds and their ADR
   - attempts: 1
   - result: terraform.NormalizeRoot builds one schema-valid input document per root (orphans included) with Unexpressed for T-0109d; terraform settings without evaluation (every literal required_version joined, the first backend or cloud block with literal values only); provider blocks list every attribute and nested block they set as unknown, override-merged bodies and dynamic blocks included; ProviderConfig carries its merged body so the assembly is linear (40,000 provider blocks bounded); JSON strings holding a template sequence are not literals (the older literalString keeps that flaw: T-0128)
-- [ ] T-0109d · Map skips, diagnostics and truncation to coverage gaps, fail closed
+- [x] T-0109d · Map skips, diagnostics and truncation to coverage gaps, fail closed
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
   - depends: T-0109c
   - accept:
@@ -367,7 +367,8 @@ locations and without executing anything.
     - every parse Diagnostic and every module instance's evaluation Diagnostic (NewInstance, T-0107b) reaches the input document, fail closed: error severity → a parse_error gap and the scan exits 2 (override_without_base and override_unsupported among them, ADR 0019); module_unresolved → an unresolved_module gap naming the call and its reason; expression_too_complex, value_too_large, function_limit, expansion_limit, module_work_limit and ModuleTree.Truncated → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; every other diagnostic code → a coverage gap naming its code and file, never dropped. A test enumerates every diagnostic code the terraform package can emit and fails if one does not reach the document
     - a gap kind the contract lacks (for skipped files or other diagnostics) is added with an ADR 0004 amendment, in the schema, the model and the reference together
     - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a); so do resources whose values NormalizeResource could not express (ADR 0045)
-  - attempts: 0
+  - attempts: 1
+  - result: ADR 0046 adds gap kinds skipped_file, incomplete_references and incomplete_analysis (schema, model; reference in T-0110b); terraform.Documents builds every root's document with its gaps: every diagnostic through an explicit table of all 39 codes (errors are parse_error, a missing code is incomplete_analysis, and a test parsing the package source fails on an unmapped code), tree skips and truncation, unexpressed values and references, and discovery skips given to every root whose tree loads the directory (else the containing or first root; a scan-root document carries them when no root remains); unresolved_module gaps name the call. Locals with incomplete references surface through the resources and outputs that use them and through their own diagnostics (local_cycle, references_incomplete)
 - [ ] T-0109e · `iace inspect` with golden input documents
   - skills: iace-architecture, iace-testing, iace-security
   - depends: T-0109d
@@ -951,6 +952,13 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0109c
   - accept:
     - no current caller passes a maskedBody to bodyNames (provider bodies are mergedBody; backend bodies come out of a masked terraform block raw); add a test that reaches the branch through a real override, or remove it until a caller needs it (T-0109c review)
+  - attempts: 0
+
+- [ ] T-0131 · Collect every module directory a tree loads, across repeated directories
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0109d
+  - accept:
+    - treeDirs stops at the first node of a directory, so when a directory appears twice with different resolved calls (unresolved deep in the tree by the depth limit or cycle check, resolved nearer the root) the children seen only on the second visit are missed, and a discovery skip there falls back to the containing root instead of the root that loads it (still reported once). Walk every node, recording directories only; a test with such a tree (T-0109d review)
   - attempts: 0
 
 ## M3 · Reports — status: planned
