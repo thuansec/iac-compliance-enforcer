@@ -346,6 +346,7 @@ locations and without executing anything.
   - skills: iace-architecture
   - depends: T-0109
   - accept:
+    - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
@@ -369,9 +370,19 @@ locations and without executing anything.
     - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a); so do resources whose values NormalizeResource could not express (ADR 0045)
   - attempts: 1
   - result: ADR 0046 adds gap kinds skipped_file, incomplete_references and incomplete_analysis (schema, model; reference in T-0110b); terraform.Documents builds every root's document with its gaps: every diagnostic through an explicit table of all 39 codes (errors are parse_error, a missing code is incomplete_analysis, and a test parsing the package source fails on an unmapped code), tree skips and truncation, unexpressed values and references, and discovery skips given to every root whose tree loads the directory (else the containing or first root; a scan-root document carries them when no root remains); unresolved_module gaps name the call. Locals with incomplete references surface through the resources and outputs that use them and through their own diagnostics (local_cycle, references_incomplete)
+- [x] T-0109f · Redact secrets from input documents before they are printed
+  - skills: iace-security, iace-testing, iace-architecture
+  - depends: T-0109d
+  - split: 2026-10-17, from T-0109e (inspect could not ship without redaction, and both together cross three packages): this task builds the redaction, T-0109e prints the redacted document
+  - accept:
+    - a new internal/redact package returns a redacted deep copy of a model.InputDocument (the input is never modified): every string at a sensitive path, every string under a path step whose name matches the credential-like names of the iace-ai-remediation skill (password, secret, token, private, credential, connection_string, access_key, api_key, sas; case-insensitive), and every string that matches a secret pattern (AWS access key IDs, PEM private keys, JWTs, Azure storage keys and connection strings, high-entropy strings over 32 characters) is replaced with `<redacted>`, in resources, providers and the backend; every non-null value at a sensitive path is hidden (contract rule 4), while numbers and booleans under credential-like names are kept (T-0109f review)
+    - the patterns live in one place that later reporters and the AI context builder (T-1002) reuse; a table test per pattern with obviously fake values, and tests that non-secrets (ARNs, AMI IDs, bucket names, short strings) are kept
+    - redaction is linear in the document's size, and a test shows a fake secret placed at each kind of position never survives
+  - attempts: 1
+  - result: internal/redact holds the credential names and secret patterns (AWS key IDs, PEM private keys, JWTs, Azure connection strings, storage keys and SAS URLs, connection-string passwords, URLs with credentials, and random-looking runs over 32 characters judged against the Miller-Madow expected entropy of a random string of the same length: at least 95% of random 33-, 40- and 64-character keys caught, resource paths and ARNs kept); Document returns a deep copy with every non-null value at a sensitive path and every string under a credential name or with a secret's form redacted, in resource, provider and backend values and module call sources and versions; linear (200,000 values); follow-ups T-0132 and T-0133
 - [ ] T-0109e · `iace inspect` with golden input documents
   - skills: iace-architecture, iace-testing, iace-security
-  - depends: T-0109d
+  - depends: T-0109d, T-0109f
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included); error-severity diagnostics exit 2
     - inspect never prints a secret: values at sensitive paths, and literal values that match secret patterns or sit under credential-like names (for example backend `access_key`, `secret_key`, `conn_str`, `password`, which the document carries as plain literals, T-0109c review), are redacted in its output; a test with obviously fake secrets in a resource, a sensitive variable and a backend shows none reaches stdout
@@ -959,6 +970,19 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0109d
   - accept:
     - treeDirs stops at the first node of a directory, so when a directory appears twice with different resolved calls (unresolved deep in the tree by the depth limit or cycle check, resolved nearer the root) the children seen only on the second visit are missed, and a discovery skip there falls back to the containing root instead of the root that loads it (still reported once). Walk every node, recording directories only; a test with such a tree (T-0109d review)
+  - attempts: 0
+
+- [ ] T-0132 · Redact secret-shaped map keys and instance keys
+  - skills: iace-security, iace-testing
+  - depends: T-0109f
+  - accept:
+    - a map key in values, a path step in unknown and sensitive, a references or source.attributes key, and a resource address or index that comes from for_each over literal strings are not checked by redact.Document today, so a literal secret used as a key is printed as written (HCL rejects sensitive values as keys, so only pattern-shaped literals are at risk; T-0109f review). Redact keys that match IsSecret without merging distinct keys, and test each position with fake values
+  - attempts: 0
+- [ ] T-0133 · Redact name/value pairs and JSON-encoded secrets
+  - skills: iace-security, iace-testing
+  - depends: T-0109f
+  - accept:
+    - a `value` beside a credential-like `name` (app_settings-style `setting { name = "DB_PASSWORD" value = "..." }`, container `env` blocks) is redacted, and strings that parse as JSON objects or arrays (container_definitions, parameters_content = jsonencode({adminPassword = ...})) are walked and redacted inside, within the linear bound; today `[{"name":"DB_PASSWORD","value":"x"}]` is kept (T-0109f review); tests with fake values
   - attempts: 0
 
 ## M3 · Reports — status: planned

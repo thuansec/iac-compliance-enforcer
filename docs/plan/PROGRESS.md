@@ -3155,3 +3155,32 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   schema-validated; a local-cycle test. Second-round minor recorded as T-0131.
 - Next: T-0109e (`iace inspect` with golden input documents).
 
+### 2026-10-17 · T-0109f · done
+- What: split from T-0109e (inspect could not ship without redaction, and both together crossed
+  three packages; T-0109e now depends on this task). New package internal/redact holds the one
+  list of credential-like names and secret patterns: AWS access key IDs, PEM private keys, JWTs,
+  Azure connection strings, storage keys and SAS URLs, connection-string passwords, URLs with
+  credentials, and random-looking runs of more than 32 key characters, judged against the
+  Miller-Madow expected entropy of a random string of the same length. Document returns a deep
+  copy of an input document with every non-null value at a sensitive path, and every string under
+  a credential-like name or with a secret's form, replaced by `<redacted>`, in resource, provider
+  and backend values and module call sources and versions; null stays null.
+- Files: internal/redact/{redact.go,redact_test.go,positions_test.go,race_on_test.go,race_off_test.go},
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS on the third run (13 pass, test step 498 s); redaction coverage
+  about 97%; TestIsSecretCatchesRandomKeys catches at least 95% of seeded random 33-, 40- and
+  64-character keys; TestDocumentIsLinear redacts 200,000 values in about 0.3 s. The first full run
+  failed the secrets discipline check on fixture keys without the `iace:fake-secret` marker (now
+  marked). The second failed the non-race test step in internal/terraform, which this task does not
+  touch; gates.sh showed only the last 25 lines, so the step was rerun directly: all six tests
+  passed, TestRepeatedNumberFormattingIsBounded at 5.18 s, close to its bound (load average up to
+  about 6): the T-0125b flake again, unchanged.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors: a fixed 4.5-bit entropy cutoff
+  missed about a quarter of random 33-character keys and flagged Azure resource IDs (the
+  reviewer's log2-scaled fix missed 28% at 64 characters, so the threshold follows the expected
+  sample entropy instead); SAS URLs and SQL connection-string passwords were not detected; numbers
+  and booleans at sensitive paths were printed; typed nil collections became empty; several
+  positions were untested. Minors recorded as T-0132 and T-0133, and the package layout added to
+  T-0110b.
+- Next: T-0109e (`iace inspect` with golden input documents).
+
