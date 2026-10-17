@@ -3244,5 +3244,10 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   variable were refused at conversion (now asserted to convert); the documented limitation (T3 row
   in the repo threat model); a stale test comment; ModuleInputs reusing a previous call's cache;
   no test pinned the evalBounded charge (added).
-- Next: T-0125 and T-0125b (test timing), then M1's wrap-up once the owner applies T-0110b.
+- CI: the first push (PR #105) failed: internal/terraform passed go test's 10-minute timeout under
+  -race on CI (600.4 s); the four set-sort tests added about 80 s there. They now run in make
+  test's step without -race (NONRACE_TESTS), like the formatting timing tests of ADR 0044, in
+  about 7.5 s; the local test step went from 539 s to 485 s. The timeout itself is unchanged.
+- Next: T-0125 (the race-enabled package is again close to the timeout), T-0125b, then M1's
+  wrap-up once the owner applies T-0110b.
 

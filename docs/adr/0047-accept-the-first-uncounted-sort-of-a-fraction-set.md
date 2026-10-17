@@ -64,5 +64,9 @@ sort per set value that a module evaluation measures**, about 1 s for 2,000 512-
   sort, and once the work left falls below the set's sort estimate the walk refuses. The test
   guards what the decision relies on instead: the integer set converts, and at least 20 locals
   accept it (under option (a) the conversion itself would be refused).
+- The set-sort tests run in `make test`'s step without the race detector (NONRACE_TESTS), like
+  the formatting timing tests of ADR 0044: they time single-threaded math/big sorts, which the
+  race detector slows several times, and together they added about 80 s under -race, enough to
+  push internal/terraform past go test's 10-minute timeout on CI.
 - Follow-ups: the harness copy of the threat model names the residual (T-0110b); the project's
   threat model (docs/security/threat-model.md, T3) names it in this change.

@@ -744,6 +744,7 @@ locations and without executing anything.
   - skills: iace-testing, iace-quality-gates
   - depends: none
   - progress: T-0116c's PR moved the two heap-measuring tests to a non-race step of `make test`, made TestEvaluateRootsCreatesABudget parallel and shrank two serial tests: the test step went from 586–607 s to 417 s. internal/terraform is still the package closest to the limit; after T-0116d (two of its serial tests run at a quarter scale) the test step took 480–546 s locally
+  - progress: 2026-10-17 (T-0124e) CI ran internal/terraform under -race into the 600 s timeout (600.4 s); moving the four set-sort tests to NONRACE_TESTS brought the local test step from 539 s to 485 s, but the margin stays thin
   - accept:
     - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
     - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix

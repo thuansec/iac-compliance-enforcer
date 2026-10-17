@@ -41,7 +41,9 @@ lint: ## golangci-lint, regal (policies) and actionlint (workflows)
 # Tests that time math/big number formatting against the work calibration run there too: the
 # race detector slows that formatting about 25 times (157 ms → 3.8 s), past raceSlowdown, and
 # the three took about 190 s under -race (T-0124b).
-NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast|TestMarkFunctionChainsAreBounded)$$
+# The set-sort tests of ADR 0047 time single-threaded sorts of math/big fractions in the same way:
+# under -race the four took about 80 s, which pushed the package past the timeout on CI (T-0124e).
+NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast|TestMarkFunctionChainsAreBounded|TestFirstSortOfAFractionSetIsBounded|TestFractionSetPassedToModuleInstancesIsBounded|TestAcceptedModuleArgumentsSpendTheirSorts|TestIntegerSetWalksAreAccepted)$$
 
 test: ## race-enabled, shuffled tests with a coverage profile, then the heap and formatting-timing tests without -race
 	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./...
