@@ -10,27 +10,7 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - max_attempts_per_task: 3
 
 ## Decisions needed
-- D-T-0124e (2026-10-16) · How to bound the first sort of a set of non-integer numbers. cty sorts a set every time it is
-  iterated, and every accessor it offers (Values, ElementIterator, EachValue) sorts first, so valueSizeWalk's up-front
-  estimate cannot see whether the numbers in a set are integers. It prices each as an integer (numberSortWork, 7 units
-  per level), and a set of fractions is charged its real sort only after that first sort has run. Measured on main @ 398c595:
-  - Built through set(number) defaults, 2,000 decimals `N.1` (512-bit fractions) form a set; the locals that walk it
-    are refused, but the module's first walk sorts uncharged: 3 locals took 1.04 s, 32 locals 1.11 s (about once per
-    module evaluation). 4,000 of them, and 20 or more multiples of 1e-2466 (8,192 fractional bits), are already
-    refused at conversion. toset() inside one expression is refused quickly in every case.
-  - Today, 32 walks of a set(number) of 4,000 integers are accepted and take 653 ms.
-  Options:
-  - (a) Price every element of a set of numbers as a 512-bit fraction up front (about 7 + 309 units per element and
-    level). This closes the gap, but sets of more than about 2,000 numbers are refused before any walk, integers included
-    (4,000 integers are accepted today).
-  - (b) Keep the estimate and record the residual in an ADR: about one uncounted sort per module evaluation (about
-    1 s for 2,000 512-bit fractions), which the tree budget then counts. T-0124e is then done as an accepted limit
-    with a regression timing test.
-  - (c) Bound fractional bits where numbers are made (literals, tonumber, arithmetic, tfvars) and price set
-    elements at that bound. This is wider than one task and has the same integer-set trade-off as (a), with a smaller
-    per-element price.
-  Recommendation: (b). The residual is bounded per module evaluation, the tree budget counts the refused work, and (a) refuses
-  realistic integer sets. Asked by T-0124e.
+- none open (D-T-0124e decided 2026-10-17: option (b); see T-0124e)
 
 ## M0 · Foundations — status: done
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -351,15 +331,15 @@ locations and without executing anything.
   - result: RequiredProviders reads required_providers without evaluation (object and legacy forms, quoted keys, normalized addresses, defaults to hashicorp and terraform.io/builtin/terraform; anything unreadable is "" with invalid_provider_source); resources get Provider from the meta-argument or type prefix; ProviderConfigs lists provider blocks; ReadLockFile reads exact versions strictly (1 MiB cap, nesting guard, literal exact versions, warnings never failures) into RootResult.ProviderVersions; follow-up T-0122
 - [ ] T-0109 · Normalize into the input document with golden tests and `iace inspect`
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
-  - depends: T-0108b, T-0113, T-0115, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b, T-0124c, T-0124e
+  - depends: T-0108b, T-0113, T-0116, T-0116b, T-0116d, T-0116f, T-0116g, T-0116h, T-0116i, T-0116k, T-0116l, T-0124, T-0124b, T-0124c
+  - decided: the owner split T-0109 for the demo path (2026-10-17): this first slice ships `iace inspect`, the input document and fail-closed gap mapping for every diagnostic; the specific per-code gap kinds and the 1k-resource benchmark move to T-0109b. T-0115 and T-0124e were removed from the dependencies; until they land, their gaps are listed as known limitations
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included)
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
-    - every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2; override_without_base and override_unsupported among them, ADR 0019); unsupported_block → a coverage gap naming the file; expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; too_many_diagnostics → parse_error when it is an error, else a coverage gap naming the file (ADR 0016); parse_limit → a limit_exceeded gap naming the file (ADR 0017); uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - every parse Diagnostic and every module instance's evaluation Diagnostic (NewInstance, T-0107b) reaches the input document, fail closed: error severity → a parse_error gap and the scan exits 2 (override_without_base and override_unsupported among them, ADR 0019); module_unresolved → an unresolved_module gap naming the call and its reason; expression_too_complex, value_too_large, function_limit, expansion_limit, module_work_limit and ModuleTree.Truncated → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; every other diagnostic code → a coverage gap naming its code and file, never dropped. A test enumerates every diagnostic code the terraform package can emit and fails if one does not reach the document
     - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a)
-    - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS, with peak RSS as well as live heap: ADR 0016 and ADR 0017 count live heap, and GOGC can let RSS reach about twice that
-    - the golden end-to-end set includes a weakening override fixture (`main_override.tf` setting `acl = "public-read"` on a private bucket) whose finding appears in the report (T-0112b review)
+    - golden tests cover testdata/terraform/e2e/*; the golden set includes a weakening override fixture (`main_override.tf` setting `acl = "public-read"` on a private bucket) whose input document shows the overridden value (T-0112b review; the finding itself is asserted by T-0205)
   - attempts: 0
 - [x] T-0111a · Bound parse memory per file
   - skills: iace-terraform-parsing, iace-testing
@@ -683,12 +663,14 @@ locations and without executing anything.
     - (split to T-0124e) bound sets of costly fractions
   - attempts: 1
   - result: the tuple-to-list/set(any) and object-to-map(any) estimates charge numberTextCost for each number the unified type makes a string, at any depth (toUnifiedType, toText), instead of valuePart's guess for every nested tuple (unifiedPart). The repeated unification is skipped where nothing can be formatted and charged first otherwise. Nested rows `[[v], "a"]` beside `[["b"], "c"]` went from 11,718 units to 7.4M (100 rows of 1e-2466), and rows whose columns stay numbers from 7.4M to about 3,000. Follow-ups: T-0124f, T-0125b
-- [!] T-0124e · Bound sets of numbers with many fractional bits
+- [ ] T-0124e · Accept and record the first uncounted sort of a set of fractions
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
-  - blocked: needs-human — choose how to bound the first sort of a set of non-integer numbers (Decisions needed, D-T-0124e)
+  - decided: the owner chose option (b) of D-T-0124e (2026-10-17): keep valueSizeWalk's integer-priced estimate and record the residual, about one uncounted sort of a set of fractions per module evaluation (about 1 s for 2,000 512-bit fractions), which the tree budget then counts; options (a) and (c) were rejected because they refuse realistic integer sets (4,000 integers are accepted today in 653 ms)
+  - context: a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
   - accept:
-    - a set of numbers with many fractional bits is sorted once before any walk can count it: one walk of 8,000 512-bit fractions takes 2.5 s (T-0116d sweep), and of 100 numbers with 8,192 fractional bits 2.4 s (up to 32 s under load; T-0116f review, a regression case here). valueSizeWalk's up-front estimate sees only the type, so bound such numbers where they are made (literals such as 1e-2466, conversions, arithmetic) or estimate their precision first. HCL parses literals at 512 bits and parseint is not supported, so only fractional bits can grow
+    - an ADR records the residual of D-T-0124e option (b): cty sorts a set before any accessor returns its elements, so the first sort of a set of fractions is uncounted; it happens about once per module evaluation, is bounded by the conversion refusals (4,000 `N.1` decimals, or 20 or more multiples of 1e-2466, are refused at conversion), and the tree budget counts the refused work afterwards; the threat model's T3 row and the thesis-facing limitation list name it
+    - a regression timing test builds 2,000 `N.1` decimals through a set(number) default walked by 32 locals and asserts the module finishes within the per-module time budget, refusing the locals; a second test keeps 32 walks of a set(number) of 4,000 integers accepted
   - attempts: 1
 - [x] T-0124f · Test or remove toText's map-to-object branch
   - skills: iace-terraform-parsing, iace-testing
@@ -706,18 +688,6 @@ locations and without executing anything.
     - a local refused as too large, by its estimate or after evaluation, whose expression calls sensitive() is a marked unknown even with plain inputs: the estimate path treats a sensitive() call as a marked input, and evalLocal's refusal after evaluation adds that fact to inputsSensitive's (today the marks come only from inputs, T-0116j). TestTooLargeLocalsAreMarkedByTheirInputs gains such a case for each path
   - attempts: 1
   - result: sensitive(x) is x marked sensitive and nonsensitive(x) is x without the mark on x itself (nested marks stay), both with x's type. Departure from the acceptance text: nonsensitive of a value that is not sensitive returns it unchanged without an error. Terraform's current implementation returns no error, and its documentation says the function makes no changes to such values; only the docs' console example still shows the error of older releases, so do not restore it. Each call is charged 8 walks of its argument and its sorts twice (markBounded: cty's ContainsMarked and type check run before and after every call; 400 nested calls over 100,000 elements took 9.3 s uncharged, now refused in about 0.9 s), and a refused sensitive() is a marked unknown. A local, resource attribute or module input that calls sensitive() and is refused as too large is a marked unknown with plain inputs (callsSensitive). The input document is not built yet (T-0109), so acceptance 2 is shown by the mark on the attribute's path
-- [ ] T-0126b · Keep nested marks on a refused nonsensitive()
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0126
-  - accept:
-    - when markBounded refuses nonsensitive(), its unknown is marked sensitive if measuring the argument found a mark (measureArgs' marked, true when measuring stopped), as bounded's refusal does (T-0116g): `{ a = nonsensitive(var.d) }` with a mark nested in var.d, after the work is spent, keeps a.* sensitive. TestMarkFunctionChainsAreBounded gains a case with a nested mark (T-0126 review)
-  - attempts: 0
-- [ ] T-0127 · Mark a refused call's result only by marks its arguments can hold
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0116g
-  - accept:
-    - since T-0116g, a refused call's unknown result is marked sensitive whenever measuring its arguments stopped (fail closed). Once a module's work is spent, measuring stops at once, so every later refused call's result is marked even with plain inputs: `n = length(local.s)` after a refused `toset` came back `DynamicVal.Mark("sensitive")` from plain variables (T-0116i probe). Decide, and record in an ADR, how to keep fail-closed without that over-marking: for example, check marks without sorting where no set is involved, or take the marks of values the locals estimate already measured. Tests: plain inputs after the work is spent stay unmarked, and a sensitive input stays marked
-  - attempts: 0
 - [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
   - skills: iace-testing, iace-quality-gates
   - depends: none
@@ -732,36 +702,6 @@ locations and without executing anything.
   - accept:
     - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
     - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
-  - attempts: 0
-- [ ] T-0115 · Bound number magnitude outside function calls
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0105a
-  - accept:
-    - template interpolation and operators no longer format, convert or compare numbers whose decimal digits pass the value-size limit (T-0105a review: `"${1e2000000}-"` takes 1.6s, and multiplying locals squares the magnitude per local); such an expression is unknown with a limit warning
-    - number literals are checked where they are lexed, and tests cover templates, comparisons and a chain of multiplying locals, each finishing within the per-module time budget
-  - attempts: 0
-- [ ] T-0117 · Charge the decimal formatting of numbers with many fractional bits
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0105f
-  - accept:
-    - formatting, comparing or hashing a number that is not an integer costs time quadratic in its fractional bits (math/big's exact decimal expansion; found in the T-0105f work: one comparison or `tostring` of `1e-78000` takes 1.9s while its size is 78k units); tostring, jsonencode, format, formatlist, contains, index, `==`/`!=` and templates charge numberFormatCost as the set functions do, or such a value is unknown with a limit warning
-    - conversions in the type pass are charged before they run, as T-0105f does for the set functions: a bounded function whose parameter types convert numbers (`join`, `formatlist`, `concat` into strings, …) formats them when its type is decided, and cty skips the call when another argument is unknown (T-0105f review: `[for i in range(3) : join(var.u, [1e-40000])]` took 1.37s for 6 work units); tested with an unknown argument in a `for` loop
-    - a test per path with `1e-78000` finishes within the per-module time budget, and the reference's worst-case note drops its T-0117 exception
-  - attempts: 0
-- [ ] T-0118 · Weigh resource values by their memory, not only their units
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0106c
-  - accept:
-    - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
-    - unknown paths are weighed too: one module's locals held about 3M unknown paths (385 MiB live) from `l0 = [for i in range(1024) : aws_x.r.id]` and 2,999 locals of `local.l0` (T-0107g review); bound the paths, or their steps, per module
-    - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
-  - attempts: 0
-- [ ] T-0119 · Reject null for a non-nullable variable without a default
-  - skills: iace-terraform-parsing, iace-testing
-  - depends: T-0107b
-  - accept:
-    - a `null` module input, tfvars value or --var value for a variable with `nullable = false` and no default is an error as in Terraform ("required variable may not be set to null"), and the variable is unknown (T-0107b review: today it stays null without a diagnostic)
-    - tests cover a module input, a tfvars value and a --var flag
   - attempts: 0
 - [!] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
   - skills: iace-architecture
@@ -780,21 +720,6 @@ locations and without executing anything.
     - .claude/skills/iace-security/references/threat-model.md (and the SKILL.md module rules) state: the file-function boundary is the scan root, and a module can read any repository file, `.git/config` (where actions/checkout may persist an auth header) and a committed `.terraform` included; the values reach outputs only through the existing redaction. The module manifest is trusted only by pipeline input (ADR 0013). Uninstantiated local modules are scanned as roots (ADR 0014)
   - attempts: 0
   - blocked: needs-human — these references live in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
-- [ ] T-0121 · Flag references and diagnostics only when something is missing
-  - skills: iace-terraform-parsing, iace-testing
-  - depends: T-0108a
-  - accept:
-    - once the module's reference budget is full, expressions without traversals (literals) no longer mark their resource ReferencesIncomplete; a dynamic block over a literal for_each whose content uses the iterator is complete (T-0108a review: both over-flag today, which is safe but noisy)
-    - tests cover both, and the budget-full case still marks expressions that do refer to something
-    - the per-file parse diagnostic cap (parseDiag) counts per file read, not per file name: a tfvars file passed twice with --var-file, or a --var-file naming one of the module's .tf files, no longer gets a spurious too_many_diagnostics (T-0111a review)
-  - attempts: 0
-- [ ] T-0122 · Evaluate provider configuration values
-  - skills: iace-terraform-parsing, iace-security, iace-testing
-  - depends: T-0108b
-  - accept:
-    - provider blocks are evaluated like resource bodies (values, unknown and sensitive paths, nested blocks such as assume_role, the same size limits and tree budgets) and recorded on ProviderConfig for the input document's providers array; credentials in provider blocks stay sensitive and redacted
-    - a module call's providers map (`providers = { aws = aws.eu }`) is recorded, so a child resource's provider configuration can be traced to the caller's
-  - attempts: 0
 
 - [x] T-0123 · Scale the fixed wall-clock limits of the terraform tests by raceSlowdown
   - skills: iace-testing
@@ -804,8 +729,9 @@ locations and without executing anything.
   - attempts: 1
   - result: the six fixed 2 s and 5 s wall-clock limits in convert_internal_test.go and conditional_internal_test.go are scaled by raceSlowdown; the raceSlowdown note says why scaling is proportional, not a weakening, that the quick gate enforces the unscaled bounds while the full gate and CI run with -race, and which caps (20 s, 120 s) are already sized for -race
 
-## M2 · Policy engine and walking skeleton — status: planned
+## M2 · Policy engine and walking skeleton — status: active
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.
+Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues from M1 into the demo path; the M1 wrap-up leaves them active instead of awaiting-approval. pause_at_milestone_end still applies to later milestones.
 
 - [ ] T-0201 · Create the policy library skeleton
   - skills: iace-rego-policies, iace-opa-engine
@@ -855,6 +781,13 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
     - testscript covers a clean repo, a failing repo, a broken policy and a Terraform parse error
     - usage errors never echo flag values (pflag repeats them, e.g. `invalid argument "…" for "--var"`); a testscript with an obviously fake secret in `--var` shows stderr does not contain it (T-0003 review finding)
   - attempts: 0
+- [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
+  - skills: iace-rego-policies, iace-cloud-controls, iace-testing
+  - depends: T-0206
+  - accept:
+    - a rule flags aws_security_group ingress blocks and aws_security_group_rule / aws_vpc_security_group_ingress_rule resources that allow port 22 from 0.0.0.0/0 or ::/0, with mappings verified per iace-cloud-controls (Security Hub EC2.13 or its current equivalent, checked on the official control page before shipping)
+    - Rego tests and pass/fail Terraform fixtures, including `.tf.json`, an unknown cidr (reported as a gap, not a pass) and a port range that contains 22; the fixture harness passes
+  - attempts: 0
 - [ ] T-0207 · Implement `iace rules list` and `iace rules show <id>`
   - skills: iace-architecture, iace-opa-engine
   - depends: T-0206
@@ -862,8 +795,8 @@ Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; e
     - list shows ID, severity, CSP, title and source; show prints the full metadata and remediation; testscript covers both
   - attempts: 0
 
-## M3 · Reports — status: planned
-Goal: machine- and human-readable outputs that CI systems and GitHub understand.
+## M12 · Pull-request demo — status: active
+Goal: a pull request on GitHub runs iace, shows its findings in code scanning and fails the check, before M3–M5 are complete.
 
 - [ ] T-0301 · JSON report v1 with schema and golden tests
   - skills: iace-reporting, iace-architecture
@@ -878,6 +811,92 @@ Goal: machine- and human-readable outputs that CI systems and GitHub understand.
     - follows iace-reporting/references/sarif.md (security-severity, tags, help, relative URIs, automationDetails)
     - validates against the vendored SARIF 2.1.0 schema in a test; golden test
   - attempts: 0
+- [ ] T-0501 · Composite GitHub Action
+  - skills: iace-ci-cd, iace-security
+  - depends: T-0302
+  - decided: moved ahead of M4 for the pull-request demo (2026-10-17); the config, org-config and fail-on inputs wait for T-0506
+  - accept:
+    - action.yml takes the inputs in iace-ci-cd/references/consumer-workflow.md except `config`, `org-config` and `fail-on`, which T-0506 adds once `.iace.yaml` and `--fail-on` exist (until then they are absent, not silently ignored); build-from-source mode now, release-binary mode with checksum verification ready for M11
+    - SARIF is uploaded and the summary written before the job fails on the scan result
+  - attempts: 0
+- [ ] T-0502 · Example consumer workflow and docs
+  - skills: iace-ci-cd
+  - depends: T-0501
+  - accept:
+    - examples/github/iace.yml: pull_request plus push to main, least-privilege permissions, upload-sarif pinned by SHA with category; docs/ci/github.md
+  - attempts: 0
+
+## M13 · Loader hardening — status: planned
+Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then the thesis lists them as known limitations.
+
+- [ ] T-0115 · Bound number magnitude outside function calls
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0105a
+  - accept:
+    - template interpolation and operators no longer format, convert or compare numbers whose decimal digits pass the value-size limit (T-0105a review: `"${1e2000000}-"` takes 1.6s, and multiplying locals squares the magnitude per local); such an expression is unknown with a limit warning
+    - number literals are checked where they are lexed, and tests cover templates, comparisons and a chain of multiplying locals, each finishing within the per-module time budget
+  - attempts: 0
+- [ ] T-0117 · Charge the decimal formatting of numbers with many fractional bits
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0105f
+  - accept:
+    - formatting, comparing or hashing a number that is not an integer costs time quadratic in its fractional bits (math/big's exact decimal expansion; found in the T-0105f work: one comparison or `tostring` of `1e-78000` takes 1.9s while its size is 78k units); tostring, jsonencode, format, formatlist, contains, index, `==`/`!=` and templates charge numberFormatCost as the set functions do, or such a value is unknown with a limit warning
+    - conversions in the type pass are charged before they run, as T-0105f does for the set functions: a bounded function whose parameter types convert numbers (`join`, `formatlist`, `concat` into strings, …) formats them when its type is decided, and cty skips the call when another argument is unknown (T-0105f review: `[for i in range(3) : join(var.u, [1e-40000])]` took 1.37s for 6 work units); tested with an unknown argument in a `for` loop
+    - a test per path with `1e-78000` finishes within the per-module time budget, and the reference's worst-case note drops its T-0117 exception
+  - attempts: 0
+- [ ] T-0118 · Weigh resource values by their memory, not only their units
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0106c
+  - accept:
+    - maxResourcesSize counts value units, but a unit can hold much more memory than a byte: `a = [{}, {}, ...]` (200 empty objects per instance, ten `count = 10000` resources) held 206 MB live at 6,919 instances (T-0106b review), on top of up to 128 MB of instance structure; charge a per-node byte weight (or an equivalent bound) so a module's decoded resources stay under a recorded ceiling
+    - unknown paths are weighed too: one module's locals held about 3M unknown paths (385 MiB live) from `l0 = [for i in range(1024) : aws_x.r.id]` and 2,999 locals of `local.l0` (T-0107g review); bound the paths, or their steps, per module
+    - TestExpansionHeap gains value-heavy shapes (tuples of empty objects, of numbers, of empty strings) and asserts the combined ceiling; the per-module worst case is recorded in PROGRESS for the T-1103 memory budget
+  - attempts: 0
+- [ ] T-0119 · Reject null for a non-nullable variable without a default
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0107b
+  - accept:
+    - a `null` module input, tfvars value or --var value for a variable with `nullable = false` and no default is an error as in Terraform ("required variable may not be set to null"), and the variable is unknown (T-0107b review: today it stays null without a diagnostic)
+    - tests cover a module input, a tfvars value and a --var flag
+  - attempts: 0
+- [ ] T-0121 · Flag references and diagnostics only when something is missing
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0108a
+  - accept:
+    - once the module's reference budget is full, expressions without traversals (literals) no longer mark their resource ReferencesIncomplete; a dynamic block over a literal for_each whose content uses the iterator is complete (T-0108a review: both over-flag today, which is safe but noisy)
+    - tests cover both, and the budget-full case still marks expressions that do refer to something
+    - the per-file parse diagnostic cap (parseDiag) counts per file read, not per file name: a tfvars file passed twice with --var-file, or a --var-file naming one of the module's .tf files, no longer gets a spurious too_many_diagnostics (T-0111a review)
+  - attempts: 0
+- [ ] T-0122 · Evaluate provider configuration values
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0108b
+  - accept:
+    - provider blocks are evaluated like resource bodies (values, unknown and sensitive paths, nested blocks such as assume_role, the same size limits and tree budgets) and recorded on ProviderConfig for the input document's providers array; credentials in provider blocks stay sensitive and redacted
+    - a module call's providers map (`providers = { aws = aws.eu }`) is recorded, so a child resource's provider configuration can be traced to the caller's
+  - attempts: 0
+- [ ] T-0126b · Keep nested marks on a refused nonsensitive()
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0126
+  - accept:
+    - when markBounded refuses nonsensitive(), its unknown is marked sensitive if measuring the argument found a mark (measureArgs' marked, true when measuring stopped), as bounded's refusal does (T-0116g): `{ a = nonsensitive(var.d) }` with a mark nested in var.d, after the work is spent, keeps a.* sensitive. TestMarkFunctionChainsAreBounded gains a case with a nested mark (T-0126 review)
+  - attempts: 0
+- [ ] T-0127 · Mark a refused call's result only by marks its arguments can hold
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: T-0116g
+  - accept:
+    - since T-0116g, a refused call's unknown result is marked sensitive whenever measuring its arguments stopped (fail closed). Once a module's work is spent, measuring stops at once, so every later refused call's result is marked even with plain inputs: `n = length(local.s)` after a refused `toset` came back `DynamicVal.Mark("sensitive")` from plain variables (T-0116i probe). Decide, and record in an ADR, how to keep fail-closed without that over-marking: for example, check marks without sorting where no set is involved, or take the marks of values the locals estimate already measured. Tests: plain inputs after the work is spent stay unmarked, and a sensitive input stays marked
+  - attempts: 0
+- [ ] T-0109b · Give every diagnostic its specific gap kind and record the 1k-resource benchmark
+  - skills: iace-terraform-parsing, iace-testing, iace-architecture
+  - depends: T-0109, T-0115, T-0124e
+  - accept:
+    - the remaining mapping of T-0109's original acceptance, now refining T-0109's generic gaps: every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2; override_without_base and override_unsupported among them, ADR 0019); unsupported_block → a coverage gap naming the file; expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; too_many_diagnostics → parse_error when it is an error, else a coverage gap naming the file (ADR 0016); parse_limit → a limit_exceeded gap naming the file (ADR 0017); uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
+    - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS, with peak RSS as well as live heap: ADR 0016 and ADR 0017 count live heap, and GOGC can let RSS reach about twice that
+  - attempts: 0
+
+## M3 · Reports — status: planned
+Goal: machine- and human-readable outputs that CI systems and GitHub understand.
+
 - [ ] T-0303 · JUnit XML output
   - skills: iace-reporting
   - depends: T-0301
@@ -955,28 +974,21 @@ Goal: each scanned repository controls policy selection, thresholds and accounta
 ## M5 · PR/CI enforcement — status: planned
 Goal: scans run on pull requests, results reach GitHub code scanning, and merging requires a passing check.
 
-- [ ] T-0501 · Composite GitHub Action
-  - skills: iace-ci-cd, iace-security
-  - depends: T-0407
+- [ ] T-0506 · Wire the action's config, org-config and fail-on inputs
+  - skills: iace-ci-cd, iace-repo-policy
+  - depends: T-0501, T-0404, T-0407
   - accept:
-    - action.yml takes the inputs in iace-ci-cd/references/consumer-workflow.md; build-from-source mode now, release-binary mode with checksum verification ready for M11
-    - SARIF is uploaded and the summary written before the job fails on the scan result
-  - attempts: 0
-- [ ] T-0502 · Example consumer workflow and docs
-  - skills: iace-ci-cd
-  - depends: T-0501
-  - accept:
-    - examples/github/iace.yml: pull_request plus push to main, least-privilege permissions, upload-sarif pinned by SHA with category; docs/ci/github.md
+    - action.yml gains `config`, `org-config` and `fail-on` as in iace-ci-cd/references/consumer-workflow.md, passed to `iace scan` as flags; a self-test or testscript shows each reaches the scan
   - attempts: 0
 - [ ] T-0503 · Self-test workflow running the action from this repo
   - skills: iace-ci-cd, iace-testing
-  - depends: T-0502
+  - depends: T-0502, T-0506
   - accept:
     - a workflow with `uses: ./` against testdata/e2e asserts the expected exit code and SARIF content; actionlint passes
   - attempts: 0
 - [ ] T-0504 · Required-check setup guide
   - skills: iace-ci-cd
-  - depends: T-0502
+  - depends: T-0502, T-0506
   - accept:
     - docs/ci/required-checks.md gives ruleset JSON and the `gh api` commands (documented, not executed)
     - covers private repos without code scanning (annotations plus a required status check)

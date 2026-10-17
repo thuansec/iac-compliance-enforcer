@@ -3022,3 +3022,24 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   one minor recorded as T-0126b (a refused nonsensitive() drops nested marks; its result is
   unknown, so nothing leaks).
 - Next: the next ready task (T-0126b, or the first ready one in file order).
+
+### 2026-10-17 · T-0109 · groomed
+- What: the owner's decisions for the demo path, taken in an attended session. D-T-0124e decided
+  as option (b): T-0124e is unblocked and rewritten as an ADR plus regression timing tests for the
+  accepted residual. T-0109 split: T-0109 keeps `iace inspect`, the input document and fail-closed
+  gap mapping (every diagnostic code reaches the document, unmapped ones as a generic coverage
+  gap); T-0109b takes the specific per-code gap kinds and the 1k-resource benchmark. T-0115 and
+  T-0124e no longer gate T-0109. New M13 · Loader hardening (planned) holds the deferred M1
+  follow-ups T-0115, T-0117, T-0118, T-0119, T-0121, T-0122, T-0126b, T-0127 and T-0109b; T-0125
+  and T-0125b stay in M1 because CI time and load-sensitive timing tests can stall every merge.
+  M2 is active and pre-approved, so the M1 wrap-up leaves it active. New T-0205b (SSH open to the
+  internet) in M2. New M12 · Pull-request demo (active) moves T-0301, T-0302, T-0501 and T-0502
+  ahead of M3–M5; T-0501 now depends on T-0302, and its config, org-config and fail-on inputs
+  move to the new T-0506 in M5 (T-0503 and T-0504 depend on it). T-0110 and T-0120 stay blocked
+  until the owner approves the harness edits.
+- Files: docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `loop_status.py --brief --no-network` parses the backlog: M1 74/80, M2 active 0/8,
+  M12 active 0/4, M13 planned 0/9; next ready T-0109.
+- Review: skipped (plan-only).
+- Decisions: D-T-0124e (b); T-0109 split; M13 and M12 created; M2 pre-approved (2026-10-17).
+- Next: T-0110 and T-0120 in an attended session, then T-0109.
