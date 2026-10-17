@@ -1170,10 +1170,10 @@ as in M6, valid for azurerm 4.x and 5.x, with renamed attributes and changed def
 
 ## M10 · AI fix suggestions — status: planned
 Goal: opt-in AI suggestions for violations, verified by re-scanning before anyone sees them.
-Decided: in thesis scope, no longer a stretch goal (owner, 2026-10-17): the thesis title promises
-AI-assisted remediation, so M10 runs after the AWS and Azure packs, whose findings its eval harness
-(experiment E8) scores, and before M8 and M9. Retrieval (RAG) to ground fixes stays optional and is
-kept only if E8 shows a benefit.
+Decided: a core goal, no longer a stretch goal (owner, 2026-10-17): iace promises AI-assisted
+remediation, so M10 runs after the AWS and Azure packs, whose findings its eval harness (T-1009)
+scores, and before M8 and M9. Retrieval (RAG) to ground fixes stays optional and is kept only if
+the eval harness shows a benefit.
 
 - [ ] T-1001 · Suggester interface, config and disclosure
   - skills: iace-ai-remediation, iace-architecture

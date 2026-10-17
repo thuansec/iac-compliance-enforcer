@@ -3061,16 +3061,15 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Next: T-0109.
 
 ### 2026-10-17 · T-1001 · groomed
-- What: owner decision in an attended session: the thesis is now titled "Policy-as-Code
-  Compliance Enforcement for Multi-Cloud Terraform with AI-Assisted Remediation", so M10 · AI fix
-  suggestions moves from stretch into the core thesis scope (RQ6, O7 and experiment E8 are no
-  longer optional). M10 moves ahead of M8 and M9, right after the AWS and Azure packs whose
-  findings its eval harness scores. T-1001 now depends on T-0401 (the `.iace.yaml` loader its
-  `ai:` block needs) instead of T-0904 (plan JSON parity, never needed). Retrieval (RAG) stays
-  optional, kept only if E8 shows a benefit. M10's tasks and acceptance are unchanged.
+- What: owner decision in an attended session: AI-assisted remediation becomes a core goal of
+  iace, so M10 · AI fix suggestions moves from stretch into the core plan. M10 moves ahead of M8
+  and M9, right after the AWS and Azure packs whose findings its eval harness (T-1009) scores.
+  T-1001 now depends on T-0401 (the `.iace.yaml` loader its `ai:` block needs) instead of T-0904
+  (plan JSON parity, never needed). Retrieval (RAG) stays optional, kept only if the eval harness
+  shows a benefit. M10's tasks and acceptance are unchanged.
 - Files: docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
 - Evidence: `loop_status.py --brief --no-network` parses the backlog with milestone order
   M7, M10, M8, M9, M11; next ready T-0109; every dependency points to an earlier milestone.
 - Review: skipped (plan-only).
-- Decisions: M10 in thesis scope; milestone order M7 → M10 → M8 → M9 (2026-10-17).
+- Decisions: M10 is a core goal; milestone order M7 → M10 → M8 → M9 (2026-10-17).
 - Next: T-0109.
