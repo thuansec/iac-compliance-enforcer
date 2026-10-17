@@ -3100,3 +3100,28 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   test asserts its resource and outcome instead of passing vacuously.
 - Next: T-0109c (assemble one input document per evaluated root); T-0110b needs the owner.
 
+### 2026-10-17 · T-0109c · done
+- What: terraform.NormalizeRoot assembles one input document v1 per evaluated root, orphans
+  included: terraform settings read without evaluation (every literal required_version joined,
+  the first backend or cloud block with literal values only), provider versions, provider blocks
+  with every attribute and nested block they set listed unknown (provider arguments are not
+  evaluated yet, T-0122), resources of every evaluated instance, module calls, variables and
+  outputs, all sorted. Unexpressed hands T-0109d the incomplete resources and incomplete
+  references. ProviderConfig carries its override-merged body. A JSON string that holds a template
+  sequence is not a literal (hcl returns the template text as written without a context).
+  Backlog: the incomplete-references gap moved to T-0109d; T-0302 converts character columns for
+  SARIF; T-0109e must redact secrets in inspect output; follow-ups T-0128, T-0129, T-0130.
+- Files: internal/terraform/document.go, document_test.go, document_internal_test.go,
+  internal/terraform/providers.go, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 516 s); every document validates against
+  schemas/input.v1.json in the tests; TestNormalizeRootIsLinearInProviders (40,000 provider
+  blocks, whole test about 1.7 s). A first full run failed the test-skips discipline check on a
+  testing.Short skip of that test; the skip was removed.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Blocker: provider nested blocks vanished
+  when an override file merged the body (mergedBody fell through to JustAttributes); majors: a
+  dynamic block was listed as "dynamic", and finding each provider's body scanned every block
+  (27.7 s for 40,000 provider blocks); minors fixed: required_version joined, dead dedupe removed,
+  count = 2 instances tested; note on backend literal secrets added to T-0109e. Second-round
+  minors recorded as T-0129 and T-0130.
+- Next: T-0109d (map skips, diagnostics and truncation to coverage gaps).
+

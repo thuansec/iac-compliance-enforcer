@@ -59,6 +59,8 @@ type ProviderConfig struct {
 	Source          string
 	File            string
 	Range, DefRange hcl.Range
+	// Body is the block's body, with any override files merged in (ADR 0019).
+	Body hcl.Body
 }
 
 var requiredProvidersSchema = &hcl.BodySchema{
@@ -199,7 +201,7 @@ func (m *ParsedModule) ProviderConfigs() []ProviderConfig {
 		if b.Type != "provider" || len(b.Labels) != 1 {
 			continue
 		}
-		p := ProviderConfig{LocalName: b.Labels[0], Source: m.providerSource(b.Labels[0]), File: b.File, Range: b.Range, DefRange: b.DefRange}
+		p := ProviderConfig{LocalName: b.Labels[0], Source: m.providerSource(b.Labels[0]), File: b.File, Range: b.Range, DefRange: b.DefRange, Body: b.Body}
 		content, _, _ := b.Body.PartialContent(providerBlockSchema)
 		if a, ok := content.Attributes["alias"]; ok {
 			p.Alias, _ = literalString(a.Expr, inJSON(a.Expr))

@@ -349,13 +349,16 @@ locations and without executing anything.
     - .claude/skills/iace-architecture/references/input-document.md states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
-- [ ] T-0109c · Assemble one input document per evaluated root
+- [x] T-0109c · Assemble one input document per evaluated root
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
   - depends: T-0109
   - accept:
     - one model.InputDocument per EvaluateRoots result, orphans included: source, terraform settings (required_version, backend, required_providers), provider_versions, providers, resources of every instance sorted by address, module_calls (resolved and unresolved with reason), variables and outputs; every document validates against schemas/input.v1.json
-    - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a)
-  - attempts: 0
+    - nothing is evaluated that Terraform would not: backend values are read from literals only, anything else is unknown; provider blocks are not evaluated yet (T-0122), so every attribute and nested block a provider block sets is listed unknown, never shown as absent
+    - the assembly reports what the document cannot express for T-0109d to turn into gaps: resources NormalizeResource returns incomplete, and resources and outputs with ReferencesIncomplete
+  - split: 2026-10-17, the ReferencesIncomplete gap moved to T-0109d, which owns the gap kinds and their ADR
+  - attempts: 1
+  - result: terraform.NormalizeRoot builds one schema-valid input document per root (orphans included) with Unexpressed for T-0109d; terraform settings without evaluation (every literal required_version joined, the first backend or cloud block with literal values only); provider blocks list every attribute and nested block they set as unknown, override-merged bodies and dynamic blocks included; ProviderConfig carries its merged body so the assembly is linear (40,000 provider blocks bounded); JSON strings holding a template sequence are not literals (the older literalString keeps that flaw: T-0128)
 - [ ] T-0109d · Map skips, diagnostics and truncation to coverage gaps, fail closed
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
   - depends: T-0109c
@@ -363,12 +366,14 @@ locations and without executing anything.
     - every discovery Skip (symlink_escape, symlinked_directory, not_regular, too_large, file_limit) appears as a coverage gap
     - every parse Diagnostic and every module instance's evaluation Diagnostic (NewInstance, T-0107b) reaches the input document, fail closed: error severity → a parse_error gap and the scan exits 2 (override_without_base and override_unsupported among them, ADR 0019); module_unresolved → an unresolved_module gap naming the call and its reason; expression_too_complex, value_too_large, function_limit, expansion_limit, module_work_limit and ModuleTree.Truncated → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; every other diagnostic code → a coverage gap naming its code and file, never dropped. A test enumerates every diagnostic code the terraform package can emit and fails if one does not reach the document
     - a gap kind the contract lacks (for skipped files or other diagnostics) is added with an ADR 0004 amendment, in the schema, the model and the reference together
+    - resources, outputs and locals with ReferencesIncomplete set surface in the input document (for example as a coverage gap naming the address), so a policy relying on references never treats incomplete ones as complete (T-0108a); so do resources whose values NormalizeResource could not express (ADR 0045)
   - attempts: 0
 - [ ] T-0109e · `iace inspect` with golden input documents
   - skills: iace-architecture, iace-testing, iace-security
   - depends: T-0109d
   - accept:
     - `iace inspect <path> --json` prints the input document; output is byte-identical across runs (one document per EvaluateRoots result, orphans included); error-severity diagnostics exit 2
+    - inspect never prints a secret: values at sensitive paths, and literal values that match secret patterns or sit under credential-like names (for example backend `access_key`, `secret_key`, `conn_str`, `password`, which the document carries as plain literals, T-0109c review), are redacted in its output; a test with obviously fake secrets in a resource, a sensitive variable and a backend shows none reaches stdout
     - a `--trust-module-manifest` flag (and its environment variable; never `.iace.yaml`) sets TreeOptions.TrustModuleManifest, and its help says a trusted step must remove any committed `.terraform` first (ADR 0013)
     - golden tests cover testdata/terraform/e2e/*; the golden set includes a weakening override fixture (`main_override.tf` setting `acl = "public-read"` on a private bucket) whose input document shows the overridden value (T-0112b review; the finding itself is asserted by T-0205)
   - attempts: 0
@@ -843,6 +848,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - accept:
     - follows iace-reporting/references/sarif.md (security-severity, tags, help, relative URIs, automationDetails)
     - validates against the vendored SARIF 2.1.0 schema in a test; golden test
+    - columns are converted from the input document's character columns (ADR 0045) to the SARIF column kind the output declares (utf16CodeUnits by default), or the run declares a column kind that matches; a test covers a line with non-ASCII text before the finding
   - attempts: 0
 - [ ] T-0501 · Composite GitHub Action
   - skills: iace-ci-cd, iace-security
@@ -925,6 +931,26 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - accept:
     - the remaining mapping of T-0109's original acceptance, now refining T-0109's generic gaps: every parse Diagnostic, and every module instance's evaluation Diagnostic (NewInstance, T-0107b), reaches the input document: error severity → parse_error gap (the scan exits 2; override_without_base and override_unsupported among them, ADR 0019); unsupported_block → a coverage gap naming the file; expression_too_complex, file_limit, value_too_large and function_limit → limit_exceeded gaps; unsupported_function → an unsupported_function gap naming the function; file_outside_module, file_unreadable, template_error → coverage gaps naming the file; unknown_expansion and invalid_expansion → unknown_expansion gaps; expansion_limit → limit_exceeded (the kind is chosen there, with an ADR 0004 amendment if a new kind is needed); module_unresolved → an unresolved_module gap naming the call and its reason (remote_source and stale_manifest included); module_manifest_invalid → a coverage gap naming the manifest file; invalid_provider_source and lock_file_invalid → coverage gaps naming the file; too_many_diagnostics → parse_error when it is an error, else a coverage gap naming the file (ADR 0016); parse_limit → a limit_exceeded gap naming the file (ADR 0017); uninstantiated_module → a coverage gap naming the directory, which says the module was scanned on its own with unknown variables (ADR 0014); every ModuleTree.Skipped entry is a gap like a discovery Skip, and ModuleTree.Truncated is a limit_exceeded gap (ADR 0008); module_work_limit (a skipped or truncated module instance, ADR 0009 and ADR 0010) → a limit_exceeded gap naming the call
     - golden tests cover testdata/terraform/e2e/*; the 1k-resource benchmark result is recorded in PROGRESS, with peak RSS as well as live heap: ADR 0016 and ADR 0017 count live heap, and GOGC can let RSS reach about twice that
+  - attempts: 0
+
+- [ ] T-0128 · Treat JSON strings with template sequences as non-literal in literalString
+  - skills: iace-terraform-parsing, iace-security, iace-testing
+  - depends: none
+  - accept:
+    - literalString (module source and version, required_providers source and version, provider alias, override aliases) returns not-literal for a `.tf.json` string that holds `${` or `%{`: without an evaluation context hcl's JSON syntax returns a template's text as written, so `"source": "./${var.dir}"` is read today as the literal path `./${var.dir}` (T-0109c review of literalPrimitive, which already refuses them); tests per caller in HCL and JSON
+  - attempts: 0
+
+- [ ] T-0129 · Read the array form of a JSON dynamic property in provider and backend bodies
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0109c
+  - accept:
+    - bodyNames lists the block types of a `.tf.json` `"dynamic": [{"assume_role": {...}}]` (a tuple of objects), as it does for the object form; today it falls back to "dynamic", so the block reads as absent (T-0109c review); a JSON test for the array form
+  - attempts: 0
+- [ ] T-0130 · Test or remove bodyNames' masked-body branch
+  - skills: iace-terraform-parsing, iace-testing
+  - depends: T-0109c
+  - accept:
+    - no current caller passes a maskedBody to bodyNames (provider bodies are mergedBody; backend bodies come out of a masked terraform block raw); add a test that reaches the branch through a real override, or remove it until a caller needs it (T-0109c review)
   - attempts: 0
 
 ## M3 · Reports — status: planned
