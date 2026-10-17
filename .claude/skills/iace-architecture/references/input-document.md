@@ -8,6 +8,16 @@ shape. The JSON Schema lives in `schemas/input.v1.json` and must match this page
 1. **Shape mirrors Terraform plan JSON `values`.** Attributes are JSON values, and nested blocks
    are **arrays of objects** even when at most one block is allowed (`metadata_options` →
    `[{...}]`). Policies then index blocks the same way in both modes.
+   **Amended for `.tf.json` input (ADR 0006, ADR 0007):** a JSON resource body keeps the shape it
+   is written in, so a nested block written as one object stays an object in `values`, and its
+   unknown and sensitive paths have that shape (`["metadata_options", "http_tokens"]`). Only
+   `lifecycle`, `provisioner`, `connection` and `dynamic` are always read as blocks. A JSON
+   property that holds a dynamic block (an object with a `"dynamic"` key at any depth), or that
+   shares its type with a dynamic block in the same body, is decoded as an **array** of blocks,
+   with attribute ranges under its entry paths (`setting.0.rule.0.port`). Rules therefore read
+   nested blocks only through the `iace.lib.tf` path helpers (`value_or`, `is_unknown`,
+   `is_sensitive`, `blocks`), which resolve an integer step 0 against an object as the object;
+   iterating `values.ingress[_]` directly is a bug.
 2. **Unknown is explicit.** A value that cannot be known statically (an unresolved reference, an
    unsupported function, known-after-apply, an unresolved module) is stored as `null`, and its
    path is listed in `unknown`. Policies must check `tf.is_unknown` before judging a value, so an
@@ -116,6 +126,19 @@ addresses, **module-qualified** and without the attribute suffix:
   "coverage_gaps": []
 }
 ```
+
+## Clarifications (ADR 0004)
+- `terraform.backend` is `null` when no backend is declared; `required_version` is `""` when unset.
+- `source_range` (providers, module calls, outputs) and `source.module_call` are `{file, range}`.
+- `meta.lifecycle` holds only settings written in the configuration; `ignore_changes` lists
+  dot-joined paths, and Terraform's `all` keyword is `"*"`.
+- `source.plan_file` is required in plan mode and forbidden in HCL mode.
+- Inside `values`, every nil (including a typed nil slice or map) encodes as `null`, because null
+  means unknown; only a nil `values` map itself encodes as `{}`. Everywhere else, nil slices and
+  maps encode as `[]` and `{}`.
+- A coverage gap's `file` is `""` and `line` is `0` when unknown.
+- `model.EncodeInput` is the only serializer (deterministic, sorted keys); `model.DecodeInput`
+  rejects unknown members, duplicate names and any `schema_version` other than `"1"`.
 
 ## Plan-mode differences
 - `values` = `resource_changes[].change.after`, with `unknown` and `sensitive` taken from

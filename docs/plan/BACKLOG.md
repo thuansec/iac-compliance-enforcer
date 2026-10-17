@@ -703,22 +703,24 @@ locations and without executing anything.
     - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
     - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
   - attempts: 0
-- [!] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
+- [x] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
   - skills: iace-architecture
   - depends: T-0101
   - accept:
     - .claude/skills/iace-architecture/references/input-document.md states the clarifications in ADR 0004 (backend null, `{file, range}` source ranges, `ignore_changes` "*", plan_file only in plan mode, nil inside values is null, gap file ""/line 0)
     - it states ADR 0006's amendment of rule 1: in .tf.json input a nested block written as one object stays an object (values and unknown/sensitive paths), and rules read nested blocks through the iace.lib.tf path helpers; and ADR 0007's amendment: a JSON property holding a dynamic block (or sharing a dynamic block's type) is decoded as an array of blocks, with ranges under its entry paths
-  - attempts: 0
+  - attempts: 1
+  - result: input-document.md states ADR 0004's clarifications in a new section and ADR 0006/0007's amendment of rule 1 (JSON bodies keep their written shape, dynamic-block properties decode as arrays, rules read nested blocks through the tf path helpers); the reference example is unchanged; applied in an attended session with the owner's approval (2026-10-17)
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
-- [!] T-0120 · Align the harness standards with ADR 0013, ADR 0014 and ADR 0015
+- [x] T-0120 · Align the harness standards with ADR 0013, ADR 0014 and ADR 0015
   - skills: iace-terraform-parsing, iace-security
   - depends: T-0107f
   - accept:
     - .claude/skills/iace-terraform-parsing/SKILL.md and the roadmap say 1 MiB per file, not 5 MiB (ADR 0016)
     - .claude/skills/iace-terraform-parsing/references/hcl-evaluation.md says the filesystem functions resolve relative paths against the root module directory, with path.module as the instance's path from the root and path.root ".", and read anywhere inside the scan root (ADR 0015), no longer "only inside the module directory"
     - .claude/skills/iace-security/references/threat-model.md (and the SKILL.md module rules) state: the file-function boundary is the scan root, and a module can read any repository file, `.git/config` (where actions/checkout may persist an auth header) and a committed `.terraform` included; the values reach outputs only through the existing redaction. The module manifest is trusted only by pipeline input (ADR 0013). Uninstantiated local modules are scanned as roots (ADR 0014)
-  - attempts: 0
+  - attempts: 1
+  - result: iace-terraform-parsing SKILL.md and the roadmap say 1 MiB per file (ADR 0016); hcl-evaluation.md resolves file paths against the root module and confines reads to the scan root (ADR 0015); the security skill and threat-model seed state the scan-root file boundary (.git/config and a committed .terraform readable, values leave only through redaction), manifest trust only by pipeline input (ADR 0013) and orphan scanning (ADR 0014); applied in an attended session with the owner's approval (2026-10-17)
   - blocked: needs-human — these references live in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 
 - [x] T-0123 · Scale the fixed wall-clock limits of the terraform tests by raceSlowdown

@@ -90,7 +90,7 @@ locations and without executing anything.
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0101
   - accept:
-    - skips .terraform, .git and hidden dirs; never follows symlinks outside the scan root; enforces the file-size (5 MiB) and file-count limits with clear errors
+    - skips .terraform, .git and hidden dirs; never follows symlinks outside the scan root; enforces the file-size (1 MiB, ADR 0016) and file-count limits with clear errors
     - separates root modules from local child modules; tests cover symlink escape, oversized files and nested roots
   - attempts: 0
 - [ ] T-0103 · Parse HCL and JSON syntax files into raw blocks with ranges

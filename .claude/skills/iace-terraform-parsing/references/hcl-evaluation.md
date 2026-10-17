@@ -36,7 +36,7 @@ under its Terraform name, and document the table in code with a test per functio
 | type | `tostring`, `tonumber`, `tobool`, `try`, `can`, `type` (unknown) |
 | encoding | `jsonencode`, `jsondecode`, `yamlencode` (optional), `base64encode`, `base64decode` |
 | network | `cidrsubnet`, `cidrhost`, `cidrnetmask` (pure functions; useful for SG/NSG rules) |
-| filesystem | `file`, `fileexists`, `templatefile`: **only** inside the module directory via `os.Root`, size-capped (1 MiB), with no symlink escape |
+| filesystem | `file`, `fileexists`, `templatefile`: relative paths resolve against the **root module's directory**, as in Terraform; `path.module` is the instance's slash-separated path from the root, `path.root` is `"."` and `path.cwd` is unknown. Reads may reach anywhere **inside the scan root** via `os.Root` (ADR 0015), size-capped (1 MiB); absolute, home-relative and drive-letter paths and joins that leave the scan root are refused (`file_outside_module`), and symlinks that leave it fail (`file_unreadable`) |
 
 Anything else, including `timestamp()`, `uuid()`, `bcrypt()`, provider-defined functions and
 `plantimestamp()`, evaluates to **unknown**. Add an `unsupported_function` gap once per function

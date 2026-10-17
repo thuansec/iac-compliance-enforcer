@@ -3043,3 +3043,19 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: skipped (plan-only).
 - Decisions: D-T-0124e (b); T-0109 split; M13 and M12 created; M2 pre-approved (2026-10-17).
 - Next: T-0110 and T-0120 in an attended session, then T-0109.
+
+### 2026-10-17 · T-0110, T-0120 · done
+- What: synced the harness references with the ADRs, in an attended session with the owner's
+  approval (the loop may not edit `.claude/`). T-0110: input-document.md gains ADR 0006/0007's
+  amendment of rule 1 and a section with ADR 0004's clarifications; the reference example is
+  unchanged, so the testdata copy still matches. T-0120: 1 MiB per file (ADR 0016) in the
+  parsing skill and roadmap; file paths resolve against the root module and reads are confined to
+  the scan root (ADR 0015); the security skill and threat-model seed state the scan-root file
+  boundary, manifest trust only by pipeline input (ADR 0013) and orphan scanning (ADR 0014).
+- Files: .claude/skills/iace-architecture/references/input-document.md,
+  .claude/skills/iace-terraform-parsing/{SKILL.md,references/hcl-evaluation.md},
+  .claude/skills/iace-security/{SKILL.md,references/threat-model.md},
+  .claude/skills/iace-loop/references/roadmap.md, docs/plan/{BACKLOG.md,PROGRESS.md}.
+- Evidence: `gates.sh full` PASS (docs only; no code changed).
+- Review: skipped (docs-only).
+- Next: T-0109.
