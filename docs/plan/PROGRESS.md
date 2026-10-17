@@ -3073,3 +3073,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Review: skipped (plan-only).
 - Decisions: M10 is a core goal; milestone order M7 → M10 → M8 → M9 (2026-10-17).
 - Next: T-0109.
+
+### 2026-10-17 · T-0109 · done
+- What: split T-0109 (too large for one iteration: a normalizer, gap mapping, a command with an
+  app layer and golden fixtures across four packages) into T-0109 (resources), T-0109c (document
+  assembly), T-0109d (gap mapping) and T-0109e (`iace inspect` and golden tests); T-0201 now
+  depends on T-0109e and T-0109b on T-0109d. This slice adds terraform.NormalizeResource:
+  evaluated resources become input-document resources with values, unknown and sensitive paths,
+  references, meta and source ranges, following the contract and ADR 0045 (numbers int64-exact
+  or float64, out-of-range unknown; known null attributes omitted; sets with an unknown element
+  unknown as a whole; columns are hcl's characters, not bytes). New T-0110b (needs-human) brings
+  the harness reference in line with ADR 0045.
+- Files: internal/terraform/normalize.go, normalize_test.go, normalize_internal_test.go,
+  internal/model/{values.go,input.go}, schemas/input.v1.json,
+  docs/adr/0045-normalize-numbers-nulls-sets-and-columns.md, docs/plan/BACKLOG.md,
+  docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 482 s); 14 normalize tests;
+  TestNormalizeHighPrecisionNumbersIsBounded normalizes 10,000 numbers of 8,192 bits in about
+  10 ms; TestNormalizeManyUnknownsWithADynamicBlock fails with the whole-value check removed
+  (a dynamic ingress with unknown entries came out as one known entry with 0.0.0.0/0).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Blocker: a collapsed whole-value unknown
+  (unknownPaths returns the empty path above 1024 paths) was dropped and the resource reported
+  complete; now complete=false. Major: a sensitive mark on the whole value was dropped; now every
+  attribute is sensitive. Minors fixed: a listed unknown on an omitted null attribute is null;
+  ignore_changes is cloned; the Values comment states the null-element exception; the end-to-end
+  test asserts its resource and outcome instead of passing vacuously.
+- Next: T-0109c (assemble one input document per evaluated root); T-0110b needs the owner.
+
