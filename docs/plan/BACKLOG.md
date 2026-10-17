@@ -347,6 +347,7 @@ locations and without executing anything.
   - depends: T-0109
   - accept:
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
+    - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
@@ -713,7 +714,7 @@ locations and without executing anything.
     - (split to T-0124e) bound sets of costly fractions
   - attempts: 1
   - result: the tuple-to-list/set(any) and object-to-map(any) estimates charge numberTextCost for each number the unified type makes a string, at any depth (toUnifiedType, toText), instead of valuePart's guess for every nested tuple (unifiedPart). The repeated unification is skipped where nothing can be formatted and charged first otherwise. Nested rows `[[v], "a"]` beside `[["b"], "c"]` went from 11,718 units to 7.4M (100 rows of 1e-2466), and rows whose columns stay numbers from 7.4M to about 3,000. Follow-ups: T-0124f, T-0125b
-- [ ] T-0124e · Accept and record the first uncounted sort of a set of fractions
+- [x] T-0124e · Accept and record the first uncounted sort of a set of fractions
   - skills: iace-terraform-parsing, iace-security, iace-testing
   - depends: T-0124b
   - decided: the owner chose option (b) of D-T-0124e (2026-10-17): keep valueSizeWalk's integer-priced estimate and record the residual, about one uncounted sort of a set of fractions per module evaluation (about 1 s for 2,000 512-bit fractions), which the tree budget then counts; options (a) and (c) were rejected because they refuse realistic integer sets (4,000 integers are accepted today in 653 ms)
@@ -721,7 +722,8 @@ locations and without executing anything.
   - accept:
     - an ADR records the residual of D-T-0124e option (b): cty sorts a set before any accessor returns its elements, so the first sort of a set of fractions is uncounted; it happens about once per module evaluation, is bounded by the conversion refusals (4,000 `N.1` decimals, or 20 or more multiples of 1e-2466, are refused at conversion), and the tree budget counts the refused work afterwards; the threat model's T3 row and the documented known limitations name it
     - a regression timing test builds 2,000 `N.1` decimals through a set(number) default walked by 32 locals and asserts the module finishes within the per-module time budget, refusing the locals; a second test keeps 32 walks of a set(number) of 4,000 integers accepted
-  - attempts: 1
+  - attempts: 2
+  - result: ADR 0047 accepts one uncounted sort per set value a module evaluation measures (about 1 s for 2,000 512-bit fractions); the review found the residual repeated once per module call instance (62 s for count = 64), now prevented: the caller's measurements of var.* and local.* are shared by every instance's arguments (resourceDecoder.shared, ParsedModule.callMeasures), and the walks of argument values and referenced inputs spend their sorts from the caller's function work. Tests: the 2,000-fraction set taken by 32 locals (all refused, about 1.1 s) and passed to count = 32 instances (1.1 s, was 31 s); a 200-fraction set passed to 32 instances (the caller's work stops the later instances); a 4,000-integer set converts and 20 locals accept it. Deviation: the premise of 32 walks of 4,000 integers does not reproduce on main @ abfdd4f (20 locals, 2 length() calls, 7 for-expressions), capped by the per-walk integer-priced sort charge; the test guards that the integer set converts and is walked. docs/security/threat-model.md T3 names the residual; the harness copy is in T-0110b
 - [x] T-0124f · Test or remove toText's map-to-object branch
   - skills: iace-terraform-parsing, iace-testing
   - depends: T-0124c
@@ -742,6 +744,7 @@ locations and without executing anything.
   - skills: iace-testing, iace-quality-gates
   - depends: none
   - progress: T-0116c's PR moved the two heap-measuring tests to a non-race step of `make test`, made TestEvaluateRootsCreatesABudget parallel and shrank two serial tests: the test step went from 586–607 s to 417 s. internal/terraform is still the package closest to the limit; after T-0116d (two of its serial tests run at a quarter scale) the test step took 480–546 s locally
+  - progress: 2026-10-17 (T-0124e) CI ran internal/terraform under -race into the 600 s timeout (600.4 s); moving the four set-sort tests to NONRACE_TESTS brought the local test step from 539 s to 485 s, but the margin stays thin
   - accept:
     - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
     - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix

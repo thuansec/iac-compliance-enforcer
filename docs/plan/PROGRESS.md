@@ -3215,3 +3215,39 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Next: M1 has T-0124e, T-0125, T-0125b and the owner's T-0110b left; M2 (T-0201) waits for M1's
   wrap-up only through T-0109e, which is done.
 
+### 2026-10-17 · T-0124e · done
+- What: ADR 0047 records the owner's decision D-T-0124e option (b): set sorts stay priced as
+  integers, and one uncounted sort per set value a module evaluation measures is accepted (about
+  1 s for 2,000 512-bit fractions), bounded by the conversion refusals. The review found the
+  residual repeated once per module call instance: each instance's decoder re-measured the caller's
+  var.s, sorting it in full uncounted (62 s for count = 64). Charging the walks alone could not
+  stop it (each repeat is priced as integers, about 150,000 units), so the caller's measurements of
+  var.* and local.* are now shared by every instance's arguments (resourceDecoder.shared, backed by
+  ParsedModule.callMeasures; module outputs are not shared, and the exported ModuleInputs resets
+  it), and the walks of referenced inputs and argument values spend their sorts from the caller's
+  function work. The project threat model's T3 row names the residual.
+- Files: internal/terraform/{resources.go,modules_inputs.go,parse.go,setsort_test.go},
+  docs/adr/0047-accept-the-first-uncounted-sort-of-a-fraction-set.md,
+  docs/security/threat-model.md, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 539 s), including the realistic-workload
+  budget tests. TestFirstSortOfAFractionSetIsBounded about 1.1 s; TestFractionSetPassedToModule-
+  InstancesIsBounded 31.4 s before the fix, 1.06 s after (17.7 s under -race against 50 s);
+  TestAcceptedModuleArgumentsSpendTheirSorts fails with the evalBounded charge reverted (all 32
+  instances re-walk the set). Probes on main @ abfdd4f: a 4,000-integer set is taken by 20 of 32
+  locals, 2 length() calls and 7 for-expressions, so the premise "32 walks accepted in 653 ms"
+  (probe on main @ 398c595) does not reproduce; the cap is the per-walk integer-priced sort
+  charge on the module's function work.
+- Review: iace-reviewer CHANGES_REQUIRED three times, then APPROVE. Blocker: the per-instance
+  repeat above (a scan could stall for hours). Majors: the integer cap was attributed to the
+  locals' size budget; the ADR claimed re-walks of a sorted set are cheap (cty sorts in full on
+  every walk; only the cached measurement bounds it). Minors: the fraction test could pass if the
+  variable were refused at conversion (now asserted to convert); the documented limitation (T3 row
+  in the repo threat model); a stale test comment; ModuleInputs reusing a previous call's cache;
+  no test pinned the evalBounded charge (added).
+- CI: the first push (PR #105) failed: internal/terraform passed go test's 10-minute timeout under
+  -race on CI (600.4 s); the four set-sort tests added about 80 s there. They now run in make
+  test's step without -race (NONRACE_TESTS), like the formatting timing tests of ADR 0044, in
+  about 7.5 s; the local test step went from 539 s to 485 s. The timeout itself is unchanged.
+- Next: T-0125 (the race-enabled package is again close to the timeout), T-0125b, then M1's
+  wrap-up once the owner applies T-0110b.
+
