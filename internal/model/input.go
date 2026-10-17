@@ -196,6 +196,14 @@ const (
 	GapUnknownExpansion    GapKind = "unknown_expansion"
 	GapLimitExceeded       GapKind = "limit_exceeded"
 	GapUnsupportedFunction GapKind = "unsupported_function"
+	// GapSkippedFile is a file or directory that discovery or module loading did not read: a
+	// symlink that leaves the scan root, a symlinked directory or a file that is not regular.
+	GapSkippedFile GapKind = "skipped_file"
+	// GapIncompleteReferences is a resource or output whose references may be missing.
+	GapIncompleteReferences GapKind = "incomplete_references"
+	// GapIncompleteAnalysis is any other part iace could not fully analyze; the detail names
+	// the diagnostic code or what could not be expressed (ADR 0046).
+	GapIncompleteAnalysis GapKind = "incomplete_analysis"
 )
 
 // CoverageGap records a part of the configuration that iace could not check, so it is reported

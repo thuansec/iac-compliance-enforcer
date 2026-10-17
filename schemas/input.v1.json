@@ -245,7 +245,7 @@
       "additionalProperties": false,
       "required": ["kind", "detail", "file", "line"],
       "properties": {
-        "kind": {"enum": ["parse_error", "unresolved_module", "unknown_expansion", "limit_exceeded", "unsupported_function"]},
+        "kind": {"enum": ["parse_error", "unresolved_module", "unknown_expansion", "limit_exceeded", "unsupported_function", "skipped_file", "incomplete_references", "incomplete_analysis"]},
         "detail": {"type": "string"},
         "file": {"description": "\"\" when the gap is not tied to a file.", "$ref": "#/$defs/relPath"},
         "line": {"description": "0 when unknown.", "type": "integer", "minimum": 0}
