@@ -806,14 +806,16 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - fingerprints are stable across runs and line shifts; tests cover each
   - attempts: 1
   - result: model.Finding (finding v1 without exception, AI suggestion and policy source, which later stages add) and model.Fingerprint, the hex SHA-256 of the JSON array [rule_id, root_module, address, attribute_path|null] (ADR 0049, pinned); Engine.Findings decodes strictly (object, existing address, message of 1–500 characters, path of names and non-negative integers, [] treated as none), errors name the rule without quoting the violation, locations come from the nearest located attribute in its own file (ADR 0048) or the block, findings are sorted by severity, rule, file, line and address. JSON encoding of findings is T-0301's; debug logging of unknown keys T-0138
-- [ ] T-0205 · Ship the first rules end to end, with the fixture harness
+- [x] T-0205 · Build the policy fixture harness, with IACE-AWS-EC2-001's fixtures
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0204
   - accept:
-    - IACE-AWS-EC2-001 (from the asset), IACE-AWS-S3-001 and IACE-AZURE-STORAGE-001, each with Rego tests and pass/fail Terraform fixtures
-    - the fixture harness fails if any rule lacks a pass or a fail fixture
-    - every rule has a `.tf.json` fail fixture that writes its nested blocks as single objects, and one with an unknown nested value (ADR 0006); the harness fails any rule, including future ones, that lacks them
-  - attempts: 0
+    - the harness scans testdata/policies/<RULE-ID>/{pass,fail,fail_json,unknown}/ with the real loader and engine: fail and fail_json yield exactly the findings listed in their expected.yaml (address and attribute path) for that rule, pass and unknown yield none for it
+    - it fails if any loaded rule lacks one of the four directories, or a directory names an unknown rule; fail_json must be `.tf.json` writing the rule's nested blocks as single objects (ADR 0006), and unknown must hold an unknown nested value both in HCL and in a `.tf.json` single-object block (the stored path differs, ADR 0006); a directory inside a rule directory that is not one of the four kinds fails the harness
+    - IACE-AWS-EC2-001 (from the asset) has all four fixtures and passes
+    - T-0205 was split (2026-10-18): IACE-AWS-S3-001 is T-0205c and IACE-AZURE-STORAGE-001 T-0205d, after the scan command, so the PoC scan lands first
+  - attempts: 1
+  - result: internal/app/fixtures_test.go scans testdata/policies/<RULE-ID>/{fail,fail_json,pass,unknown}/ (subdirectories are separate roots) with the real loader (unredacted documents, app.load) and engine; fail and fail_json must match expected.yaml exactly (strict decoding), pass and unknown yield nothing; it fails on a missing or misnamed kind, a directory naming no rule, a .tf file in fail_json, a fail_json finding whose block is not a single object, and an unknown fixture without both an HCL and a .tf.json nested unknown; IACE-AWS-EC2-001 has all four. policies/README.md documents the layout; S3 and Azure rules are T-0205c/T-0205d
 - [ ] T-0206 · Implement `iace scan` with text output and exit codes
   - skills: iace-architecture, iace-reporting, iace-testing, iace-security
   - depends: T-0205
@@ -822,6 +824,19 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - testscript covers a clean repo, a failing repo, a broken policy and a Terraform parse error
     - usage errors never echo flag values (pflag repeats them, e.g. `invalid argument "…" for "--var"`); a testscript with an obviously fake secret in `--var` shows stderr does not contain it (T-0003 review finding)
     - a scan path with no Terraform root module is decided explicitly (a coverage gap or exit 2), never a silent pass: a mistyped CI path must not look clean (`iace inspect` prints "no Terraform root modules under this path" and exits 0, T-0109e review)
+  - attempts: 0
+- [ ] T-0205c · IACE-AWS-S3-001 · S3 buckets block public access
+  - skills: iace-rego-policies, iace-cloud-controls, iace-testing
+  - depends: T-0206
+  - accept:
+    - a rule with mappings verified per iace-cloud-controls, Rego tests and the four fixture directories; the fixture harness passes
+    - it flags the weakening override fixture (testdata/terraform/e2e/override: `acl = "public-read"` from main_override.tf) with a finding located in main_override.tf (ADR 0048), as T-0112b's acceptance left to this rule
+  - attempts: 0
+- [ ] T-0205d · IACE-AZURE-STORAGE-001 · Storage accounts require secure transfer
+  - skills: iace-rego-policies, iace-cloud-controls, iace-testing
+  - depends: T-0206
+  - accept:
+    - a rule with mappings verified per iace-cloud-controls (provider defaults per azurerm major), Rego tests and the four fixture directories; the fixture harness passes
   - attempts: 0
 - [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
@@ -1004,6 +1019,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
+    - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205)
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
     - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes

@@ -27,6 +27,19 @@ type InspectOptions struct {
 // input document per root module, with its coverage gaps. A problem in the scanned files is a
 // gap, not an error; an error means the path could not be read or ctx was cancelled.
 func Inspect(ctx context.Context, path string, opts InspectOptions) ([]*model.InputDocument, error) {
+	docs, err := load(ctx, path, opts)
+	if err != nil {
+		return nil, err
+	}
+	for i, doc := range docs {
+		docs[i] = redact.Document(doc)
+	}
+	return docs, nil
+}
+
+// load reads the Terraform under path into one input document per root module, unredacted:
+// policies judge the real values, and only output is redacted.
+func load(ctx context.Context, path string, opts InspectOptions) ([]*model.InputDocument, error) {
 	root, err := fsutil.OpenRoot(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
@@ -48,11 +61,7 @@ func Inspect(ctx context.Context, path string, opts InspectOptions) ([]*model.In
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	docs := terraform.Documents(d, results)
-	for i, doc := range docs {
-		docs[i] = redact.Document(doc)
-	}
-	return docs, nil
+	return terraform.Documents(d, results), nil
 }
 
 // ParseErrors counts the parse_error gaps of docs: the configuration could not be read as
