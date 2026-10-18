@@ -27,13 +27,20 @@ const (
 	External
 )
 
-// PolicyError is a policy that cannot be loaded: a parse error or invalid rule metadata.
+// PolicyError is a broken policy: a parse or compile error, invalid rule metadata, or an error
+// raised while evaluating it. RuleID is set when the error is in a rule's own file.
 type PolicyError struct {
-	File string
-	Msg  string
+	File   string
+	RuleID string
+	Msg    string
 }
 
-func (e *PolicyError) Error() string { return e.File + ": " + e.Msg }
+func (e *PolicyError) Error() string {
+	if e.RuleID != "" {
+		return e.File + " (rule " + e.RuleID + "): " + e.Msg
+	}
+	return e.File + ": " + e.Msg
+}
 
 // Rule is a validated rule package and its metadata (iace-rego-policies' metadata schema).
 type Rule struct {

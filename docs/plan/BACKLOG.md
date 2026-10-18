@@ -783,13 +783,14 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - go.mod's OPA library and tools/opa/go.mod pin the same version; a test asserts it, and .github/dependabot.yml groups the two OPA updates so they move together (ADR 0002)
   - attempts: 1
   - result: internal/engine.Load parses every non-test module (annotations, Rego v1) in lexical order and validates each iace.rules.<csp>.<service>.<rule> package: package-scoped METADATA per the metadata schema (typed custom keys, x_ extensions, IDs per origin, CSP and service matching the package), a partial-set deny at the package root, one file per rule package, unique IDs; rules written into iace.rules from elsewhere and a source without rules are errors; every error is a *PolicyError naming the file. TestOPAVersionsMatch and a dependabot opa group keep the library and CLI pins together. Framework-key validation is T-0136
-- [ ] T-0203 · Compile and evaluate with restricted capabilities
+- [x] T-0203 · Compile and evaluate with restricted capabilities
   - skills: iace-opa-engine, iace-go-standards
   - depends: T-0202
   - accept:
     - one prepared query, Rego v1, strict mode, StrictBuiltinErrors, per-evaluation timeout, input converted once via EvalParsedInput
     - root modules are evaluated concurrently with a bounded errgroup; there is an engine benchmark
-  - attempts: 0
+  - attempts: 1
+  - result: internal/engine.New compiles the loaded library once in strict mode (Rego v1, StrictBuiltinErrors) against the embedded capabilities (required; a denied builtin such as http.send is a compile error naming the file) and prepares one query mapping each rule ID to its deny set; Evaluate converts a document once (EvalParsedInput) under a per-document timeout (30 s default, EvalTimeoutError), trusts a result only while the context is live, and reports evaluation errors as PolicyError naming the file and rule with only the code, builtin name and line (never OPA's text, which quotes scanned values); EvaluateAll uses a bounded errgroup and keeps order. BenchmarkEvaluate: 49 ms (1k) and 239 ms (5k resources). Helper-module errors name the helper's file (T-0137)
 - [ ] T-0134 · Locate attributes that an override file sets in that file
   - skills: iace-terraform-parsing, iace-architecture, iace-testing
   - depends: T-0109e
@@ -1015,6 +1016,12 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0202
   - accept:
     - the loader rejects a custom.frameworks key that is not in iace-cloud-controls/references/frameworks.md (cis-* keys match by prefix with their @<version>), naming the file and key (T-0202 review); a test per accepted and rejected shape
+  - attempts: 0
+- [ ] T-0137 · Name the calling rule when a helper module raises an evaluation error
+  - skills: iace-opa-engine, iace-testing
+  - depends: T-0203
+  - accept:
+    - a builtin error raised inside an iace.lib.* helper names the rule whose evaluation called it (today the error names only the helper's file, RuleID empty; T-0203 review), for example by evaluating the failing document per rule to attribute the error; the message still quotes no scanned value; a test per case
   - attempts: 0
 
 ## M3 · Reports — status: planned
