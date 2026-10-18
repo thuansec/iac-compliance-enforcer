@@ -41,7 +41,7 @@ func newInspectCommand() *cobra.Command {
 			}
 			docs, err := app.Inspect(cmd.Context(), args[0], opts)
 			if err != nil {
-				return err
+				return &exitCodeError{code: exitError, msg: err.Error()}
 			}
 			if err := writeDocuments(cmd.OutOrStdout(), docs, asJSON); err != nil {
 				return err

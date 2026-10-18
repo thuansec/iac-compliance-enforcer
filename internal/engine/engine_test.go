@@ -319,3 +319,33 @@ func instanceDoc(n int) *model.InputDocument {
 	}
 	return doc
 }
+
+// Options.Rules leaves every other rule out of the query, so it is not evaluated at all.
+func TestNewEvaluatesOnlySelectedRules(t *testing.T) {
+	fsys := oneRule("")
+	fsys["iace/rules/aws/s3/other/rule.rego"] = &fstest.MapFile{Data: []byte(rule("iace.rules.aws.s3.other",
+		map[string]string{"id": "#   id: IACE-AWS-S3-002"}, "deny contains v if {\n\tsome r in input.resources\n\tto_number(r.values.bucket) > 0\n\tv := r.address\n}\n"))}
+	e, err := compile(t, fsys, Options{Rules: []string{"IACE-AWS-S3-001"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// IACE-AWS-S3-002 would raise a builtin error on this document if it were evaluated.
+	res, err := e.Evaluate(context.Background(), bucketDoc(1))
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if _, ok := res["IACE-AWS-S3-002"]; ok || len(res["IACE-AWS-S3-001"]) != 1 {
+		t.Errorf("result %v, want only IACE-AWS-S3-001", res)
+	}
+}
+
+func TestNewRejectsUnknownSelectedRules(t *testing.T) {
+	_, err := compile(t, oneRule(""), Options{Rules: []string{"IACE-AWS-S3-001", "IACE-AWS-S3-999"}})
+	var ue *UnknownRuleError
+	if !errors.As(err, &ue) || ue.Index != 2 {
+		t.Errorf("error %v, want an UnknownRuleError for the second selection", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "IACE-AWS-S3-999") {
+		t.Errorf("error %q repeats the flag value", err)
+	}
+}

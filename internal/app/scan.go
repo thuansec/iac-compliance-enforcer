@@ -18,6 +18,11 @@ type ScanOptions struct {
 	InspectOptions
 	// FailOn is the lowest severity that blocks (a model.Severity or model.FailOnNone).
 	FailOn string
+	// MinSeverity hides findings below it from the report; they still count as blocking.
+	// Empty shows everything.
+	MinSeverity model.Severity
+	// Rules, when not empty, evaluates only these rule IDs (*engine.UnknownRuleError otherwise).
+	Rules []string
 	// Policies holds the rules and capabilities.json; nil means the built-in library.
 	Policies fs.FS
 }
@@ -42,7 +47,7 @@ func Scan(ctx context.Context, path string, opts ScanOptions) (*model.Report, er
 	if err != nil {
 		return nil, err
 	}
-	e, err := engine.New(ctx, lib, caps, engine.Options{})
+	e, err := engine.New(ctx, lib, caps, engine.Options{Rules: opts.Rules})
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +62,10 @@ func Scan(ctx context.Context, path string, opts ScanOptions) (*model.Report, er
 	if err != nil {
 		return nil, err
 	}
-	r := &model.Report{Findings: []model.Finding{}, CoverageGaps: []model.ReportGap{}}
+	r := &model.Report{
+		Findings: []model.Finding{}, CoverageGaps: []model.ReportGap{},
+		RulesEvaluated: e.Rules(), RulesLoaded: len(lib.Rules),
+	}
 	for i, doc := range docs {
 		fs, err := e.Findings(doc, results[i])
 		if err != nil {
@@ -73,6 +81,18 @@ func Scan(ctx context.Context, path string, opts ScanOptions) (*model.Report, er
 	slices.Sort(r.Inputs)
 	engine.SortFindings(r.Findings)
 	r.Summary = model.Summarize(r.Findings, opts.FailOn)
+	r.MinSeverity = opts.MinSeverity
+	if r.MinSeverity == "" {
+		r.MinSeverity = model.SeverityInfo
+	}
+	shown := r.Findings[:0:0]
+	for _, f := range r.Findings {
+		if f.Severity.Rank() >= r.MinSeverity.Rank() {
+			shown = append(shown, f)
+		}
+	}
+	r.Hidden = len(r.Findings) - len(shown)
+	r.Findings = shown
 	return r, nil
 }
 

@@ -29,6 +29,19 @@ type Options struct {
 	Timeout time.Duration
 	// Parallelism bounds how many documents EvaluateAll evaluates at once.
 	Parallelism int
+	// Rules, when not empty, selects the rules to evaluate by ID; the others stay out of the
+	// query and cost nothing.
+	Rules []string
+}
+
+// UnknownRuleError is a selected rule ID (Options.Rules, 1-based Index) that names no loaded
+// rule. It does not repeat the ID: it comes from a flag.
+type UnknownRuleError struct {
+	Index int
+}
+
+func (e *UnknownRuleError) Error() string {
+	return fmt.Sprintf("selected rule %d is not a loaded rule", e.Index)
 }
 
 // Result holds one document's violations keyed by rule ID: each rule's deny set as JSON values
@@ -54,6 +67,10 @@ type Engine struct {
 	timeout     time.Duration
 	parallelism int
 }
+
+// Rules returns how many rules the engine evaluates (fewer than loaded when Options.Rules
+// selects some).
+func (e *Engine) Rules() int { return len(e.rules) }
 
 // LoadCapabilities reads capabilities.json from fsys (policies.FS): the builtins policies may
 // call.
@@ -82,13 +99,25 @@ func New(ctx context.Context, lib *Library, caps *ast.Capabilities, opts Options
 	}
 	rules := slices.Clone(lib.Rules)
 	slices.SortFunc(rules, func(a, b Rule) int { return strings.Compare(a.ID, b.ID) })
-	entries := make([]string, 0, len(rules))
 	ruleByFile := make(map[string]string, len(rules))
+	loaded := make(map[string]bool, len(rules))
+	for _, r := range rules {
+		ruleByFile[r.File] = r.ID
+		loaded[r.ID] = true
+	}
+	for i, id := range opts.Rules {
+		if !loaded[id] {
+			return nil, &UnknownRuleError{Index: i + 1}
+		}
+	}
+	entries := make([]string, 0, len(rules))
 	byID := make(map[string]Rule, len(rules))
 	for _, r := range rules {
+		if len(opts.Rules) > 0 && !slices.Contains(opts.Rules, r.ID) {
+			continue
+		}
 		byID[r.ID] = r
 		entries = append(entries, strconv.Quote(r.ID)+": data."+r.Package+".deny")
-		ruleByFile[r.File] = r.ID
 	}
 	args := []func(*rego.Rego){
 		rego.Query("x := {" + strings.Join(entries, ", ") + "}"),

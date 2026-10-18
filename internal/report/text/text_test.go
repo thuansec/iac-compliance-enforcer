@@ -73,3 +73,33 @@ func TestWriteSanitizesRepositoryNames(t *testing.T) {
 		t.Errorf("report:\n%s", b.String())
 	}
 }
+
+// Some findings shown, some hidden: the shown group, the hidden count and the full total.
+func TestWriteHidesBelowMinSeverity(t *testing.T) {
+	all := []model.Finding{
+		finding(model.SeverityHigh, "IACE-AWS-EC2-001", "aws_instance.a", "m"),
+		finding(model.SeverityLow, "IACE-AWS-S3-009", "aws_s3_bucket.b", "m"),
+	}
+	r := &model.Report{
+		Inputs: []string{"."}, Findings: all[:1], MinSeverity: model.SeverityMedium, Hidden: 1,
+		Summary: model.Summarize(all, "high"), RulesEvaluated: 1, RulesLoaded: 3,
+	}
+	var b bytes.Buffer
+	if err := text.Write(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"HIGH\n",
+		"1 finding hidden below --min-severity medium\n",
+		"2 findings (critical 0, high 1, medium 0, low 1, info 0); 1 blocking at fail-on high\n",
+		"Only 1 of 3 rules evaluated (--rule): the others were not checked\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "LOW") {
+		t.Errorf("hidden finding printed:\n%s", out)
+	}
+}

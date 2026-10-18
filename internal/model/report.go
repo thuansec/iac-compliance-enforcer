@@ -7,9 +7,16 @@ type Report struct {
 	// Inputs are the scanned root modules, relative to the scan root, sorted.
 	Inputs []string `json:"inputs"`
 	// Findings are sorted by severity (most severe first), rule ID, file, line and address.
-	Findings     []Finding   `json:"findings"`
+	// Those below MinSeverity are left out and counted in Hidden; the summary counts them all.
+	Findings []Finding `json:"findings"`
+	// MinSeverity is the lowest severity shown ("info" shows everything).
+	MinSeverity  Severity    `json:"min_severity"`
+	Hidden       int         `json:"hidden"`
 	CoverageGaps []ReportGap `json:"coverage_gaps"`
-	Summary      Summary     `json:"summary"`
+	// RulesEvaluated and RulesLoaded differ when a rule selection left rules unchecked.
+	RulesEvaluated int     `json:"rules_evaluated"`
+	RulesLoaded    int     `json:"rules_loaded"`
+	Summary        Summary `json:"summary"`
 }
 
 // ReportGap is a coverage gap of one root module.

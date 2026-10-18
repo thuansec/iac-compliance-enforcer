@@ -3497,3 +3497,24 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   guard (an unknown value is null, which falls back to TLS1_2) led to a test with a weak
   placeholder value; it fails when the guard is removed.
 - Next: T-0206b (scan selection flags and multiple paths), then M12.
+
+### 2026-10-18 · T-0206b · done
+- What: scan selection flags. `--min-severity` leaves findings below it out of the report and
+  counts them (`N findings hidden below --min-severity X`); the summary total and the blocking
+  count still include them, as the help says. `--rule ID` (repeatable) passes the IDs to
+  engine.Options.Rules, which leaves every other rule out of the query; an ID that names no
+  loaded rule is a usage error that gives its position, never the value; the report states
+  "Only N of M rules evaluated (--rule)" so a partial run cannot read as a full pass. inspect now
+  words runtime errors like scan (no usage hint on a missing path). The task was split: several
+  paths per scan is T-0206c.
+- Files: internal/engine/{engine.go,engine_test.go}, internal/app/scan.go,
+  internal/model/report.go, internal/report/text/{text.go,text_test.go},
+  internal/cli/{scan.go,inspect.go}, cmd/iace/testdata/script/{scan_selection,
+  inspect_missing_path}.txtar, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); the selection test fails if the unselected rule is
+  evaluated (it would raise a builtin error).
+- Review: iace-reviewer APPROVE with three minors. Fixed: the report says when --rule left rules
+  unchecked (reviewer: a CI log could read as a full pass), and a text test covers shown plus
+  hidden findings and the summary total. Recorded: the new report-level JSON fields join T-0301's
+  schema work.
+- Next: T-0206c (several paths per scan) or T-0205b/T-0207 per BACKLOG order, then M12.

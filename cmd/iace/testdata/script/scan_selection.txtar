@@ -1,0 +1,34 @@
+# --min-severity hides lower findings from the report but they still block.
+! exec iace scan repo --min-severity critical
+! stdout '^HIGH$'
+stdout '^No findings at or above critical\.$'
+stdout '^1 finding hidden below --min-severity critical$'
+stdout '1 blocking at fail-on high$'
+
+# --rule evaluates only the named rules.
+exec iace scan repo --rule IACE-AZURE-STORAGE-001
+stdout '^No findings\.$'
+stdout '^Only 1 of [0-9]+ rules evaluated \(--rule\): the others were not checked$'
+! exec iace scan repo --rule IACE-AWS-EC2-001 --rule IACE-AWS-S3-001
+stdout 'IACE-AWS-EC2-001'
+
+# A --rule that names no loaded rule is an error that does not repeat it.
+! exec iace scan repo --rule IACE-AWS-EC2-001 --rule FAKEsecretVALUE0000
+! stdout .
+stderr '--rule argument 2 names no loaded rule'
+! stderr FAKEsecretVALUE0000
+
+# An invalid --min-severity is rejected without echo.
+! exec iace scan repo --min-severity FAKEsecretVALUE0000
+stderr '--min-severity'
+! stderr FAKEsecretVALUE0000
+
+-- repo/main.tf --
+resource "aws_instance" "web" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}
