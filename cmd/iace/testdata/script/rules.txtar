@@ -1,0 +1,44 @@
+# rules list: one line per rule, sorted by ID, with severity, CSP, source and title.
+exec iace rules list
+stdout '^IACE-AWS-EC2-001        high    aws    builtin  EC2 instances must require IMDSv2$'
+stdout '^IACE-AZURE-STORAGE-001  medium  azure  builtin  Storage accounts must require TLS 1.2$'
+! stderr .
+
+# --csp filters by cloud.
+exec iace rules list --csp azure
+stdout 'IACE-AZURE-STORAGE-001'
+! stdout 'IACE-AWS-'
+! exec iace rules list --csp gcp
+stderr '--csp'
+
+# rules show: the full metadata and the remediation.
+exec iace rules show IACE-AWS-VPC-001
+stdout '^IACE-AWS-VPC-001 · Security groups must not open remote administration ports to the internet$'
+stdout '^severity: +high$'
+stdout '^csp: +aws$'
+stdout '^service: +vpc$'
+stdout '^source: +builtin$'
+stdout '^package: +iace.rules.aws.vpc.admin_port_ingress$'
+stdout '^description: +SSH \(22\) and RDP'
+stdout '^remediation: +Limit the rule''s source to known address ranges'
+stdout '^resource types: +aws_security_group, aws_security_group_rule, aws_vpc_security_group_ingress_rule$'
+stdout '^frameworks: +aws-securityhub EC2.13, EC2.14, EC2.53, EC2.54$'
+stdout '^references:$'
+stdout '^  https://docs.aws.amazon.com/'
+exec iace rules show IACE-AZURE-STORAGE-001
+stdout '^frameworks: +none$'
+
+# A library a scan would refuse (a rule calling the denied http.send) is refused here too.
+! exec iace-broken-policy rules list
+! stdout .
+stderr '^iace: .*http.send'
+! exec iace-broken-policy rules show IACE-AWS-EC2-999
+! stdout .
+stderr '^iace: .*http.send'
+
+# An unknown ID is an error.
+! exec iace rules show IACE-AWS-NOPE-999
+! stdout .
+stderr '^iace: rules show: no loaded rule has ID IACE-AWS-NOPE-999 \(see iace rules list\)$'
+! exec iace rules show
+stderr 'accepts 1 arg'

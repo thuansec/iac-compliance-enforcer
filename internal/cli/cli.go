@@ -72,14 +72,14 @@ func newRootCommand(policies fs.FS) *cobra.Command {
 		Short: "Check Terraform for security and compliance misconfigurations",
 		Long: "iace statically checks Terraform for security and compliance misconfigurations in AWS and\n" +
 			"Azure. It never runs Terraform, providers or modules from the code it scans.",
-		Example: "  iace scan .\n  iace inspect .\n  iace version --json",
+		Example: "  iace scan .\n  iace inspect .\n  iace rules list\n  iace version --json",
 		// Run prints errors as one line on stderr; full usage text would bury that line.
 		SilenceErrors:      true,
 		SilenceUsage:       true,
 		DisableSuggestions: true,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(newVersionCommand(), newInspectCommand(), newScanCommand(policies))
+	root.AddCommand(newVersionCommand(), newInspectCommand(), newScanCommand(policies), newRulesCommand(policies))
 	root.SetFlagErrorFunc(flagError)
 
 	// cobra adds its help command lazily; create it now so it has an example like every command.
