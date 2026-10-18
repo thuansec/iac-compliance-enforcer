@@ -4,14 +4,19 @@ version: 2
 updates:
   - package-ecosystem: gomod
     # The product module plus every pinned dev tool module (decision D-07); the glob also picks up
-    # tools added later. Once the engine imports the OPA library, tools/opa must move with it
-    # (ADR 0002; T-0202 adds the check).
+    # tools added later.
     directories:
       - /
       - /tools/*
     schedule:
       interval: weekly
     groups:
+      # The engine's OPA library (/) and the opa CLI that checks the policies (/tools/opa) move
+      # together in one pull request, majors included (ADR 0002); TestOPAVersionsMatch fails a
+      # bump of only one. Listed first because the first matching group wins.
+      opa:
+        patterns: ["github.com/open-policy-agent/opa"]
+        group-by: dependency-name
       go-minor-and-patch:
         update-types: [minor, patch]
 

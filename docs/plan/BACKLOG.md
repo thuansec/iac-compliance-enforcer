@@ -774,14 +774,15 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - the rule-writing guide requires `tf.blocks` for every iteration over a nested block's entries; a lint (Regal custom rule or Go test over policies/) rejects rule files that index `values` with a literal `[0]`, or iterate it with `[_]` or `some … in`, instead of the helpers
   - attempts: 1
   - result: policies/ seeded (iace.lib.tf, IACE-AWS-EC2-001 and tests) and embedded (all:iace, every .rego checked); make capabilities filters `opa capabilities --current` of the pinned OPA 1.21.1 through opa eval (no Go program), 200 builtins, the six denied ones absent and allow_net empty, tested; .regal/config.yaml; the path helpers walk up to 12 steps resolving a 0 against an object as the object, match unknown and sensitive paths in the stored shape, and treat longer paths as unknown and sensitive (fail closed); tf.blocks returns a list for both shapes ([] also for an unknown block, documented); policies/README.md is the rule-writing guide; a Go test rejects rule files that read values directly ([0], [_], some/every … in, object.get with a 0 step). Rego coverage 100%; lint false negatives through aliasing are T-0135
-- [ ] T-0202 · Load modules and validate rule metadata (fail closed)
+- [x] T-0202 · Load modules and validate rule metadata (fail closed)
   - skills: iace-opa-engine, iace-rego-policies
   - depends: T-0201
   - accept:
     - modules parse with annotations; metadata is validated against iace-rego-policies/references/metadata-schema.md
     - a duplicate rule ID, missing required metadata or a missing `deny` rule each produce a load error naming the file; there is a test per case
     - go.mod's OPA library and tools/opa/go.mod pin the same version; a test asserts it, and .github/dependabot.yml groups the two OPA updates so they move together (ADR 0002)
-  - attempts: 0
+  - attempts: 1
+  - result: internal/engine.Load parses every non-test module (annotations, Rego v1) in lexical order and validates each iace.rules.<csp>.<service>.<rule> package: package-scoped METADATA per the metadata schema (typed custom keys, x_ extensions, IDs per origin, CSP and service matching the package), a partial-set deny at the package root, one file per rule package, unique IDs; rules written into iace.rules from elsewhere and a source without rules are errors; every error is a *PolicyError naming the file. TestOPAVersionsMatch and a dependabot opa group keep the library and CLI pins together. Framework-key validation is T-0136
 - [ ] T-0203 · Compile and evaluate with restricted capabilities
   - skills: iace-opa-engine, iace-go-standards
   - depends: T-0202
@@ -1008,6 +1009,12 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0201
   - accept:
     - a Regal custom rule (AST-based) replaces or backs the regex lint of policies_test.go: it flags reads of a nested block through an alias (`mo := r.values.metadata_options; mo[0]`, `some i; r.values.x[i]`) and object.get paths whose first step is 0 (`object.get(r.values.metadata_options, [0, "http_tokens"], "")`), which the regexes miss (T-0201 review); tests per case
+  - attempts: 0
+- [ ] T-0136 · Validate rule framework keys against the framework catalog
+  - skills: iace-opa-engine, iace-cloud-controls
+  - depends: T-0202
+  - accept:
+    - the loader rejects a custom.frameworks key that is not in iace-cloud-controls/references/frameworks.md (cis-* keys match by prefix with their @<version>), naming the file and key (T-0202 review); a test per accepted and rejected shape
   - attempts: 0
 
 ## M3 · Reports — status: planned

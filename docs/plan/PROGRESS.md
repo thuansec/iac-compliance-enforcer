@@ -3312,3 +3312,25 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   object.get path) and aliasing: T-0135.
 - Next: T-0202 (load modules and validate rule metadata, fail closed).
 
+### 2026-10-18 · T-0202 · done
+- What: the policy loader. internal/engine.Load parses every non-test .rego module of a source
+  with annotations (Rego v1) and validates each rule package against the metadata schema: title,
+  description, https related resources, typed custom keys (unknown ones rejected except x_), the
+  ID pattern for built-in and external origins, CSP and service matching the package path,
+  resource types and remediation. A rule package needs a partial-set deny at its root, one file
+  and a unique ID; deny rules written into iace.rules from another package or below a rule
+  package, and a source with no rules, are errors. Every error is a *PolicyError naming the file
+  (fail closed). OPA 1.21.1 is now a direct dependency; TestOPAVersionsMatch and a dependabot opa
+  group keep it equal to tools/opa.
+- Files: internal/engine/{load.go,load_test.go}, go.mod, go.sum, .github/dependabot.yml,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 500 s); engine coverage 96.1%; the embedded
+  library loads. One earlier full run failed in internal/terraform while a -race review probe ran
+  in parallel and passed alone and on the rerun (load-sensitive timing, T-0125b).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: deny rules under iace.rules
+  outside a validated rule package (bare iace.rules, package iace, sub.deny) loaded and would
+  never run, fixed with a full-path check and a test per case. Minors fixed: one file per rule
+  package, no-rules source, sorted framework checks, wrong-type and non-partial deny tests,
+  distinctive assertions. Deferred: framework keys (T-0136); params schemas (M4) and cross-source
+  IDs (M8) are already planned.
+- Next: T-0203 (compile and evaluate with restricted capabilities).
