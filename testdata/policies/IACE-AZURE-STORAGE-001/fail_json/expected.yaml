@@ -1,0 +1,3 @@
+findings:
+  - address: azurerm_storage_account.legacy
+    attribute_path: [min_tls_version]
