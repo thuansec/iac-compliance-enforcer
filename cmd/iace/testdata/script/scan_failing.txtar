@@ -17,6 +17,12 @@ stdout '0 blocking at fail-on none'
 stdout '"schema_version": "1"'
 stdout '"rule_id": "IACE-AWS-EC2-001"'
 stderr '^iace: 1 open finding at or above high$'
+# -o sarif writes SARIF 2.1.0 with the same exit code.
+! exec iace scan repo -o sarif
+stdout '"version": "2.1.0"'
+stdout '"ruleId": "IACE-AWS-EC2-001"'
+stdout '"security-severity": "8.0"'
+stderr '^iace: 1 open finding at or above high$'
 ! exec iace scan repo -o FAKEsecretVALUE0000
 ! stdout .
 stderr '--output'

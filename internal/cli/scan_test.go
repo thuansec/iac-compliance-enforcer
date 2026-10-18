@@ -54,3 +54,36 @@ func TestScanJSONValidatesAgainstTheSchema(t *testing.T) {
 		}
 	}
 }
+
+// A real scan's SARIF validates against the vendored SARIF 2.1.0 schema.
+func TestScanSARIFValidatesAgainstTheSchema(t *testing.T) {
+	const id = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
+	data, err := os.ReadFile(filepath.Join("..", "report", "sarif", "testdata", "sarif-schema-2.1.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, raw); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"scan", "-o", "sarif", filepath.Join("..", "..", "testdata", "policies", "IACE-AWS-VPC-001", "fail")}, &stdout, &stderr)
+	if code != exitBlocking {
+		t.Fatalf("exit %d, want 1: %s", code, stderr.String())
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Validate(inst); err != nil {
+		t.Errorf("SARIF does not validate: %v", err)
+	}
+}

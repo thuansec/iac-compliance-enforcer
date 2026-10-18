@@ -11,7 +11,8 @@ Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-p
 - scope (owner decision 2026-10-17): PoC first. Build the smallest working path: M2 (`iace scan` with a few real rules) on basic, realistic repositories, then M12 (findings in a pull request). Do not add new cost, budget, crafted-input or test-timing requirements while it is built: such review findings become M13 follow-ups. Findings that make a failure pass silently (fail-open) or leak a secret still block a merge
 
 ## Decisions needed
-- none open (D-T-0124e decided 2026-10-17: option (b); see T-0124e)
+- D-T-0302 (2026-10-18, non-blocking): T-0302's acceptance asked to convert columns to a SARIF column kind; ADR 0052 narrowed it to line-level SARIF regions because hcl's grapheme-cluster columns match neither SARIF kind and reporters do not read source text. Confirm the narrowing, or ask for exact columns (the loader would record UTF-16 columns in the input document, an additive contract change).
+- decided: D-T-0124e (2026-10-17: option (b); see T-0124e)
 
 ## M0 · Foundations — status: done
 Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI and project memory.
@@ -886,14 +887,16 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
     - model.Finding encodes deterministically (sorted frameworks keys) with a nil attribute_path as null, not [] (encoding/json/v2 defaults write [] and random map order; options as model.Values uses, T-0204 review); a marshal test; the report-level min_severity, hidden, rules_evaluated and rules_loaded fields (T-0206b) are in schemas/findings.v1.json and in the findings reference (via T-0110b)
   - attempts: 1
   - result: `iace scan -o json` writes the findings report v1 (schemas/findings.v1.json, ADR 0051): tool, the builtin policy source with a sha256 digest of the library, inputs, a summary by severity and status with blocking, fail_on, min_severity, hidden and rules evaluated/loaded, findings with every finding v1 field (policy_source; exception and ai_suggestion null until M4/M10; a null attribute_path when none), warnings and coverage gaps; deterministic (sorted keys, fixed field order); golden and schema tests, real scans validated, several paths merged. The findings reference sync joins T-0110b
-- [ ] T-0302 · SARIF 2.1.0 output for GitHub code scanning
+- [x] T-0302 · SARIF 2.1.0 output for GitHub code scanning
   - skills: iace-reporting
   - depends: T-0301
   - accept:
     - follows iace-reporting/references/sarif.md (security-severity, tags, help, relative URIs, automationDetails)
     - validates against the vendored SARIF 2.1.0 schema in a test; golden test
     - columns are converted from the input document's character columns (ADR 0045) to the SARIF column kind the output declares (utf16CodeUnits by default), or the run declares a column kind that matches; a test covers a line with non-ASCII text before the finding
-  - attempts: 0
+    - re-scoped (2026-10-18, ADR 0052): hcl columns count grapheme clusters, which neither SARIF column kind (utf16CodeUnits, unicodeCodePoints) matches, and converting needs the source text that reporters do not read; SARIF regions are therefore line-level (no columns), and a test covers a line with non-ASCII text before the finding
+  - attempts: 1
+  - result: `iace scan -o sarif` writes one SARIF 2.1.0 run per sarif.md: rules from the findings (security-severity and level per severity, info without security-severity, tags with security and framework controls capped at 20, help with remediation), results with repo-relative percent-encoded URIs, line-level regions (ADR 0052), the resource as logical location, iaceFinding/v1 fingerprints and accepted suppressions for excepted findings; coverage gaps and partial rule selections as notifications; no automationDetails, so the upload category names the run; validated against the vendored OASIS schema in golden and CLI tests. Column criterion narrowed (D-T-0302, owner to confirm)
 - [ ] T-0501 · Composite GitHub Action
   - skills: iace-ci-cd, iace-security
   - depends: T-0302
@@ -901,6 +904,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - accept:
     - action.yml takes the inputs in iace-ci-cd/references/consumer-workflow.md except `config`, `org-config` and `fail-on`, which T-0506 adds once `.iace.yaml` and `--fail-on` exist (until then they are absent, not silently ignored); build-from-source mode now, release-binary mode with checksum verification ready for M11
     - SARIF is uploaded and the summary written before the job fails on the scan result
+    - iace runs from the repository root (scan paths given relative to it), so SARIF URIs are repository-relative; the SARIF carries no automationDetails, so the action passes a category per scanned root set (ADR 0052, T-0302 review)
   - attempts: 0
 - [ ] T-0502 · Example consumer workflow and docs
   - skills: iace-ci-cd
@@ -1046,6 +1050,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205); it states that the single-object and nested-unknown checks apply only when a rule's fail/expected.yaml has a path with an index step, so a reviewer checks that a rule reading nested blocks has such a finding (T-0205c review)
     - .claude/skills/iace-loop/references/roadmap.md matches BACKLOG for the SSH rule: T-0205b ships IACE-AWS-VPC-001 (not IACE-AWS-EC2-002, which the catalog gives to EBS encryption), T-0602 is folded into it and T-0603 depends on T-0205b (T-0205b review)
+    - .claude/skills/iace-reporting/references/sarif.md shows line-level regions (ADR 0052: hcl's grapheme-cluster columns match no SARIF column kind), rules built from the findings with title as both descriptions, no automationDetails (the upload category names the run), percent-encoded URIs, help without a helpUri until docs/rules exists, coverage gaps and partial rule selections as tool execution notifications (T-0302)
     - .claude/skills/iace-architecture/references/findings-and-cli.md describes the findings report v1 as ADR 0051 does: report-level summary with status counts, min_severity, hidden, rules_evaluated and rules_loaded; per-finding policy_source, exception and ai_suggestion (null until M4/M10); the built-in digest framing; optional-field evolution within v1 (T-0301)
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines `root_module` and the fingerprint for several scan paths as ADR 0050 does (each path relative to the working directory qualifies its roots and files; outside or nested paths are usage errors) (T-0206c)
     - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
@@ -1494,6 +1499,7 @@ Goal: higher-fidelity scans from `terraform show -json` output produced by trust
   - depends: T-0902
   - accept:
     - `--source <dir>` maps config addresses to block ranges; missing locations degrade to the module directory with a warning
+    - a finding without a file location (plan mode without --source) points SARIF and the other formats at the root module's main file, line 1, and says so in the message (iace-reporting sarif.md; today startLine 0 would fail the SARIF schema, T-0302 review)
   - attempts: 0
 - [ ] T-0904 · Parity tests between HCL and plan modes
   - skills: iace-testing, iace-terraform-parsing

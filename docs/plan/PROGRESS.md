@@ -3641,3 +3641,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   status tied to exception in the schema. Not tested: the warning merge, since nothing emits
   warnings yet. The "unknown value gives no rule-level gap" follow-up joined T-0306.
 - Next: T-0302 (SARIF 2.1.0 for GitHub code scanning).
+
+### 2026-10-18 · T-0302 · done
+- What: SARIF for GitHub code scanning. `iace scan -o sarif` writes one SARIF 2.1.0 run following
+  iace-reporting's sarif.md: the driver (version; semanticVersion only for semver builds), one
+  rule per rule with a finding (PascalCase name, title, help with the remediation and first
+  reference, level and security-severity from the severity table, info without one, tags
+  security, terraform, CSP, service and framework controls, at most 20), results in report order
+  (ruleIndex, level, message, a repository-relative URI percent-encoded per segment with ":"
+  escaped, a line-level region, the resource as logical location, the iaceFinding/v1 partial
+  fingerprint, policySource, accepted external suppressions for excepted findings), and coverage
+  gaps and partial rule selections as tool execution notifications. ADR 0052: regions are
+  line-level because hcl counts grapheme clusters, which neither SARIF column kind matches
+  (the acceptance's column conversion is narrowed; D-T-0302 asks the owner to confirm), and the
+  run carries no automationDetails so the upload's category tells roots apart. The OASIS SARIF
+  2.1.0 errata01 schema is vendored in internal/report/sarif/testdata (copied unmodified from the
+  go.sum-verified gosec module, provenance and sha256 in its README).
+- Files: internal/report/sarif/{sarif.go,sarif_test.go,testdata/**}, internal/cli/{scan.go,
+  scan_test.go}, cmd/iace/testdata/script/scan_failing.txtar,
+  docs/adr/0052-emit-line-level-sarif-regions.md, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); golden and empty reports and a real scan's SARIF
+  validate against the vendored schema, which rejects an invalid document (probed).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: a fixed automationDetails.id
+  would make uploads of different roots replace each other and close alerts; the run now leaves
+  it out (ADR 0052, T-0501 passes a category per root set). Minors fixed: percent-encoded URIs
+  (also ":"), repository-root runs documented (ADR 0052, T-0501), a module resource and unicode
+  message in the golden, location-less findings recorded on T-0903. Not added: a CLI test on a
+  real non-ASCII line, since regions carry lines only. The SARIF reference sync joins T-0110b.
+- Next: T-0501 (composite GitHub Action).

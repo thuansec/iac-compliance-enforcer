@@ -16,12 +16,13 @@ import (
 	"github.com/thuansec/iac-compliance-enforcer/internal/engine"
 	"github.com/thuansec/iac-compliance-enforcer/internal/model"
 	reportjson "github.com/thuansec/iac-compliance-enforcer/internal/report/json"
+	"github.com/thuansec/iac-compliance-enforcer/internal/report/sarif"
 	"github.com/thuansec/iac-compliance-enforcer/internal/report/text"
 )
 
 // outputFormats are the report formats -o accepts; writing to files and several formats per run
 // arrive with T-0305.
-var outputFormats = []string{"text", "json"}
+var outputFormats = []string{"text", "json", "sarif"}
 
 // failOnValues are the accepted --fail-on values, most severe first; --min-severity takes the
 // same without none.
@@ -43,7 +44,7 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			"and files are named by their path. It exits 0 when no open finding\n" +
 			"is at or above --fail-on, 1 when one is, and 2 when the scan could not be trusted: a policy\n" +
 			"error, a parse error, no Terraform under PATH, a timeout, or coverage gaps with --fail-on-gaps.",
-		Example: "  iace scan\n  iace scan -o json > findings.json\n  iace scan infra/prod infra/staging\n  iace scan infra/prod --fail-on critical\n  iace scan . --var env=prod --var-file prod.tfvars",
+		Example: "  iace scan\n  iace scan -o json > findings.json\n  iace scan -o sarif > iace.sarif\n  iace scan infra/prod infra/staging\n  iace scan infra/prod --fail-on critical\n  iace scan . --var env=prod --var-file prod.tfvars",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paths := args
 			if len(paths) == 0 {
@@ -95,8 +96,11 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			}
 			// Write the report before deciding the exit code: CI keeps it even when the scan fails.
 			write := text.Write
-			if output == "json" {
+			switch output {
+			case "json":
 				write = reportjson.Write
+			case "sarif":
+				write = sarif.Write
 			}
 			if err := write(cmd.OutOrStdout(), r); err != nil {
 				return err
@@ -117,7 +121,7 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.FailOn, "fail-on", "high", "exit 1 when an open finding is at or above this severity: critical|high|medium|low|info|none")
-	f.StringVarP(&output, "output", "o", "text", "report format on stdout: text|json (json follows schemas/findings.v1.json)")
+	f.StringVarP(&output, "output", "o", "text", "report format on stdout: text|json|sarif (json follows schemas/findings.v1.json; sarif is SARIF 2.1.0 for code scanning)")
 	f.StringVar(&minSeverity, "min-severity", "info", "hide findings below this severity from the report (they still count for --fail-on): critical|high|medium|low|info")
 	f.StringArrayVar(&opts.Rules, "rule", nil, "evaluate only this rule ID (repeatable)")
 	f.BoolVar(&failOnGaps, "fail-on-gaps", false, "exit 2 when the scan has coverage gaps (parts it could not check)")
