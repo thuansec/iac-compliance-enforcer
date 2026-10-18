@@ -55,6 +55,13 @@ func NormalizeResource(r Resource) (res model.Resource, complete bool) {
 	}
 	for path, rng := range r.Attributes {
 		res.Source.Attributes[path] = modelRange(rng)
+		// An override file merges its attributes into the base block (ADR 0048).
+		if rng.Filename != "" && rng.Filename != r.File {
+			if res.Source.AttributeFiles == nil {
+				res.Source.AttributeFiles = map[string]string{}
+			}
+			res.Source.AttributeFiles[path] = rng.Filename
+		}
 	}
 	if r.CallFile != "" {
 		res.Source.ModuleCall = &model.SourceLocation{File: r.CallFile, Range: modelRange(r.CallRange)}

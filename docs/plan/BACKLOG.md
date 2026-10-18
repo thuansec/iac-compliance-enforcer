@@ -791,17 +791,18 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - root modules are evaluated concurrently with a bounded errgroup; there is an engine benchmark
   - attempts: 1
   - result: internal/engine.New compiles the loaded library once in strict mode (Rego v1, StrictBuiltinErrors) against the embedded capabilities (required; a denied builtin such as http.send is a compile error naming the file) and prepares one query mapping each rule ID to its deny set; Evaluate converts a document once (EvalParsedInput) under a per-document timeout (30 s default, EvalTimeoutError), trusts a result only while the context is live, and reports evaluation errors as PolicyError naming the file and rule with only the code, builtin name and line (never OPA's text, which quotes scanned values); EvaluateAll uses a bounded errgroup and keeps order. BenchmarkEvaluate: 49 ms (1k) and 239 ms (5k resources). Helper-module errors name the helper's file (T-0137)
-- [ ] T-0134 · Locate attributes that an override file sets in that file
+- [x] T-0134 · Locate attributes that an override file sets in that file
   - skills: iace-terraform-parsing, iace-architecture, iace-testing
   - depends: T-0109e
   - accept:
     - an attribute set by an override file keeps its range but not its file: source.attributes holds only ranges and the resource's source.file is the base file, so main_override.tf's `acl` (line 3) points at main.tf:3 in the override golden, and a finding on the weakening override would point at the wrong line (T-0109e review). Record the file per attribute (an additive contract change, with an ADR 0004 amendment, schema, model and reference) or fall back to the block range for attributes from another file; the override golden shows the right file
-  - attempts: 0
+  - attempts: 1
+  - result: source.attribute_files (ADR 0048, amending ADR 0004) maps each attribute set outside source.file, by an HCL or JSON override file and in nested blocks too, to that file; omitted when there are none, so other documents are unchanged; schema, model, normalizer and redaction copy updated; the override golden locates acl at main_override.tf:3. The harness reference update joins T-0110b
 - [ ] T-0204 · Decode violations into findings
   - skills: iace-opa-engine, iace-architecture
   - depends: T-0203, T-0134
   - accept:
-    - strict decoding; the violation's address must exist in the input; location comes from the attribute range when the path is known, otherwise the block range
+    - strict decoding; the violation's address must exist in the input; location comes from the attribute range when the path is known, otherwise the block range; an attribute's file is `source.attribute_files[path]` when present, else `source.file` (ADR 0048)
     - fingerprints are stable across runs and line shifts; tests cover each
   - attempts: 0
 - [ ] T-0205 · Ship the first rules end to end, with the fixture harness
@@ -1001,6 +1002,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
+    - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)

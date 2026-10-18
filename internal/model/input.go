@@ -137,8 +137,12 @@ type Lifecycle struct {
 type ResourceSource struct {
 	File  string `json:"file"`
 	Range Range  `json:"range"`
-	// Attributes maps a dot-joined attribute path to the range of its expression.
+	// Attributes maps a dot-joined attribute path to the range of its expression, in File unless
+	// AttributeFiles names another file.
 	Attributes map[string]Range `json:"attributes"`
+	// AttributeFiles maps the path of an attribute set in another file than File (an override
+	// file) to that file (ADR 0048); omitted when every attribute is in File.
+	AttributeFiles map[string]string `json:"attribute_files,omitempty"`
 	// ModuleCall is the module block that instantiated this resource; nil in the root module.
 	ModuleCall *SourceLocation `json:"module_call,omitempty"`
 }

@@ -110,6 +110,9 @@
               "end_line": 15,
               "end_column": 36
             }
+          },
+          "attribute_files": {
+            "acl": "main_override.tf"
           }
         }
       }

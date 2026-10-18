@@ -3361,3 +3361,22 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   minor (a value-shaped message prefix) fixed by quoting only builtin names from the capabilities.
   Deferred: naming the calling rule for helper-module errors (T-0137).
 - Next: T-0134 (locate attributes an override file sets in that file), then T-0204.
+
+### 2026-10-18 · T-0134 · done
+- What: an attribute that an override file sets is located in that file. The input document's
+  resource source gains `attribute_files` (ADR 0048, an additive amendment of ADR 0004): the
+  dot-joined path of each attribute set outside `source.file`, mapped to the file that sets it,
+  for HCL and JSON override files and nested blocks alike. It is omitted when every attribute is
+  in `source.file`, so documents without overrides are unchanged. The override golden now
+  locates the weakening `acl` at main_override.tf:3 instead of main.tf:3. T-0204 reads it first.
+- Files: internal/model/input.go, internal/terraform/{normalize.go,document_test.go},
+  internal/redact/{redact.go,positions_test.go}, schemas/input.v1.json,
+  internal/cli/testdata/inspect/override.golden.json,
+  docs/adr/0048-locate-overridden-attributes-in-their-file.md, docs/plan/BACKLOG.md,
+  docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); the new test validates documents against the schema.
+- Review: iace-reviewer APPROVE with two minors, both fixed: redaction's deep copy now clones
+  attribute_files (deep-copy test extended), and the test covers a nested-block override and a
+  .tf.json override. The input-document reference sits in the harness: its update joins T-0110b
+  (needs-human).
+- Next: T-0204 (decode violations into findings).
