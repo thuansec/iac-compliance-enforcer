@@ -3518,3 +3518,27 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   hidden findings and the summary total. Recorded: the new report-level JSON fields join T-0301's
   schema work.
 - Next: T-0206c (several paths per scan) or T-0205b/T-0207 per BACKLOG order, then M12.
+
+### 2026-10-18 · T-0206c · done
+- What: `iace scan PATH...`. app.ScanPaths keeps a single path as Scan does (names and
+  fingerprints unchanged). With several paths (ADR 0050), the CLI makes each relative to the
+  working directory (app.RelativePaths); a path outside it, or one inside another scan path, is a
+  usage error (exit 2). Paths are scanned in sorted order, and every root module, finding file,
+  coverage-gap file and input is qualified by its path, the fingerprint computed from the
+  qualified root module; summaries, hidden counts and gaps merge. `--var-file` is resolved in
+  every path.
+- Files: internal/app/{scan.go,scan_test.go}, internal/cli/scan.go,
+  cmd/iace/testdata/script/scan_paths.txtar,
+  docs/adr/0050-name-root-modules-by-path-when-scanning-several-paths.md, docs/plan/BACKLOG.md,
+  docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass). Two earlier full runs failed in internal/terraform's
+  non-race timing phase (this change does not touch it): one while the reviewer built and ran a
+  binary in parallel, one alone; `make test` run directly and five runs of that phase alone all
+  passed, and the next full run passed. The failing test's name was cut from the gate's 25-line
+  tail; keeping that phase's output is added to T-0125b.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors: paths as typed put absolute host
+  paths and `..` into reports and fingerprints (now relative to the working directory, outside is
+  refused); nested paths scanned and counted a root twice (now refused); the naming change needed
+  an ADR (0050; the findings reference update joins T-0110b). Minors fixed: sorted paths, a
+  coverage-gap case. Recorded: compile once per run (T-0139, M13).
+- Next: T-0205b (IACE-AWS-EC2-002, SSH open to the internet) and T-0207 (`iace rules`), then M12.

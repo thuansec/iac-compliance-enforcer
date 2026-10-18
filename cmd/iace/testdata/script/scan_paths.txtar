@@ -1,0 +1,61 @@
+# Several paths in one run: each root module and file is named by its path, so two roots "."
+# do not collide.
+! exec iace scan a b
+stdout '^  a/main.tf:6  IACE-AWS-EC2-001  aws_instance.web  '
+stdout '^  b/main.tf:6  IACE-AWS-EC2-001  aws_instance.web  '
+stdout '^2 findings \(critical 0, high 2, medium 0, low 0, info 0\); 2 blocking at fail-on high$'
+stdout '^Scanned 2 root modules: a, b$'
+
+# A repeated path is scanned once, named as a single-path scan names it.
+! exec iace scan a a/
+stdout '^Scanned 1 root module: \.$'
+
+# A path without Terraform fails the whole run.
+! exec iace scan a empty
+! stdout .
+stderr 'scan empty: no Terraform root modules under this path'
+
+# Nested paths would scan and count a root twice: a usage error.
+! exec iace scan b b/sub
+! stdout .
+stderr 'b/sub: is inside another scan path \(b\)'
+
+# Absolute paths are named relative to the working directory: no host path in the report.
+! exec iace scan $WORK/a $WORK/b
+stdout '^  a/main.tf:6  IACE-AWS-EC2-001'
+! stdout $WORK
+
+# A path outside the working directory cannot be named that way.
+cd a
+! exec iace scan . ../b
+stderr '../b: is outside the working directory'
+cd ..
+
+# Coverage gaps are named by their path too.
+! exec iace scan a c
+stdout '^  c: parse_error c/bad.tf:'
+
+-- a/main.tf --
+resource "aws_instance" "web" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}
+-- b/main.tf --
+resource "aws_instance" "web" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}
+-- empty/README.md --
+nothing
+-- c/bad.tf --
+resource "aws_instance" "broken" {
+  ami =
+}

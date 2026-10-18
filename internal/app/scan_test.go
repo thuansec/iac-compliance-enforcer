@@ -5,7 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/thuansec/iac-compliance-enforcer/internal/model"
 )
 
 func TestScanFindsAndSummarizes(t *testing.T) {
@@ -55,5 +58,75 @@ func TestScanLocatesFindingsInOverrideFiles(t *testing.T) {
 	}
 	if loc := r.Findings[0].Location; loc.File != "main_override.tf" || loc.StartLine != 3 {
 		t.Errorf("location %+v, want main_override.tf:3", loc)
+	}
+}
+
+func TestScanPathsNamesRootsByPath(t *testing.T) {
+	// Several paths must lie inside the working directory: scan from the repository root.
+	t.Chdir("../..")
+	fail := filepath.Join("testdata", "policies", "IACE-AWS-EC2-001", "fail")
+	json := filepath.Join("testdata", "policies", "IACE-AWS-EC2-001", "fail_json")
+	r, err := ScanPaths(context.Background(), []string{fail, json}, ScanOptions{FailOn: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 3 || r.Summary.High != 3 || r.Summary.Blocking != 3 || len(r.Inputs) != 2 {
+		t.Fatalf("report %+v", r)
+	}
+	fps := map[string]bool{}
+	for _, f := range r.Findings {
+		if !strings.HasPrefix(f.Location.File, filepath.ToSlash(f.RootModule)+"/") {
+			t.Errorf("finding %s at %s: file not under its root module", f.RootModule, f.Location.File)
+		}
+		if f.Fingerprint != model.Fingerprint(f.RuleID, f.RootModule, f.Resource.Address, f.AttributePath) {
+			t.Errorf("fingerprint of %+v does not use the path-qualified root module", f)
+		}
+		fps[f.Fingerprint] = true
+	}
+	// aws_instance.optional exists under both paths: distinct roots, distinct fingerprints.
+	if len(fps) != 3 {
+		t.Errorf("%d distinct fingerprints, want 3", len(fps))
+	}
+}
+
+func TestScanPathsWithOnePathIsScan(t *testing.T) {
+	fail := filepath.Join(fixtureRoot, "IACE-AWS-EC2-001", "fail")
+	a, err := Scan(context.Background(), fail, ScanOptions{FailOn: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ScanPaths(context.Background(), []string{fail}, ScanOptions{FailOn: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Findings[0].Fingerprint != b.Findings[0].Fingerprint || b.Inputs[0] != "." {
+		t.Errorf("a single path must keep scan's names: %+v vs %+v", a.Inputs, b.Inputs)
+	}
+}
+
+func TestRelativePaths(t *testing.T) {
+	cwd := filepath.FromSlash("/work/repo")
+	got, err := RelativePaths(cwd, []string{filepath.FromSlash("/work/repo/infra/a"), "infra/b"})
+	if err != nil || filepath.ToSlash(got[0]) != "infra/a" || filepath.ToSlash(got[1]) != "infra/b" {
+		t.Errorf("RelativePaths = %v, %v", got, err)
+	}
+	var pe *PathError
+	if _, err := RelativePaths(cwd, []string{"a", filepath.FromSlash("/elsewhere/b")}); !errors.As(err, &pe) {
+		t.Errorf("a path outside cwd: error %v, want a PathError", err)
+	}
+	if _, err := RelativePaths(cwd, []string{"a", "../b"}); !errors.As(err, &pe) {
+		t.Errorf("a ../ path: error %v, want a PathError", err)
+	}
+	if got, err := RelativePaths(cwd, []string{filepath.FromSlash("/elsewhere/only")}); err != nil || len(got) != 1 {
+		t.Errorf("a single path stays as given: %v, %v", got, err)
+	}
+}
+
+func TestScanPathsRejectsNestedPaths(t *testing.T) {
+	var pe *PathError
+	for _, paths := range [][]string{{"a", "a/b"}, {".", "a"}} {
+		if _, err := ScanPaths(context.Background(), paths, ScanOptions{FailOn: "high"}); !errors.As(err, &pe) {
+			t.Errorf("%v: error %v, want a PathError", paths, err)
+		}
 	}
 }

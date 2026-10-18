@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,19 +30,27 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 		minSeverity string
 	)
 	cmd := &cobra.Command{
-		Use:   "scan [PATH]",
-		Short: "Check the Terraform under PATH against the policies",
-		Long: "scan loads the Terraform under PATH (default \".\") without executing anything, evaluates\n" +
-			"every rule over each root module and prints the findings. It exits 0 when no open finding\n" +
+		Use:   "scan [PATH...]",
+		Short: "Check the Terraform under each PATH against the policies",
+		Long: "scan loads the Terraform under each PATH (default \".\") without executing anything, evaluates\n" +
+			"every rule over each root module and prints the findings; with several paths, root modules\n" +
+			"and files are named by their path. It exits 0 when no open finding\n" +
 			"is at or above --fail-on, 1 when one is, and 2 when the scan could not be trusted: a policy\n" +
 			"error, a parse error, no Terraform under PATH, a timeout, or coverage gaps with --fail-on-gaps.",
-		Example: "  iace scan\n  iace scan infra/prod --fail-on critical\n  iace scan . --var env=prod --var-file prod.tfvars",
-		Args:    cobra.MaximumNArgs(1),
+		Example: "  iace scan\n  iace scan infra/prod infra/staging\n  iace scan infra/prod --fail-on critical\n  iace scan . --var env=prod --var-file prod.tfvars",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "."
-			if len(args) == 1 {
-				path = args[0]
+			paths := args
+			if len(paths) == 0 {
+				paths = []string{"."}
 			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return &exitCodeError{code: exitError, msg: fmt.Sprintf("scan: working directory: %v", err)}
+			}
+			if paths, err = app.RelativePaths(cwd, paths); err != nil {
+				return err
+			}
+			path := strings.Join(paths, " ")
 			if !slices.Contains(failOnValues, opts.FailOn) {
 				return fmt.Errorf("invalid value for the \"--fail-on\" flag: want one of %v", failOnValues)
 			}
@@ -59,8 +69,12 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			opts.Policies = policies
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			r, err := app.Scan(ctx, path, opts)
+			r, err := app.ScanPaths(ctx, paths, opts)
 			var unknownRule *engine.UnknownRuleError
+			var pathErr *app.PathError
+			if errors.As(err, &pathErr) {
+				return err
+			}
 			if errors.As(err, &unknownRule) {
 				return fmt.Errorf("--rule argument %d names no loaded rule (rule IDs look like IACE-AWS-EC2-001)", unknownRule.Index)
 			}
@@ -95,7 +109,7 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 	f.BoolVar(&failOnGaps, "fail-on-gaps", false, "exit 2 when the scan has coverage gaps (parts it could not check)")
 	f.DurationVar(&timeout, "timeout", 5*time.Minute, "abort the whole scan after this long, with exit 2")
 	f.StringArrayVar(&opts.Vars, "var", nil, "set a root variable, NAME=VALUE (repeatable)")
-	f.StringArrayVar(&opts.VarFiles, "var-file", nil, "read root variables from a tfvars file relative to PATH (repeatable)")
+	f.StringArrayVar(&opts.VarFiles, "var-file", nil, "read root variables from a tfvars file relative to PATH, in every PATH (repeatable)")
 	f.BoolVar(&opts.TrustModuleManifest, "trust-module-manifest", false,
 		"resolve remote modules through .terraform/modules/modules.json (also "+envTrustModuleManifest+"=true);\n"+
 			"only for a pipeline that ran terraform init itself in a trusted step")
