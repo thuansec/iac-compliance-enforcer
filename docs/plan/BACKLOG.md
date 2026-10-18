@@ -867,12 +867,13 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - re-scoped (2026-10-18): the task named the rule IACE-AWS-EC2-002, which the iace-cloud-controls catalog assigns to EBS encryption (IDs are never reused); the catalog's rule for this check is IACE-AWS-VPC-001 (ports 22 and 3389, IPv4 and IPv6, mappings EC2.13, EC2.14, EC2.53, EC2.54), so this task ships it and T-0602 is folded in
   - attempts: 1
   - result: IACE-AWS-VPC-001 (high, aws-securityhub EC2.13/EC2.14/EC2.53/EC2.54 from the catalog, not re-checked on the AWS page in this change) flags inline security group ingress, aws_security_group_rule ingress and aws_vpc_security_group_ingress_rule entries with a known 0.0.0.0/0 or ::/0 source and protocol -1/all or a non-ICMP port range covering 22 or 3389; quoted ports count as numbers; unknown sources, ports, protocol or rule type skip the entry (no finding; the input document lists them as unknown); Rego tests at 100% and the four fixture kinds. Re-scoped from IACE-AWS-EC2-002 (the catalog's EBS rule); T-0602 folded in
-- [ ] T-0207 · Implement `iace rules list` and `iace rules show <id>`
+- [x] T-0207 · Implement `iace rules list` and `iace rules show <id>`
   - skills: iace-architecture, iace-opa-engine
   - depends: T-0206
   - accept:
     - list shows ID, severity, CSP, title and source; show prints the full metadata and remediation; testscript covers both
-  - attempts: 0
+  - attempts: 1
+  - result: `iace rules list [--csp X]` prints ID, severity, CSP, source (builtin) and title in aligned columns; `iace rules show ID` prints every metadata field (frameworks, params when declared, deprecation, references with their descriptions) and the remediation, each on one line without control characters; both check the library exactly as a scan does (load, capabilities, compile), so a library a scan refuses exits 2 here too; an unknown ID exits 2
 
 ## M12 · Pull-request demo — status: active
 Goal: a pull request on GitHub runs iace, shows its findings in code scanning and fails the check, before M3–M5 are complete.
@@ -1033,7 +1034,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - accept:
     - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
     - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
-    - `make test` keeps the non-race phase's full output (as it tees the race phase to .cache/test-race.out), so a failing timing test is named: gates.sh shows only the last 25 lines and deletes its logs, and T-0202, T-0203 and T-0206c each hit a failure in that phase whose test name was lost (it passed on rerun and in repeated runs alone)
+    - (done in T-0207) `make test` keeps the non-race phase's full output (as it tees the race phase to .cache/test-race.out), so a failing timing test is named: gates.sh shows only the last 25 lines and deletes its logs, and T-0202, T-0203 and T-0206c each hit a failure in that phase whose test name was lost (it passed on rerun and in repeated runs alone)
   - attempts: 0
 - [!] T-0110b · Sync the input-document reference with ADR 0045 and ADR 0046
   - skills: iace-architecture

@@ -3564,3 +3564,25 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   with a port helper, Rego tests and a quoted-port fixture. Minors fixed: T-0602 kept as a stub,
   a protocol "ALL" test. Recorded: the harness roadmap's T-0205b/T-0602 entries join T-0110b.
 - Next: T-0207 (`iace rules list` and `iace rules show`), the last M2 task.
+
+### 2026-10-18 · T-0207 · done
+- What: `iace rules list` and `iace rules show`. app.Rules checks the policy library exactly as a
+  scan does (metadata, capabilities, compilation), so a rule is never listed as loaded when a
+  scan would refuse it. `rules list [--csp aws|azure|generic]` prints ID, severity, CSP, source
+  ("builtin" until external bundles) and title in aligned columns; `rules show ID` prints the
+  title, severity, CSP, service, resource types, frameworks (or none), source, package,
+  deprecation and params when present, description, remediation and references with their
+  descriptions, every field on one line without control characters. An unknown ID or a broken
+  library exits 2. Outside the task: `make test` now tees the non-race timing phase to
+  .cache/test-nonrace.out (T-0125b's diagnostic step), because two full gate runs failed there
+  again with the test name cut from the gate's 25-line tail; the next run passed.
+- Files: internal/app/rules.go, internal/cli/{rules.go,rules_test.go,cli.go},
+  cmd/iace/testdata/script/rules.txtar, Makefile, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass) after two runs failed in internal/terraform's timing
+  phase (untouched; the race phase was clean).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: the commands only parsed the
+  library, so a rule that does not compile was listed as loaded while scan exits 2; fixed by
+  compiling as a scan does, with broken-policy testscripts. Minors fixed: every field sanitized,
+  aligned columns, params and reference descriptions shown, fuller show assertions and a unit
+  test, a missing-argument assertion.
+- Next: the M2 wrap-up (every M2 task is done).

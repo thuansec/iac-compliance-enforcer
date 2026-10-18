@@ -53,11 +53,11 @@ NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberF
 # many seconds, so the margin is watched rather than found by a timeout (T-0125).
 TEST_WATCH_SECONDS := 360
 
-test: ## race-enabled, shuffled tests with a coverage profile, then the CPU-bound timing tests in NONRACE_TESTS without -race
+test: ## race-enabled, shuffled tests with a coverage profile, then the CPU-bound timing tests in NONRACE_TESTS without -race (outputs kept in .cache/test-*.out)
 	@mkdir -p .cache
 	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./... | tee .cache/test-race.out
 	@scripts/test-time-watch.sh .cache/test-race.out $(TEST_WATCH_SECONDS)
-	$(GO) test -count=1 -v -run '$(NONRACE_TESTS)' ./internal/terraform/
+	$(GO) test -count=1 -v -run '$(NONRACE_TESTS)' ./internal/terraform/ | tee .cache/test-nonrace.out
 
 cover-check: ## overall Go coverage from coverage.out must be at least COVERAGE_MIN
 	@[[ -f coverage.out ]] || { echo "cover-check: coverage.out is missing; run make test first"; exit 1; }
