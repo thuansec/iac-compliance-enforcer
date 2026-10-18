@@ -3291,3 +3291,24 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   accepts one uncounted sort of a set of fractions per set value a module evaluation measures.
 - Next milestone: M2 (policy engine and `iace scan`), active and pre-approved with M12.
 
+### 2026-10-18 · T-0201 · done
+- What: the policy library skeleton. policies/ is seeded from the iace-rego-policies assets
+  (iace.lib.tf, IACE-AWS-EC2-001 with its tests) and embedded (policies.FS, `all:iace` plus
+  capabilities.json). `make capabilities` filters the pinned OPA's capabilities through `opa
+  eval` minus the denylist (no Go program: forbidigo keeps os.Exit in the CLI). The path helpers
+  follow ADR 0006: a 0 against an object resolves to the object, unknown and sensitive paths match
+  in the stored shape, paths over 12 steps count as unknown and sensitive (fail closed);
+  tf.blocks returns a list for both shapes. policies/README.md is the rule-writing guide; a Go
+  test rejects rule files that read values directly.
+- Files: policies/{embed.go,policies_test.go,README.md,capabilities.json,iace/**}, .regal/config.yaml,
+  Makefile, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 466 s, policy-check and policy-test now run);
+  Rego coverage 100%; Regal clean; the regenerated capabilities file is byte-identical.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: the lint missed values[name][0],
+  every … in, bracket prefixes and object.get with a 0 step (each a silent miss of a JSON
+  single-object block), fixed with test cases. Minors fixed: # inside strings, blocks on an
+  unknown block (documented and tested), embed of _ and . files, atomic capabilities write,
+  single-object tests for the rule, 12-step tests. Second round minor (a leading 0 in an
+  object.get path) and aliasing: T-0135.
+- Next: T-0202 (load modules and validate rule metadata, fail closed).
+

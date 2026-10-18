@@ -12,7 +12,7 @@ TOOLS := golangci-lint govulncheck actionlint regal opa
 COVERAGE_MIN := 80
 tool = $(GO) tool -modfile=tools/$(1)/go.mod $(1)
 
-.PHONY: help ci fmt-check lint test cover-check policy-check policy-test vuln build tidy-check fmt tools
+.PHONY: help ci fmt-check lint test cover-check policy-check policy-test vuln build tidy-check fmt tools capabilities
 
 help: ## list the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -66,6 +66,16 @@ cover-check: ## overall Go coverage from coverage.out must be at least COVERAGE_
 	  awk -v t="$$total" -v min=$(COVERAGE_MIN) 'BEGIN { \
 	    if (t + 0 < min + 0) { printf "cover-check: %.1f%% is below %d%%\n", t, min; exit 1 } \
 	    printf "cover-check: %.1f%% (minimum %d%%)\n", t, min }'
+
+# Builtins policies must not call: network, host and non-deterministic ones (net.cidr_* stay,
+# they are pure CIDR math). The file is also an allowlist: builtins added by later OPA releases
+# appear only when someone runs make capabilities and reviews the diff (iace-opa-engine).
+CAPABILITIES_DENY := ["http.send", "net.lookup_ip_addr", "opa.runtime", "time.now_ns", "rand.intn", "uuid.rfc4122"]
+
+capabilities: ## regenerate policies/capabilities.json from the pinned OPA, minus the denylist
+	$(call tool,opa) capabilities --current | $(call tool,opa) eval --stdin-input --format=raw \
+	  'json.marshal_with_options(object.union(input, {"builtins": [b | some b in input.builtins; not b.name in $(CAPABILITIES_DENY)], "allow_net": []}), {"pretty": true, "indent": " "})' \
+	  > policies/capabilities.json.tmp && mv policies/capabilities.json.tmp policies/capabilities.json
 
 policy-check: ## strict compile of the policies with the restricted capabilities
 	@if [[ -d policies ]]; then $(call tool,opa) check --strict --capabilities policies/capabilities.json policies; \

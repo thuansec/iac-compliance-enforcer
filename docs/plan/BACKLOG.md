@@ -763,7 +763,7 @@ locations and without executing anything.
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.
 Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues from M1 into the demo path; the M1 wrap-up leaves them active instead of awaiting-approval. pause_at_milestone_end still applies to later milestones.
 
-- [ ] T-0201 · Create the policy library skeleton
+- [x] T-0201 · Create the policy library skeleton
   - skills: iace-rego-policies, iace-opa-engine
   - depends: T-0109e
   - accept:
@@ -772,7 +772,8 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - .regal/config.yaml copied from `assets/regal-config.yaml`; `regal lint policies` is clean; `make policy-check policy-test` passes with at least 90% coverage
     - the path helpers (`value_or`, `is_unknown`, `is_sensitive`, `blocks`) resolve an integer step 0 against an object as the object, and rewrite queried paths against values before matching unknown/sensitive paths (ADR 0006); `blocks(values, name)` returns an array, a one-element array for an object, or an empty array; tests cover both shapes
     - the rule-writing guide requires `tf.blocks` for every iteration over a nested block's entries; a lint (Regal custom rule or Go test over policies/) rejects rule files that index `values` with a literal `[0]`, or iterate it with `[_]` or `some … in`, instead of the helpers
-  - attempts: 0
+  - attempts: 1
+  - result: policies/ seeded (iace.lib.tf, IACE-AWS-EC2-001 and tests) and embedded (all:iace, every .rego checked); make capabilities filters `opa capabilities --current` of the pinned OPA 1.21.1 through opa eval (no Go program), 200 builtins, the six denied ones absent and allow_net empty, tested; .regal/config.yaml; the path helpers walk up to 12 steps resolving a 0 against an object as the object, match unknown and sensitive paths in the stored shape, and treat longer paths as unknown and sensitive (fail closed); tf.blocks returns a list for both shapes ([] also for an unknown block, documented); policies/README.md is the rule-writing guide; a Go test rejects rule files that read values directly ([0], [_], some/every … in, object.get with a 0 step). Rego coverage 100%; lint false negatives through aliasing are T-0135
 - [ ] T-0202 · Load modules and validate rule metadata (fail closed)
   - skills: iace-opa-engine, iace-rego-policies
   - depends: T-0201
@@ -1001,6 +1002,13 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
   - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
+
+- [ ] T-0135 · Catch aliased and leading-zero reads of values in rule files with a Regal rule
+  - skills: iace-rego-policies, iace-testing
+  - depends: T-0201
+  - accept:
+    - a Regal custom rule (AST-based) replaces or backs the regex lint of policies_test.go: it flags reads of a nested block through an alias (`mo := r.values.metadata_options; mo[0]`, `some i; r.values.x[i]`) and object.get paths whose first step is 0 (`object.get(r.values.metadata_options, [0, "http_tokens"], "")`), which the regexes miss (T-0201 review); tests per case
+  - attempts: 0
 
 ## M3 · Reports — status: planned
 Goal: machine- and human-readable outputs that CI systems and GitHub understand.
