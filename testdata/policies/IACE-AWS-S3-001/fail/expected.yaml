@@ -1,0 +1,7 @@
+findings:
+  - address: aws_s3_bucket_public_access_block.reports
+    attribute_path: [block_public_policy]
+  - address: aws_s3_bucket_public_access_block.reports
+    attribute_path: [restrict_public_buckets]
+  - address: aws_s3_account_public_access_block.this
+    attribute_path: [ignore_public_acls]

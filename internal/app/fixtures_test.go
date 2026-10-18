@@ -20,10 +20,12 @@ import (
 // fixtureRoot holds one directory per rule ID (iace-testing, policy fixture harness).
 const fixtureRoot = "../../testdata/policies"
 
-// fixtureKinds are the directories every rule must have: violating HCL, violating .tf.json with
-// nested blocks written as single objects (ADR 0006), compliant variants, and an unknown nested
-// value, which is neither a violation nor a pass. Each may hold several root modules in
-// subdirectories, scanned separately.
+// fixtureKinds are the directories every rule must have: violating HCL, violating .tf.json,
+// compliant variants, and an unknown judged value, which is neither a violation nor a pass, from
+// both HCL and .tf.json. For a rule whose fail fixture expects findings inside nested blocks
+// (judgesNestedBlocks), fail_json writes those blocks as single objects and the unknown value
+// sits inside one (ADR 0006). Each kind may hold several root modules in subdirectories, scanned
+// separately.
 var fixtureKinds = []string{"fail", "fail_json", "pass", "unknown"}
 
 type expectedFindings struct {
@@ -117,7 +119,7 @@ func TestPolicyFixtures(t *testing.T) {
 					}
 				}
 				if kind == "unknown" {
-					checkUnknownNested(t, docs, r)
+					checkUnknown(t, docs, r, judgesNestedBlocks(t, r))
 				}
 			})
 		}
@@ -204,8 +206,8 @@ func checkSingleObjectBlocks(t *testing.T, dir string, docs []*model.InputDocume
 			blocks[f.Address] = append(blocks[f.Address], name)
 		}
 	}
-	if len(blocks) == 0 {
-		t.Errorf("rule %s: fail_json's expected findings index into no nested block, so it cannot show the single-object shape", r.ID)
+	if len(blocks) == 0 && judgesNestedBlocks(t, r) {
+		t.Errorf("rule %s judges nested blocks, but fail_json's expected findings index into none, so it cannot show the single-object shape", r.ID)
 	}
 	for _, doc := range docs {
 		for _, res := range doc.Resources {
@@ -218,11 +220,27 @@ func checkSingleObjectBlocks(t *testing.T, dir string, docs []*model.InputDocume
 	}
 }
 
-// checkUnknownNested requires, in resources of the rule's types, an unknown value inside a
-// nested block in both shapes (ADR 0006): from HCL, where the stored path holds the block's
-// index, and from .tf.json with the block written as one object, where it has none. A rule that
-// compares paths itself instead of calling tf.is_unknown fails one of them.
-func checkUnknownNested(t *testing.T, docs []*model.InputDocument, r engine.Rule) {
+// judgesNestedBlocks reports whether r's fail fixture expects a finding inside a nested block
+// (a path with an index step). Only such rules can show ADR 0006's single-object shape.
+func judgesNestedBlocks(t *testing.T, r engine.Rule) bool {
+	t.Helper()
+	_, exp := expected(t, filepath.Join(fixtureRoot, r.ID, "fail"))
+	for _, f := range exp.Findings {
+		for _, step := range f.AttributePath {
+			if _, isIndex := step.(int); isIndex {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkUnknown requires, in resources of the rule's types, an unknown value both from HCL and
+// from .tf.json. For a rule that judges nested blocks the value must sit inside one, in both
+// shapes (ADR 0006): from HCL the stored path holds the block's index, and from .tf.json with
+// the block written as one object it has none, so a rule that compares paths itself instead of
+// calling tf.is_unknown fails one of them.
+func checkUnknown(t *testing.T, docs []*model.InputDocument, r engine.Rule, nested bool) {
 	t.Helper()
 	var fromHCL, fromJSON bool
 	for _, doc := range docs {
@@ -232,19 +250,26 @@ func checkUnknownNested(t *testing.T, docs []*model.InputDocument, r engine.Rule
 			}
 			isJSON := strings.HasSuffix(res.Source.File, ".tf.json")
 			for _, p := range res.Unknown {
-				if len(p) < 2 {
-					continue
-				}
 				indexed := slices.ContainsFunc(p, model.PathStep.IsIndex)
-				fromHCL = fromHCL || (!isJSON && indexed)
-				fromJSON = fromJSON || (isJSON && !indexed)
+				switch {
+				case !nested:
+					fromHCL = fromHCL || !isJSON
+					fromJSON = fromJSON || isJSON
+				case len(p) >= 2:
+					fromHCL = fromHCL || (!isJSON && indexed)
+					fromJSON = fromJSON || (isJSON && !indexed)
+				}
 			}
 		}
 	}
+	where := "unknown value"
+	if nested {
+		where = "unknown value inside a nested block"
+	}
 	if !fromHCL {
-		t.Errorf("the unknown fixture has no unknown value inside an HCL nested block of a %v resource", r.ResourceTypes)
+		t.Errorf("the unknown fixture has no %s from HCL in a %v resource", where, r.ResourceTypes)
 	}
 	if !fromJSON {
-		t.Errorf("the unknown fixture has no unknown value inside a .tf.json single-object block of a %v resource", r.ResourceTypes)
+		t.Errorf("the unknown fixture has no %s from .tf.json in a %v resource", where, r.ResourceTypes)
 	}
 }
