@@ -3586,3 +3586,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   aligned columns, params and reference descriptions shown, fuller show assertions and a unit
   test, a missing-argument assertion.
 - Next: the M2 wrap-up (every M2 task is done).
+
+## 2026-10-18 · M2 · Policy engine and walking skeleton · done
+- What now works: `iace scan [PATH...]` loads Terraform statically, compiles the embedded Rego
+  library once per path with OPA in strict mode against restricted capabilities, evaluates every
+  root module under a timeout, decodes violations strictly into located, fingerprinted findings
+  (override files located in their own file, ADR 0048; fingerprints per ADR 0049 and 0050) and
+  prints a text report with coverage gaps, then exits 0, 1 (open findings at or above
+  --fail-on) or 2 (anything that makes the scan untrustworthy: policy, parse or path errors, no
+  Terraform, timeout, gaps with --fail-on-gaps). Four rules ship with Rego tests and the four
+  fixture kinds the harness enforces: IACE-AWS-EC2-001 (IMDSv2), IACE-AWS-S3-001 (block public
+  access), IACE-AZURE-STORAGE-001 (minimum TLS 1.2), IACE-AWS-VPC-001 (SSH/RDP from the
+  internet). `iace rules list|show` describes them. Flag errors never repeat values, report
+  fields from the repository cannot forge lines, and evaluation errors never quote scanned values.
+- How to try it: `go run ./cmd/iace scan testdata/policies/IACE-AWS-VPC-001/fail` (exit 1 with
+  four findings), `go run ./cmd/iace scan --rule IACE-AWS-S3-001 --min-severity high .`,
+  `go run ./cmd/iace rules list`, `go run ./cmd/iace rules show IACE-AWS-VPC-001`.
+- Known gaps and follow-ups: framework keys are not checked against the catalog (T-0136); a
+  helper module's evaluation error names the helper, not the calling rule (T-0137); unknown
+  violation keys are not logged (T-0138); several paths compile the policies once per path
+  (T-0139); unknown judged values give no finding but no rule-level coverage gap either (the
+  input document lists them); the JSON encoding of findings is T-0301's; the harness references
+  (input document, findings and CLI, testing skill, roadmap) await the owner in T-0110b; the
+  non-race timing tests fail now and then under the gate (T-0125b; their output is now kept in
+  .cache/test-nonrace.out); Security Hub mappings come from the catalog (checked 2026-10-01), not
+  re-checked on the AWS pages.
+- Next milestone: M12 (pull-request gating: JSON and SARIF reports, CI wiring), active and
+  pre-approved with M2; pause_at_milestone_end applies after it.

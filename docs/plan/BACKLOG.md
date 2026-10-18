@@ -759,7 +759,7 @@ locations and without executing anything.
   - attempts: 1
   - result: the six fixed 2 s and 5 s wall-clock limits in convert_internal_test.go and conditional_internal_test.go are scaled by raceSlowdown; the raceSlowdown note says why scaling is proportional, not a weakening, that the quick gate enforces the unscaled bounds while the full gate and CI run with -race, and which caps (20 s, 120 s) are already sized for -race
 
-## M2 · Policy engine and walking skeleton — status: active
+## M2 · Policy engine and walking skeleton — status: done
 Goal: `iace scan <path>` evaluates embedded Rego with OPA and prints findings; every error fails closed.
 Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues from M1 into the demo path; the M1 wrap-up leaves them active instead of awaiting-approval. pause_at_milestone_end still applies to later milestones.
 
