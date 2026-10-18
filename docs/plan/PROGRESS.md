@@ -3251,3 +3251,43 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
 - Next: T-0125 (the race-enabled package is again close to the timeout), T-0125b, then M1's
   wrap-up once the owner applies T-0110b.
 
+### 2026-10-18 · T-0125 · progress (moved to M13)
+- What: make test watches the margin to go test's 10-minute timeout: the race step's output is
+  saved to .cache/test-race.out and scripts/test-time-watch.sh warns (stderr, and a GitHub
+  Actions annotation) for each package over TEST_WATCH_SECONDS (360 s), or says so when it finds
+  no timing line; it only warns. TestEvaluateRootsCreatesABudget (136 s under -race, 7 s without)
+  and TestConversionsIntoSetsAreBounded (77 s under -race, 5.5 s without), sequential
+  single-threaded lexing and set sorting, join NONRACE_TESTS. Owner decision (2026-10-17, PoC
+  first): no further timing work now; T-0125 (open, with these measurements), T-0125b and the
+  owner's T-0110b move to M13, which completes M1.
+- Files: Makefile, scripts/test-time-watch.sh, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step 455 s); internal/terraform 425–443 s under
+  -race in make test, 348 s alone with -json on a quiet machine; coverage of internal/terraform
+  unchanged at 95%. One gate run failed on the load-sensitive TestRepeatedNumberFormattingIsBounded
+  (T-0125b) and passed when rerun. CI run 39077367545 was the 600.4 s timeout of PR #105.
+- Review: iace-reviewer CHANGES_REQUIRED. Major: "well under 8 minutes under -race" was not
+  shown, so the task stays open as progress, not done. Minors: the watch claimed success on
+  empty input (fixed), the test help text (fixed), a fixture test for the script (in the task).
+- Next: M1 wrap-up (below), then the PoC path: T-0201.
+
+## 2026-10-18 · M1 · Terraform loading (static HCL) · done
+- What now works: iace loads a directory of Terraform without executing anything: safe discovery
+  with confined file access and limits; HCL and JSON parsing with override files; static
+  evaluation of variables, locals, a curated pure function table, count, for_each and dynamic
+  blocks; local and manifest-trusted remote modules; references, provider versions and
+  sensitivity; bounded work against crafted input. Each root becomes an input document v1
+  (resources, providers, module calls, variables, outputs) with coverage gaps for everything not
+  checked (ADR 0046) and secrets redacted (internal/redact).
+- How to try it: `go run ./cmd/iace inspect ./infra` (a summary per root) or `--json` (the input
+  documents policies will evaluate); `--var`, `--var-file`, `--trust-module-manifest`. Golden
+  fixtures: testdata/terraform/e2e/.
+- Known gaps, deferred by the owner's scope decision to M13 (loader hardening): number magnitude
+  and formatting charges (T-0115, T-0117), resource memory weighting (T-0118), non-nullable
+  variables (T-0119), reference flags (T-0121), provider configuration values (T-0122), nested
+  marks (T-0126b, T-0127), per-code gap kinds and the 1k-resource benchmark (T-0109b), JSON
+  template literals (T-0128), JSON dynamic arrays (T-0129, T-0130), tree directories (T-0131),
+  secret-shaped keys and name/value redaction (T-0132, T-0133), test-suite time and load-tolerant
+  timing tests (T-0125, T-0125b), and the harness reference sync (T-0110b, owner). ADR 0047
+  accepts one uncounted sort of a set of fractions per set value a module evaluation measures.
+- Next milestone: M2 (policy engine and `iace scan`), active and pre-approved with M12.
+

@@ -8,6 +8,7 @@ the scanner works end to end early (M2) and then grows in depth.
 Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-policy.json`.
 - pause_at_milestone_end: yes
 - max_attempts_per_task: 3
+- scope (owner decision 2026-10-17): PoC first. Build the smallest working path: M2 (`iace scan` with a few real rules) on basic, realistic repositories, then M12 (findings in a pull request). Do not add new cost, budget, crafted-input or test-timing requirements while it is built: such review findings become M13 follow-ups. Findings that make a failure pass silently (fail-open) or leak a secret still block a merge
 
 ## Decisions needed
 - none open (D-T-0124e decided 2026-10-17: option (b); see T-0124e)
@@ -92,7 +93,7 @@ Goal: a buildable Go repository wired to GitHub, with pinned tools, gates, CI an
   - attempts: 1
   - result: owner-approved harness edits: the golangci asset uses gofumpt `extra.group-params` (the repo config's body is again identical to it); the iace-ci-cd skill lists the CI jobs as ci.yml has them and says both rulesets are active
 
-## M1 · Terraform loading (static HCL) — status: active
+## M1 · Terraform loading (static HCL) — status: done
 Goal: turn a directory of Terraform into the normalized input document v1, with exact source
 locations and without executing anything.
 
@@ -342,16 +343,6 @@ locations and without executing anything.
     - the output is deterministic: the same evaluation encodes byte-identically (sorted paths, references and attribute keys)
   - attempts: 1
   - result: terraform.NormalizeResource turns an evaluated Resource into a model.Resource with every field; unknowns are null and listed (the evaluator's list plus any the walk meets, outermost only, sorted index before name), sensitive marks become paths (a mark on the whole value marks every attribute), paths follow the value's type (a step into a set reports the set), numbers are int64-exact or float64 with out-of-range and underflow unknown and no decimal formatting (10,000 numbers of 8,192 bits in about 10 ms); complete=false when the value is not a known object or the evaluator reports it wholly unknown (over 1024 unknown paths collapse into one), which T-0109d turns into a gap. ADR 0045 records the rules and amends the column unit to hcl's characters; the harness reference follows in T-0110b (needs-human)
-- [!] T-0110b · Sync the input-document reference with ADR 0045 and ADR 0046
-  - skills: iace-architecture
-  - depends: T-0109
-  - accept:
-    - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
-    - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
-    - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
-    - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
-  - attempts: 0
-  - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 - [x] T-0109c · Assemble one input document per evaluated root
   - skills: iace-terraform-parsing, iace-testing, iace-architecture
   - depends: T-0109
@@ -740,22 +731,6 @@ locations and without executing anything.
     - a local refused as too large, by its estimate or after evaluation, whose expression calls sensitive() is a marked unknown even with plain inputs: the estimate path treats a sensitive() call as a marked input, and evalLocal's refusal after evaluation adds that fact to inputsSensitive's (today the marks come only from inputs, T-0116j). TestTooLargeLocalsAreMarkedByTheirInputs gains such a case for each path
   - attempts: 1
   - result: sensitive(x) is x marked sensitive and nonsensitive(x) is x without the mark on x itself (nested marks stay), both with x's type. Departure from the acceptance text: nonsensitive of a value that is not sensitive returns it unchanged without an error. Terraform's current implementation returns no error, and its documentation says the function makes no changes to such values; only the docs' console example still shows the error of older releases, so do not restore it. Each call is charged 8 walks of its argument and its sorts twice (markBounded: cty's ContainsMarked and type check run before and after every call; 400 nested calls over 100,000 elements took 9.3 s uncharged, now refused in about 0.9 s), and a refused sensitive() is a marked unknown. A local, resource attribute or module input that calls sensitive() and is refused as too large is a marked unknown with plain inputs (callsSensitive). The input document is not built yet (T-0109), so acceptance 2 is shown by the mark on the attribute's path
-- [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
-  - skills: iace-testing, iace-quality-gates
-  - depends: none
-  - progress: T-0116c's PR moved the two heap-measuring tests to a non-race step of `make test`, made TestEvaluateRootsCreatesABudget parallel and shrank two serial tests: the test step went from 586–607 s to 417 s. internal/terraform is still the package closest to the limit; after T-0116d (two of its serial tests run at a quarter scale) the test step took 480–546 s locally
-  - progress: 2026-10-17 (T-0124e) CI ran internal/terraform under -race into the 600 s timeout (600.4 s); moving the four set-sort tests to NONRACE_TESTS brought the local test step from 539 s to 485 s, but the margin stays thin
-  - accept:
-    - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
-    - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix
-  - attempts: 0
-- [ ] T-0125b · Keep timing tests from failing under machine load
-  - skills: iace-testing, iace-quality-gates
-  - depends: none
-  - accept:
-    - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
-    - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
-  - attempts: 0
 - [x] T-0110 · Sync the input-document reference with ADR 0004, ADR 0006 and ADR 0007
   - skills: iace-architecture
   - depends: T-0101
@@ -997,6 +972,35 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - a `value` beside a credential-like `name` (app_settings-style `setting { name = "DB_PASSWORD" value = "..." }`, container `env` blocks) is redacted, and strings that parse as JSON objects or arrays (container_definitions, parameters_content = jsonencode({adminPassword = ...})) are walked and redacted inside, within the linear bound; today `[{"name":"DB_PASSWORD","value":"x"}]` is kept (T-0109f review); tests with fake values
     - credential-like names match as substrings, so values under names such as `private_ip` or `private_dns_name` are redacted in printed output (over-hiding, never a leak); match name parts on word boundaries (`_`, `-`, case changes) without losing `db_password` or `clientSecret` (T-0109f documentation review)
   - attempts: 0
+
+- [ ] T-0125 · Keep the race-enabled terraform test suite well inside go test's timeout
+  - skills: iace-testing, iace-quality-gates
+  - depends: none
+  - progress: T-0116c's PR moved the two heap-measuring tests to a non-race step of `make test`, made TestEvaluateRootsCreatesABudget parallel and shrank two serial tests: the test step went from 586–607 s to 417 s. internal/terraform is still the package closest to the limit; after T-0116d (two of its serial tests run at a quarter scale) the test step took 480–546 s locally
+  - progress: 2026-10-17 (T-0124e) CI ran internal/terraform under -race into the 600 s timeout (600.4 s); moving the four set-sort tests to NONRACE_TESTS brought the local test step from 539 s to 485 s, but the margin stays thin
+  - progress: 2026-10-18 make test watches the margin (scripts/test-time-watch.sh warns when a race-enabled package passes 360 s) and TestEvaluateRootsCreatesABudget and TestConversionsIntoSetsAreBounded run without -race; internal/terraform still takes 425–443 s under -race in make test (over the watch line, and CI's runner is slower). Moved to M13 by the owner's scope decision (2026-10-17)
+  - accept:
+    - a per-package time check (for example `go test -json` timings in CI) fails or warns when a package passes about 6 minutes under -race, so the margin is watched rather than found by a timeout
+    - `make test` runs internal/terraform under -race in 560–620 s against go test's 10-minute default per package, and it hit the timeout once (T-0116b). Find the slowest tests (`go test -race -v` timings: TestModuleInputWalksAreCharged 138 s, TestParseMemoryPerFile 82 s, TestKeptHeapPerBudgetToken 72 s, among others) and shrink their setup or share it, without weakening what they prove, so the package runs in well under 8 minutes under -race. The Makefile's timeout is a gate; changing it is not the fix
+    - scripts/test-time-watch.sh has a fixture test covering a package over and under the line, `(cached)`, `[no test files]`, `[build failed]`, the bare FAIL line, the coverage suffix, an input with no timing lines and GITHUB_ACTIONS=true (T-0125 review)
+  - attempts: 1
+- [ ] T-0125b · Keep timing tests from failing under machine load
+  - skills: iace-testing, iace-quality-gates
+  - depends: none
+  - accept:
+    - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
+    - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
+  - attempts: 0
+- [!] T-0110b · Sync the input-document reference with ADR 0045 and ADR 0046
+  - skills: iace-architecture
+  - depends: T-0109
+  - accept:
+    - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
+    - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
+    - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
+  - attempts: 0
+  - blocked: needs-human — the reference lives in the harness (.claude/), which the loop must not edit; the owner applies the edit (or approves it in an attended session)
 
 ## M3 · Reports — status: planned
 Goal: machine- and human-readable outputs that CI systems and GitHub understand.

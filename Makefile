@@ -43,10 +43,20 @@ lint: ## golangci-lint, regal (policies) and actionlint (workflows)
 # the three took about 190 s under -race (T-0124b).
 # The set-sort tests of ADR 0047 time single-threaded sorts of math/big fractions in the same way:
 # under -race the four took about 80 s, which pushed the package past the timeout on CI (T-0124e).
-NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast|TestMarkFunctionChainsAreBounded|TestFirstSortOfAFractionSetIsBounded|TestFractionSetPassedToModuleInstancesIsBounded|TestAcceptedModuleArgumentsSpendTheirSorts|TestIntegerSetWalksAreAccepted)$$
+# Two sequential tests spend their time in hcl's lexer and cty's set sorting, which the race
+# detector slows about 20 times with nothing concurrent to check: lexing three 1 MiB files to
+# exhaust the scan-wide parse budget (136 s under -race, 6.5 s without) and converting sets of
+# colliding values (77 s under -race) (T-0125).
+NONRACE_TESTS := ^(TestParseMemoryPerFile|TestKeptHeapPerBudgetToken|TestNumberFormattingInDefaultsIsCharged|TestRepeatedNumberFormattingIsBounded|TestAcceptedNumberConversionsAreFast|TestMarkFunctionChainsAreBounded|TestFirstSortOfAFractionSetIsBounded|TestFractionSetPassedToModuleInstancesIsBounded|TestAcceptedModuleArgumentsSpendTheirSorts|TestIntegerSetWalksAreAccepted|TestEvaluateRootsCreatesABudget|TestConversionsIntoSetsAreBounded)$$
 
-test: ## race-enabled, shuffled tests with a coverage profile, then the heap and formatting-timing tests without -race
-	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./...
+# go test stops a package at 10 minutes; make test warns when a race-enabled package passes this
+# many seconds, so the margin is watched rather than found by a timeout (T-0125).
+TEST_WATCH_SECONDS := 360
+
+test: ## race-enabled, shuffled tests with a coverage profile, then the CPU-bound timing tests in NONRACE_TESTS without -race
+	@mkdir -p .cache
+	$(GO) test -race -shuffle=on -count=1 -skip '$(NONRACE_TESTS)' -coverprofile=coverage.out ./... | tee .cache/test-race.out
+	@scripts/test-time-watch.sh .cache/test-race.out $(TEST_WATCH_SECONDS)
 	$(GO) test -count=1 -v -run '$(NONRACE_TESTS)' ./internal/terraform/
 
 cover-check: ## overall Go coverage from coverage.out must be at least COVERAGE_MIN
