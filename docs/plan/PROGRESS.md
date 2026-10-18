@@ -3427,3 +3427,32 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   mutation check). The iace-testing and iace-rego-policies skills still describe {fail,pass}:
   their update joins T-0110b.
 - Next: T-0206 (`iace scan` with text output and exit codes).
+
+### 2026-10-18 · T-0206 · done
+- What: `iace scan`. app.Scan compiles the policies once (built-in, or a test library through
+  cli.RunWithPolicies), loads unredacted documents, refuses a path without root modules
+  (ErrNoRootModules, exit 2), evaluates every root module and builds a model.Report: sorted
+  findings, coverage gaps with details from the redacted documents, and a summary with the
+  blocking count. internal/report/text writes it grouped by severity
+  (`file:line  RULE-ID  address  message` plus a fix line), then gaps, summary and scanned roots;
+  every field a policy or the repository supplies is kept on one line without control
+  characters. The CLI writes the report before deciding the exit: 2 for a policy error, parse
+  errors, no root modules, a timeout or gaps with --fail-on-gaps, 1 for open findings at or above
+  --fail-on (default high), else 0. Flag errors in every command now pass an allowlist: they name
+  the flag and never repeat what was typed.
+- Files: internal/app/{scan.go,scan_test.go,inspect.go}, internal/cli/{cli.go,cli_test.go,scan.go},
+  internal/model/{report.go,finding_test.go}, internal/report/text/{text.go,text_test.go},
+  internal/engine/findings.go (SortFindings exported), cmd/iace/main_test.go,
+  cmd/iace/testdata/script/{scan_clean,scan_failing,scan_parse_error,scan_no_roots,
+  scan_broken_policy,scan_gaps_timeout,usage_no_values}.txtar, docs/plan/BACKLOG.md,
+  docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); testscripts cover clean (0), failing (1, and the
+  --fail-on levels), parse error, no root modules, broken policy, --fail-on-gaps and --timeout
+  (2), and fake secrets in flag values in four syntaxes.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: only pflag's invalid-argument
+  message was rewritten, so `-var=token=<secret>` (single dash, as Terraform users type it) and
+  `---var=<secret>` echoed the value; flag errors now go through an allowlist that fails closed.
+  Minors fixed: tests for --fail-on-gaps and --timeout, scan errors worded "scan", every report
+  field sanitized (newlines and terminal escapes in file names), a flagError table test.
+  Recorded: inspect/scan error wording (T-0206b). The CLI reference's updates join T-0110b.
+- Next: T-0206b or T-0205c/T-0205d per BACKLOG order (the S3 and Azure rules), then M12.

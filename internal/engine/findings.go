@@ -40,7 +40,14 @@ func (e *Engine) Findings(doc *model.InputDocument, res Result) ([]model.Finding
 			out = append(out, f)
 		}
 	}
-	slices.SortFunc(out, func(a, b model.Finding) int {
+	SortFindings(out)
+	return out, nil
+}
+
+// SortFindings sorts findings by severity (most severe first), rule ID, file, line and address,
+// then column, fingerprint and message, so the order is total and outputs are deterministic.
+func SortFindings(findings []model.Finding) {
+	slices.SortFunc(findings, func(a, b model.Finding) int {
 		return cmp.Or(
 			cmp.Compare(b.Severity.Rank(), a.Severity.Rank()),
 			strings.Compare(a.RuleID, b.RuleID),
@@ -52,7 +59,6 @@ func (e *Engine) Findings(doc *model.InputDocument, res Result) ([]model.Finding
 			strings.Compare(a.Message, b.Message),
 		)
 	})
-	return out, nil
 }
 
 // finding builds the finding of one violation, or returns why the violation is malformed.

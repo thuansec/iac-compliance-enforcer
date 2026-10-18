@@ -1,0 +1,30 @@
+# Flag errors name the flag, never its value: CI logs keep what a pipeline passes (fake values).
+! exec iace scan --timeout FAKEsecretVALUE0000 repo
+! stdout .
+stderr '--timeout'
+! stderr FAKEsecretVALUE0000
+
+! exec iace inspect --json=FAKEsecretVALUE0000 repo
+stderr '--json'
+! stderr FAKEsecretVALUE0000
+
+! exec iace scan repo --var FAKEsecretVALUE0000
+stderr '--var'
+! stderr FAKEsecretVALUE0000
+
+# Single-dash and triple-dash forms, as Terraform users type them, are not echoed either.
+! exec iace scan repo -var=token=FAKEsecretVALUE0000
+stderr 'two dashes'
+! stderr FAKEsecretVALUE0000
+
+! exec iace scan repo ---var=FAKEsecretVALUE0000
+stderr 'invalid flag syntax'
+! stderr FAKEsecretVALUE0000
+
+! exec iace inspect repo -var=token=FAKEsecretVALUE0000
+! stderr FAKEsecretVALUE0000
+
+-- repo/main.tf --
+variable "token" {
+  type = string
+}

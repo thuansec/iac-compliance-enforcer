@@ -1,20 +1,63 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"testing/fstest"
 
 	"github.com/rogpeppe/go-internal/testscript"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/cli"
+	"github.com/thuansec/iac-compliance-enforcer/policies"
 )
 
 func TestMain(m *testing.M) {
-	testscript.Main(m, map[string]func(){"iace": cli.Main})
+	testscript.Main(m, map[string]func(){
+		"iace": cli.Main,
+		// iace-broken-policy runs iace with one rule that calls the denied http.send.
+		"iace-broken-policy": func() {
+			os.Exit(cli.RunWithPolicies(context.Background(), os.Args[1:], os.Stdout, os.Stderr, brokenPolicies()))
+		},
+	})
+}
+
+// brokenRule has valid metadata and a body that the restricted capabilities reject.
+const brokenRule = `# METADATA
+# title: Instances must not call out
+# description: A deliberately broken rule for the scan's exit 2 path.
+# scope: package
+# related_resources:
+#   - ref: https://example.com/docs
+# custom:
+#   id: IACE-AWS-EC2-999
+#   severity: high
+#   csp: aws
+#   service: ec2
+#   resource_types: [aws_instance]
+#   remediation: None.
+package iace.rules.aws.ec2.broken
+
+deny contains v if {
+	resp := http.send({"method": "get", "url": "https://example.com"})
+	v := {"address": resp.body, "message": "m"}
+}
+`
+
+func brokenPolicies() fstest.MapFS {
+	caps, err := fs.ReadFile(policies.FS, "capabilities.json")
+	if err != nil {
+		panic(err)
+	}
+	return fstest.MapFS{
+		"capabilities.json":                   {Data: caps},
+		"iace/rules/aws/ec2/broken/rule.rego": {Data: []byte(brokenRule)},
+	}
 }
 
 func TestScripts(t *testing.T) {

@@ -1,0 +1,10 @@
+# A file Terraform would refuse makes the scan untrustworthy: the gap is reported and the exit is 2.
+! exec iace scan repo
+stdout '^Coverage gaps: 1$'
+stdout 'parse_error main.tf:'
+stderr '^iace: scan repo: 1 parse error\(s\)'
+
+-- repo/main.tf --
+resource "aws_instance" "web" {
+  ami = 
+}

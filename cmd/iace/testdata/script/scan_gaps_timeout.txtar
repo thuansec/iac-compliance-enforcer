@@ -1,0 +1,16 @@
+# An unresolved remote module is a coverage gap: reported, exit 0 by default, 2 with --fail-on-gaps.
+exec iace scan repo
+stdout '^Coverage gaps: '
+! exec iace scan repo --fail-on-gaps
+stdout '^Coverage gaps: '
+stderr 'coverage gap\(s\) with --fail-on-gaps$'
+
+# A scan past --timeout fails with exit 2.
+! exec iace scan repo --timeout 1ns
+stderr 'timed out after 1ns'
+
+-- repo/main.tf --
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.0.0"
+}

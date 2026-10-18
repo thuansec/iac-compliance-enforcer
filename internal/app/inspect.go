@@ -29,7 +29,7 @@ type InspectOptions struct {
 func Inspect(ctx context.Context, path string, opts InspectOptions) ([]*model.InputDocument, error) {
 	docs, err := load(ctx, path, opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspect %w", err)
 	}
 	for i, doc := range docs {
 		docs[i] = redact.Document(doc)
@@ -42,24 +42,24 @@ func Inspect(ctx context.Context, path string, opts InspectOptions) ([]*model.In
 func load(ctx context.Context, path string, opts InspectOptions) ([]*model.InputDocument, error) {
 	root, err := fsutil.OpenRoot(path)
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer func() { _ = root.Close() }() // read-only: a close error loses nothing
 
 	limits := terraform.DefaultLimits()
 	d, err := terraform.Discover(ctx, root, limits)
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	mods, err := terraform.ClassifyModules(ctx, root, d, limits)
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	vars := terraform.VarOptions{Vars: opts.Vars, VarFiles: opts.VarFiles}
 	results, err := terraform.EvaluateRoots(ctx, root, d, mods, vars, limits,
 		terraform.TreeOptions{TrustModuleManifest: opts.TrustModuleManifest})
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return terraform.Documents(d, results), nil
 }

@@ -1,0 +1,38 @@
+# A high-severity finding blocks at the default fail-on (high): exit 1, the report still on stdout.
+! exec iace scan repo
+stdout '^HIGH$'
+stdout '^  main.tf:15  IACE-AWS-EC2-001  aws_instance.web  '
+stdout '^    fix: '
+stdout '^1 finding \(critical 0, high 1, medium 0, low 0, info 0\); 1 blocking at fail-on high$'
+stderr '^iace: 1 open finding at or above high$'
+
+# --fail-on critical lets it pass; --fail-on none never blocks.
+exec iace scan repo --fail-on critical
+stdout '0 blocking at fail-on critical'
+exec iace scan repo --fail-on none
+stdout '0 blocking at fail-on none'
+
+# An invalid --fail-on is a usage error that does not echo the value.
+! exec iace scan repo --fail-on FAKEsecretVALUE0000
+! stdout .
+stderr '--fail-on'
+! stderr FAKEsecretVALUE0000
+
+-- repo/main.tf --
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}

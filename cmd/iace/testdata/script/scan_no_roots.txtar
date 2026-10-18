@@ -1,0 +1,7 @@
+# A path without Terraform (a mistyped CI path) is an error, never a clean scan.
+! exec iace scan empty
+! stdout .
+stderr '^iace: scan empty: no Terraform root modules under this path$'
+
+-- empty/README.md --
+nothing to scan
