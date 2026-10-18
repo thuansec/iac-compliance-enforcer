@@ -3613,3 +3613,31 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   re-checked on the AWS pages.
 - Next milestone: M12 (pull-request gating: JSON and SARIF reports, CI wiring), active and
   pre-approved with M2; pause_at_milestone_end applies after it.
+
+### 2026-10-18 · T-0301 · done
+- What: the JSON report. `iace scan -o json` (text stays the default; files and several formats
+  are T-0305) writes the findings report v1 defined by schemas/findings.v1.json and ADR 0051:
+  schema_version, tool (from internal/version), policy_sources (one "builtin" source with
+  app.PolicyDigest, a framed sha256 over the library's files), inputs, a summary (severity and
+  status counts, blocking, fail_on, min_severity, hidden, rules_evaluated, rules_loaded),
+  findings, warnings and coverage gaps. Each finding carries every finding v1 field: model.Finding
+  gains policy_source and exception (nil until M4); ai_suggestion is null until M10; a missing
+  attribute_path is null. Encoding is deterministic (json/v2 Deterministic, fixed field order,
+  indented). Within v1, new fields only become optional properties. ScanPaths merges tool,
+  policy sources, status counts and warnings.
+- Files: internal/report/json/{json.go,json_test.go,export_test.go,testdata/report.golden.json},
+  schemas/findings.v1.json, internal/model/{finding.go,report.go,finding_test.go},
+  internal/app/{scan.go,scan_test.go}, internal/cli/{scan.go,scan_test.go},
+  cmd/iace/testdata/script/scan_failing.txtar, docs/adr/0051-define-the-findings-report-v1.md,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); real single- and two-path scans validate against the
+  schema; the golden covers every severity, both statuses, null and indexed paths, a module
+  resource, unicode, hidden findings and a partial rule selection.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors: the report left out reference
+  fields (per-finding policy_source, exception, ai_suggestion, status counts) without an ADR, so
+  adding them later would have broken v1; now carried, with ADR 0051 and a T-0110b bullet; no
+  test covered a multi-path JSON scan (now validated). Minors fixed: warnings merged, a
+  field-parity test, the closed gap-kind enum, status counts asserted, a self-consistent golden,
+  status tied to exception in the schema. Not tested: the warning merge, since nothing emits
+  warnings yet. The "unknown value gives no rule-level gap" follow-up joined T-0306.
+- Next: T-0302 (SARIF 2.1.0 for GitHub code scanning).

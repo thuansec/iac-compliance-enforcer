@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/model"
 )
@@ -127,6 +128,26 @@ func TestScanPathsRejectsNestedPaths(t *testing.T) {
 	for _, paths := range [][]string{{"a", "a/b"}, {".", "a"}} {
 		if _, err := ScanPaths(context.Background(), paths, ScanOptions{FailOn: "high"}); !errors.As(err, &pe) {
 			t.Errorf("%v: error %v, want a PathError", paths, err)
+		}
+	}
+}
+
+func TestPolicyDigest(t *testing.T) {
+	a := fstest.MapFS{"a.rego": {Data: []byte("x")}, "b/c.rego": {Data: []byte("y")}}
+	d1, err := PolicyDigest(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2, _ := PolicyDigest(a); d1 != d2 || !strings.HasPrefix(d1, "sha256:") || len(d1) != len("sha256:")+64 {
+		t.Errorf("digest %q is not a stable sha256", d1)
+	}
+	for name, other := range map[string]fstest.MapFS{
+		"content":  {"a.rego": {Data: []byte("z")}, "b/c.rego": {Data: []byte("y")}},
+		"name":     {"a2.rego": {Data: []byte("x")}, "b/c.rego": {Data: []byte("y")}},
+		"boundary": {"a.rego": {Data: []byte("xb/c.rego")}},
+	} {
+		if d, _ := PolicyDigest(other); d == d1 {
+			t.Errorf("%s change kept the digest", name)
 		}
 	}
 }

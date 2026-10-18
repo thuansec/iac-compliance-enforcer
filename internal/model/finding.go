@@ -27,7 +27,21 @@ type Finding struct {
 	Remediation   string              `json:"remediation"`
 	Frameworks    map[string][]string `json:"frameworks"`
 	References    []string            `json:"references"`
-	Fingerprint   string              `json:"fingerprint"`
+	// PolicySource is the library the rule came from (the report's policy_sources lists them).
+	PolicySource PolicySource `json:"policy_source"`
+	Fingerprint  string       `json:"fingerprint"`
+	// Exception is the exception that makes the finding excepted, nil while it is open
+	// (exceptions arrive with M4).
+	Exception *Exception `json:"exception"`
+}
+
+// Exception is an accepted risk that applies to a finding: who owns it, why, until when.
+type Exception struct {
+	ID      string `json:"id"`
+	Owner   string `json:"owner"`
+	Reason  string `json:"reason"`
+	Expires string `json:"expires"`
+	Ticket  string `json:"ticket"`
 }
 
 // FindingResource identifies the resource a finding is about.

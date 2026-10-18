@@ -12,6 +12,16 @@ stdout '0 blocking at fail-on critical'
 exec iace scan repo --fail-on none
 stdout '0 blocking at fail-on none'
 
+# -o json writes the findings v1 document with the same exit code.
+! exec iace scan repo -o json
+stdout '"schema_version": "1"'
+stdout '"rule_id": "IACE-AWS-EC2-001"'
+stderr '^iace: 1 open finding at or above high$'
+! exec iace scan repo -o FAKEsecretVALUE0000
+! stdout .
+stderr '--output'
+! stderr FAKEsecretVALUE0000
+
 # An invalid --fail-on is a usage error that does not echo the value.
 ! exec iace scan repo --fail-on FAKEsecretVALUE0000
 ! stdout .

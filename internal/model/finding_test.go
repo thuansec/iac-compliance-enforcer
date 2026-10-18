@@ -62,6 +62,9 @@ func TestSummarize(t *testing.T) {
 	}
 	for failOn, blocking := range map[string]int{"critical": 1, "high": 2, "medium": 3, "low": 4, "info": 5, model.FailOnNone: 0} {
 		s := model.Summarize(fs, failOn)
+		if s.Open != 5 || s.Excepted != 1 {
+			t.Errorf("fail-on %s: %d open, %d excepted, want 5 and 1", failOn, s.Open, s.Excepted)
+		}
 		if s.Blocking != blocking || s.Critical != 1 || s.High != 2 || s.Medium != 1 || s.Low != 1 || s.Info != 1 || s.FailOn != failOn {
 			t.Errorf("fail-on %s: %+v, want %d blocking (excepted findings never block)", failOn, s, blocking)
 		}
