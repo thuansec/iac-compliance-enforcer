@@ -842,12 +842,20 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - the title follows the catalog's IACE-AZURE-STORAGE-001 (minimum TLS 1.2; HTTPS-only is IACE-AZURE-STORAGE-002, whose default is still marked verify); the catalog's MCSB DP-3 is only a candidate, so no framework mapping ships until it is confirmed
   - attempts: 1
   - result: IACE-AZURE-STORAGE-001 (medium) flags an azurerm_storage_account whose min_tls_version is explicitly TLS1_0 or TLS1_1; absent is TLS1_2 on azurerm 4.x and 5.x per the catalog (checked against 4.81.0 and 5.7.0 on 2026-10-01), unknown is skipped (a test with a weak placeholder proves the guard); no framework mapping until MCSB DP-3 is confirmed; Rego tests at 100% and the four fixture kinds
-- [ ] T-0206b · Complete `iace scan`'s selection flags and multiple paths
+- [x] T-0206b · Complete `iace scan`'s selection flags
   - skills: iace-architecture, iace-reporting, iace-testing
   - depends: T-0206
   - accept:
     - ordered after the S3 and Azure rules (2026-10-18, PoC first: rules on basic repositories before scan conveniences)
-    - `--min-severity` hides findings below it from every output (blocking still counts them, stated in help), `--rule ID` (repeatable) evaluates only those rules by leaving the others out of the query, and `scan PATH...` scans several paths with root modules named unambiguously across them; testscript per flag; inspect and scan word a runtime error alike (inspect appends "; see 'iace --help'" to a missing path, scan does not; T-0206 review) (deferred from T-0206 to land the PoC scan first; -o is T-0305, config M4, --offline M8, --plan M9, --ai-fix M10, logging flags with the logger)
+    - `--min-severity` hides findings below it from every output (blocking still counts them, stated in help) and `--rule ID` (repeatable) evaluates only those rules by leaving the others out of the query; testscript per flag; inspect and scan word a runtime error alike (inspect appended "; see 'iace --help'" to a missing path, scan did not; T-0206 review)
+    - split (2026-10-18): several paths per scan is T-0206c
+  - attempts: 1
+  - result: --min-severity (critical..info) leaves lower findings out of the report and counts them as hidden, while the summary and blocking count every finding; --rule ID (repeatable) evaluates only the named rules (the others stay out of the query), an unknown ID is a usage error naming its position, and the report says how many of the loaded rules ran; inspect words runtime errors like scan (no usage hint). Several paths per scan: T-0206c
+- [ ] T-0206c · Scan several paths in one run
+  - skills: iace-architecture, iace-reporting, iace-testing
+  - depends: T-0206b
+  - accept:
+    - `scan PATH...` scans several paths with root modules named unambiguously across them (two paths each with a root "." must not collide in findings, fingerprints or the report); a testscript
   - attempts: 0
 - [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
@@ -871,7 +879,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - depends: T-0207
   - accept:
     - schemas/findings.v1.json; the report includes tool version, policy sources, summary, findings, warnings and coverage gaps; golden test; deterministic order
-    - model.Finding encodes deterministically (sorted frameworks keys) with a nil attribute_path as null, not [] (encoding/json/v2 defaults write [] and random map order; options as model.Values uses, T-0204 review); a marshal test
+    - model.Finding encodes deterministically (sorted frameworks keys) with a nil attribute_path as null, not [] (encoding/json/v2 defaults write [] and random map order; options as model.Values uses, T-0204 review); a marshal test; the report-level min_severity, hidden, rules_evaluated and rules_loaded fields (T-0206b) are in schemas/findings.v1.json and in the findings reference (via T-0110b)
   - attempts: 0
 - [ ] T-0302 · SARIF 2.1.0 output for GitHub code scanning
   - skills: iace-reporting

@@ -15,7 +15,10 @@ import (
 // Write writes r to w. r's findings are already sorted.
 func Write(w io.Writer, r *model.Report) error {
 	var b bytes.Buffer
-	if len(r.Findings) == 0 {
+	switch {
+	case len(r.Findings) == 0 && r.Hidden > 0:
+		fmt.Fprintf(&b, "No findings at or above %s.\n", r.MinSeverity)
+	case len(r.Findings) == 0:
 		b.WriteString("No findings.\n")
 	}
 	var group model.Severity
@@ -37,9 +40,15 @@ func Write(w io.Writer, r *model.Report) error {
 			fmt.Fprintf(&b, "  %s: %s %s:%d %s\n", oneLine(g.RootModule), oneLine(string(g.Kind)), oneLine(g.File), g.Line, oneLine(g.Detail))
 		}
 	}
+	if r.RulesEvaluated < r.RulesLoaded {
+		fmt.Fprintf(&b, "Only %d of %d rules evaluated (--rule): the others were not checked\n", r.RulesEvaluated, r.RulesLoaded)
+	}
+	if r.Hidden > 0 {
+		fmt.Fprintf(&b, "%d %s hidden below --min-severity %s\n", r.Hidden, noun(r.Hidden, "finding"), r.MinSeverity)
+	}
 	s := r.Summary
 	fmt.Fprintf(&b, "%d %s (critical %d, high %d, medium %d, low %d, info %d); %d blocking at fail-on %s\n",
-		len(r.Findings), noun(len(r.Findings), "finding"), s.Critical, s.High, s.Medium, s.Low, s.Info, s.Blocking, s.FailOn)
+		total(s), noun(total(s), "finding"), s.Critical, s.High, s.Medium, s.Low, s.Info, s.Blocking, s.FailOn)
 	inputs := make([]string, len(r.Inputs))
 	for i, in := range r.Inputs {
 		inputs[i] = oneLine(in)
@@ -50,6 +59,9 @@ func Write(w io.Writer, r *model.Report) error {
 	}
 	return nil
 }
+
+// total counts every finding of the summary, hidden ones included.
+func total(s model.Summary) int { return s.Critical + s.High + s.Medium + s.Low + s.Info }
 
 // noun returns word for one and its plural otherwise.
 func noun(n int, word string) string {

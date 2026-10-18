@@ -11,18 +11,21 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thuansec/iac-compliance-enforcer/internal/app"
+	"github.com/thuansec/iac-compliance-enforcer/internal/engine"
 	"github.com/thuansec/iac-compliance-enforcer/internal/model"
 	"github.com/thuansec/iac-compliance-enforcer/internal/report/text"
 )
 
-// failOnValues are the accepted --fail-on values, most severe first.
+// failOnValues are the accepted --fail-on values, most severe first; --min-severity takes the
+// same without none.
 var failOnValues = []string{"critical", "high", "medium", "low", "info", model.FailOnNone}
 
 func newScanCommand(policies fs.FS) *cobra.Command {
 	var (
-		opts       app.ScanOptions
-		failOnGaps bool
-		timeout    time.Duration
+		opts        app.ScanOptions
+		failOnGaps  bool
+		timeout     time.Duration
+		minSeverity string
 	)
 	cmd := &cobra.Command{
 		Use:   "scan [PATH]",
@@ -41,6 +44,11 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			if !slices.Contains(failOnValues, opts.FailOn) {
 				return fmt.Errorf("invalid value for the \"--fail-on\" flag: want one of %v", failOnValues)
 			}
+			severities := failOnValues[:len(failOnValues)-1]
+			if !slices.Contains(severities, minSeverity) {
+				return fmt.Errorf("invalid value for the \"--min-severity\" flag: want one of %v", severities)
+			}
+			opts.MinSeverity = model.Severity(minSeverity)
 			if !cmd.Flags().Changed("trust-module-manifest") {
 				trust, err := envBool(envTrustModuleManifest)
 				if err != nil {
@@ -52,6 +60,10 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 			r, err := app.Scan(ctx, path, opts)
+			var unknownRule *engine.UnknownRuleError
+			if errors.As(err, &unknownRule) {
+				return fmt.Errorf("--rule argument %d names no loaded rule (rule IDs look like IACE-AWS-EC2-001)", unknownRule.Index)
+			}
 			if err != nil {
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					return &exitCodeError{code: exitError, msg: fmt.Sprintf("scan %s: timed out after %s (--timeout)", path, timeout)}
@@ -78,6 +90,8 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.FailOn, "fail-on", "high", "exit 1 when an open finding is at or above this severity: critical|high|medium|low|info|none")
+	f.StringVar(&minSeverity, "min-severity", "info", "hide findings below this severity from the report (they still count for --fail-on): critical|high|medium|low|info")
+	f.StringArrayVar(&opts.Rules, "rule", nil, "evaluate only this rule ID (repeatable)")
 	f.BoolVar(&failOnGaps, "fail-on-gaps", false, "exit 2 when the scan has coverage gaps (parts it could not check)")
 	f.DurationVar(&timeout, "timeout", 5*time.Minute, "abort the whole scan after this long, with exit 2")
 	f.StringArrayVar(&opts.Vars, "var", nil, "set a root variable, NAME=VALUE (repeatable)")

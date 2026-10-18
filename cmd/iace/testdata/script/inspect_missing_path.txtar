@@ -1,0 +1,8 @@
+# A path that does not exist is a runtime error, worded like scan's: no usage hint.
+! exec iace inspect nowhere
+! stdout .
+stderr '^iace: inspect nowhere: '
+! stderr 'iace --help'
+! exec iace scan nowhere
+stderr '^iace: scan nowhere: '
+! stderr 'iace --help'
