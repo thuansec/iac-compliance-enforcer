@@ -826,24 +826,26 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - a scan path with no Terraform root module is decided explicitly (a coverage gap or exit 2), never a silent pass: a mistyped CI path must not look clean (`iace inspect` prints "no Terraform root modules under this path" and exits 0, T-0109e review)
   - attempts: 1
   - result: `iace scan [PATH]` loads unredacted documents, compiles the policies once, evaluates every root module and prints a text report (findings by severity with location and fix, coverage gaps with redacted details, summary, scanned roots; every repository- or policy-supplied field on one line without control characters) before deciding the exit: 2 for a policy error, parse errors, no root modules, a timeout or gaps with --fail-on-gaps, 1 for open findings at or above --fail-on (default high), else 0. Flags: --fail-on, --fail-on-gaps, --timeout, --var, --var-file, --trust-module-manifest; flag errors in every command go through an allowlist that never repeats input. Other flags: T-0206b and their milestones
-- [ ] T-0206b · Complete `iace scan`'s selection flags and multiple paths
-  - skills: iace-architecture, iace-reporting, iace-testing
-  - depends: T-0206
-  - accept:
-    - `--min-severity` hides findings below it from every output (blocking still counts them, stated in help), `--rule ID` (repeatable) evaluates only those rules by leaving the others out of the query, and `scan PATH...` scans several paths with root modules named unambiguously across them; testscript per flag; inspect and scan word a runtime error alike (inspect appends "; see 'iace --help'" to a missing path, scan does not; T-0206 review) (deferred from T-0206 to land the PoC scan first; -o is T-0305, config M4, --offline M8, --plan M9, --ai-fix M10, logging flags with the logger)
-  - attempts: 0
-- [ ] T-0205c · IACE-AWS-S3-001 · S3 buckets block public access
+- [x] T-0205c · IACE-AWS-S3-001 · S3 buckets block public access
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0206
   - accept:
     - a rule with mappings verified per iace-cloud-controls, Rego tests and the four fixture directories; the fixture harness passes
-    - it flags the weakening override fixture (testdata/terraform/e2e/override: `acl = "public-read"` from main_override.tf) with a finding located in main_override.tf (ADR 0048), as T-0112b's acceptance left to this rule
-  - attempts: 0
+    - the weakening override fixture's `acl = "public-read"` is a bucket ACL, which IACE-AWS-S3-002 judges, not this rule (S3-001 checks public access blocks): that finding moved to T-0601
+  - attempts: 1
+  - result: IACE-AWS-S3-001 (high, aws-securityhub S3.1/S3.8 per the catalog checked on 2026-10-01 against aws 6.67.0) flags every block_public_acls, block_public_policy, ignore_public_acls and restrict_public_buckets that a bucket or account public access block leaves unset or false (true and "true" enable; unknown is skipped; no block is not flagged); Rego tests at 100%, the four fixture kinds; the harness applies its nested-block checks only to rules whose fail fixture expects nested findings; an app test proves a finding on a setting an override file weakens is located in that file
 - [ ] T-0205d · IACE-AZURE-STORAGE-001 · Storage accounts require secure transfer
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0206
   - accept:
     - a rule with mappings verified per iace-cloud-controls (provider defaults per azurerm major), Rego tests and the four fixture directories; the fixture harness passes
+  - attempts: 0
+- [ ] T-0206b · Complete `iace scan`'s selection flags and multiple paths
+  - skills: iace-architecture, iace-reporting, iace-testing
+  - depends: T-0206
+  - accept:
+    - ordered after the S3 and Azure rules (2026-10-18, PoC first: rules on basic repositories before scan conveniences)
+    - `--min-severity` hides findings below it from every output (blocking still counts them, stated in help), `--rule ID` (repeatable) evaluates only those rules by leaving the others out of the query, and `scan PATH...` scans several paths with root modules named unambiguously across them; testscript per flag; inspect and scan word a runtime error alike (inspect appends "; see 'iace --help'" to a missing path, scan does not; T-0206 review) (deferred from T-0206 to land the PoC scan first; -o is T-0305, config M4, --offline M8, --plan M9, --ai-fix M10, logging flags with the logger)
   - attempts: 0
 - [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
@@ -1026,7 +1028,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
-    - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205)
+    - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205); it states that the single-object and nested-unknown checks apply only when a rule's fail/expected.yaml has a path with an index step, so a reviewer checks that a rule reading nested blocks has such a finding (T-0205c review)
     - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
     - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
@@ -1174,6 +1176,7 @@ Standard acceptance for every rule task: the Rego rule follows iace-rego-policie
   - depends: T-0407
   - accept:
     - standard rule acceptance (see the milestone goal)
+    - it flags the weakening override fixture (testdata/terraform/e2e/override: `acl = "public-read"` from main_override.tf) with a finding located in main_override.tf (ADR 0048), as T-0112b's acceptance left to the bucket-ACL rule (moved from T-0205c)
   - attempts: 0
 - [ ] T-0602 · IACE-AWS-VPC-001 · No internet ingress to admin ports
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing

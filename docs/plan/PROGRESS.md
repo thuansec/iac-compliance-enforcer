@@ -3456,3 +3456,27 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   field sanitized (newlines and terminal escapes in file names), a flagError table test.
   Recorded: inspect/scan error wording (T-0206b). The CLI reference's updates join T-0110b.
 - Next: T-0206b or T-0205c/T-0205d per BACKLOG order (the S3 and Azure rules), then M12.
+
+### 2026-10-18 · T-0205c · done
+- What: IACE-AWS-S3-001 (high). For aws_s3_bucket_public_access_block and
+  aws_s3_account_public_access_block, each of block_public_acls, block_public_policy,
+  ignore_public_acls and restrict_public_buckets left unset (the provider default is false) or
+  false is a finding at that setting; true and the string "true" enable it, an unknown value is
+  skipped, data sources are ignored, and a bucket without a block is not flagged (AWS blocks
+  public access on new buckets by default since April 2023). Mappings aws-securityhub S3.1 and
+  S3.8 from the iace-cloud-controls catalog (checked against aws provider 6.67.0 and the Security
+  Hub controls reference on 2026-10-01; the 5.x defaults were not re-checked offline here), with
+  the Security Hub page cited. The fixture harness now applies its nested-block checks only to
+  rules whose fail fixture expects findings inside nested blocks; flat rules still need an
+  unknown value from both HCL and .tf.json. A scan test proves that a setting an override file
+  weakens is found and located in that file (ADR 0048). T-0206b now follows the S3 and Azure
+  rules in M2 (PoC first), and the override fixture's bucket-ACL finding moved to T-0601 (S3-002).
+- Files: policies/iace/rules/aws/s3/public_access_block/*.rego,
+  testdata/policies/IACE-AWS-S3-001/**, internal/app/{fixtures_test.go,scan_test.go},
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); Rego coverage 100%, Regal clean; the harness fails
+  without the JSON unknown fixture (mutation).
+- Review: iace-reviewer APPROVE with five minors. Fixed: "true" as a string, a data-source test,
+  the harness comment, the Security Hub citation; added the override-location scan test it
+  suggested. Recorded: the nested-check condition joins T-0110b's iace-testing update.
+- Next: T-0205d (IACE-AZURE-STORAGE-001).
