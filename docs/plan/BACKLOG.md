@@ -858,13 +858,15 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - `scan PATH...` scans several paths with root modules named unambiguously across them (two paths each with a root "." must not collide in findings, fingerprints or the report); a testscript
   - attempts: 1
   - result: `scan PATH...` (ADR 0050): one path is unchanged; several paths are made relative to the working directory (outside it, or nested in one another, is a usage error), scanned in sorted order, and each root module, file, gap and input is qualified by its path, with fingerprints from the qualified root; summaries merge. Compiling once per run is T-0139
-- [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
+- [x] T-0205b · IACE-AWS-VPC-001 · No internet ingress to remote administration ports
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0206
   - accept:
     - a rule flags aws_security_group ingress blocks and aws_security_group_rule / aws_vpc_security_group_ingress_rule resources that allow port 22 from 0.0.0.0/0 or ::/0, with mappings verified per iace-cloud-controls (Security Hub EC2.13 or its current equivalent, checked on the official control page before shipping)
     - Rego tests and pass/fail Terraform fixtures, including `.tf.json`, an unknown cidr (reported as a gap, not a pass) and a port range that contains 22; the fixture harness passes
-  - attempts: 0
+    - re-scoped (2026-10-18): the task named the rule IACE-AWS-EC2-002, which the iace-cloud-controls catalog assigns to EBS encryption (IDs are never reused); the catalog's rule for this check is IACE-AWS-VPC-001 (ports 22 and 3389, IPv4 and IPv6, mappings EC2.13, EC2.14, EC2.53, EC2.54), so this task ships it and T-0602 is folded in
+  - attempts: 1
+  - result: IACE-AWS-VPC-001 (high, aws-securityhub EC2.13/EC2.14/EC2.53/EC2.54 from the catalog, not re-checked on the AWS page in this change) flags inline security group ingress, aws_security_group_rule ingress and aws_vpc_security_group_ingress_rule entries with a known 0.0.0.0/0 or ::/0 source and protocol -1/all or a non-ICMP port range covering 22 or 3389; quoted ports count as numbers; unknown sources, ports, protocol or rule type skip the entry (no finding; the input document lists them as unknown); Rego tests at 100% and the four fixture kinds. Re-scoped from IACE-AWS-EC2-002 (the catalog's EBS rule); T-0602 folded in
 - [ ] T-0207 · Implement `iace rules list` and `iace rules show <id>`
   - skills: iace-architecture, iace-opa-engine
   - depends: T-0206
@@ -1041,6 +1043,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205); it states that the single-object and nested-unknown checks apply only when a rule's fail/expected.yaml has a path with an index step, so a reviewer checks that a rule reading nested blocks has such a finding (T-0205c review)
+    - .claude/skills/iace-loop/references/roadmap.md matches BACKLOG for the SSH rule: T-0205b ships IACE-AWS-VPC-001 (not IACE-AWS-EC2-002, which the catalog gives to EBS encryption), T-0602 is folded into it and T-0603 depends on T-0205b (T-0205b review)
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines `root_module` and the fingerprint for several scan paths as ADR 0050 does (each path relative to the working directory qualifies its roots and files; outside or nested paths are usage errors) (T-0206c)
     - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
@@ -1197,15 +1200,11 @@ Standard acceptance for every rule task: the Rego rule follows iace-rego-policie
     - standard rule acceptance (see the milestone goal)
     - it flags the weakening override fixture (testdata/terraform/e2e/override: `acl = "public-read"` from main_override.tf) with a finding located in main_override.tf (ADR 0048), as T-0112b's acceptance left to the bucket-ACL rule (moved from T-0205c)
   - attempts: 0
-- [ ] T-0602 · IACE-AWS-VPC-001 · No internet ingress to admin ports
-  - skills: iace-rego-policies, iace-cloud-controls, iace-testing
-  - depends: T-0407
-  - accept:
-    - standard rule acceptance; covers inline ingress, aws_security_group_rule and aws_vpc_security_group_ingress_rule, IPv4 and IPv6, port ranges and protocol -1
-  - attempts: 0
+- [x] T-0602 · IACE-AWS-VPC-001 · No internet ingress to admin ports
+  - result: folded into T-0205b (2026-10-18), which ships IACE-AWS-VPC-001 in M2
 - [ ] T-0603 · IACE-AWS-VPC-002 · No unrestricted ingress on all ports
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
-  - depends: T-0602
+  - depends: T-0205b
   - accept:
     - standard rule acceptance
   - attempts: 0

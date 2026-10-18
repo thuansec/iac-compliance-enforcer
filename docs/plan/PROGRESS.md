@@ -3542,3 +3542,25 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   an ADR (0050; the findings reference update joins T-0110b). Minors fixed: sorted paths, a
   coverage-gap case. Recorded: compile once per run (T-0139, M13).
 - Next: T-0205b (IACE-AWS-EC2-002, SSH open to the internet) and T-0207 (`iace rules`), then M12.
+
+### 2026-10-18 · T-0205b · done
+- What: IACE-AWS-VPC-001 (high), no internet ingress to remote administration ports. Inline
+  aws_security_group ingress blocks (through tf.blocks, both shapes), aws_security_group_rule of
+  known type ingress and aws_vpc_security_group_ingress_rule are flagged when a known source is
+  0.0.0.0/0 or ::/0 and the protocol is -1/all (any case, string or number) or a non-ICMP
+  protocol whose port range covers 22 or 3389. Quoted ports ("22") count as numbers, as
+  Terraform converts them; other strings and unknown sources, ports, protocol or type skip the
+  entry. The task was named IACE-AWS-EC2-002, which the iace-cloud-controls catalog assigns to
+  EBS encryption; it ships the catalog's IACE-AWS-VPC-001 instead (ports 22 and 3389, IPv4 and
+  IPv6), T-0602 is a closed stub folded into it, and T-0603 depends on T-0205b. Mappings
+  aws-securityhub EC2.13, EC2.14, EC2.53, EC2.54 come from the catalog (checked 2026-10-01); the
+  AWS page was not re-checked in this change.
+- Files: policies/iace/rules/aws/vpc/admin_port_ingress/*.rego,
+  testdata/policies/IACE-AWS-VPC-001/**, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); Rego coverage 100%, Regal clean; the fixture harness
+  passes for four rules.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: quoted ports (valid Terraform,
+  kept as strings without a provider schema) compared as no port at all, a silent pass; fixed
+  with a port helper, Rego tests and a quoted-port fixture. Minors fixed: T-0602 kept as a stub,
+  a protocol "ALL" test. Recorded: the harness roadmap's T-0205b/T-0602 entries join T-0110b.
+- Next: T-0207 (`iace rules list` and `iace rules show`), the last M2 task.
