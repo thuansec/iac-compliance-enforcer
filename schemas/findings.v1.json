@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thuansec/iac-compliance-enforcer/schemas/findings.v1.json",
+  "title": "iace findings report v1",
+  "description": "The JSON report of one iace scan: findings, coverage gaps and their summary. See the finding v1 contract (iace-architecture, findings-and-cli.md) and ADRs 0048-0050.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "policy_sources", "inputs", "summary", "findings", "warnings", "coverage_gaps"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "commit"],
+      "properties": {
+        "name": {"const": "iace"},
+        "version": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "minLength": 1}
+      }
+    },
+    "policy_sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/policySource"}
+    },
+    "inputs": {
+      "description": "The scanned root modules, relative to the scan root (several paths qualify them by path, ADR 0050), sorted.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/relPath"}
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "high", "medium", "low", "info", "open", "excepted", "blocking", "fail_on", "min_severity", "hidden", "rules_evaluated", "rules_loaded"],
+      "properties": {
+        "critical": {"$ref": "#/$defs/count"},
+        "high": {"$ref": "#/$defs/count"},
+        "medium": {"$ref": "#/$defs/count"},
+        "low": {"$ref": "#/$defs/count"},
+        "info": {"$ref": "#/$defs/count"},
+        "open": {"$ref": "#/$defs/count"},
+        "excepted": {"$ref": "#/$defs/count"},
+        "blocking": {"description": "Open findings at or above fail_on, hidden ones included.", "$ref": "#/$defs/count"},
+        "fail_on": {"enum": ["critical", "high", "medium", "low", "info", "none"]},
+        "min_severity": {"description": "Findings below it are left out of findings and counted in hidden; the severity counts include them.", "$ref": "#/$defs/severity"},
+        "hidden": {"$ref": "#/$defs/count"},
+        "rules_evaluated": {"description": "Fewer than rules_loaded when a rule selection left rules unchecked.", "$ref": "#/$defs/count"},
+        "rules_loaded": {"$ref": "#/$defs/count"}
+      }
+    },
+    "findings": {
+      "description": "Sorted by severity (most severe first), rule ID, file, line and address.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "coverage_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["root_module", "kind", "detail", "file", "line"],
+        "properties": {
+          "root_module": {"$ref": "#/$defs/relPath"},
+          "kind": {"enum": ["parse_error", "unresolved_module", "unknown_expansion", "limit_exceeded", "unsupported_function", "skipped_file", "incomplete_references", "incomplete_analysis"]},
+          "detail": {"type": "string"},
+          "file": {"type": "string"},
+          "line": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "policySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "digest"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+    "relPath": {"type": "string", "minLength": 1, "not": {"pattern": "^/|^\\.\\./|\\\\"}},
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "if": {"properties": {"status": {"const": "excepted"}}},
+      "then": {"properties": {"exception": {"type": "object"}}},
+      "else": {"properties": {"exception": {"type": "null"}}},
+      "required": ["rule_id", "title", "severity", "csp", "service", "status", "message", "resource", "root_module", "location", "attribute_path", "remediation", "frameworks", "references", "policy_source", "fingerprint", "exception", "ai_suggestion"],
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "severity": {"$ref": "#/$defs/severity"},
+        "csp": {"enum": ["aws", "azure", "generic"]},
+        "service": {"type": "string", "minLength": 1},
+        "status": {"enum": ["open", "excepted"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 500},
+        "resource": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["address", "type", "module", "provider"],
+          "properties": {
+            "address": {"type": "string", "minLength": 1},
+            "type": {"type": "string", "minLength": 1},
+            "module": {"type": "string"},
+            "provider": {"type": "string"}
+          }
+        },
+        "root_module": {"$ref": "#/$defs/relPath"},
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "start_line", "start_column", "end_line", "end_column"],
+          "properties": {
+            "file": {"$ref": "#/$defs/relPath"},
+            "start_line": {"type": "integer", "minimum": 1},
+            "start_column": {"type": "integer", "minimum": 1},
+            "end_line": {"type": "integer", "minimum": 1},
+            "end_column": {"type": "integer", "minimum": 1}
+          }
+        },
+        "attribute_path": {
+          "description": "null when the violation names no attribute.",
+          "oneOf": [
+            {"type": "null"},
+            {"type": "array", "minItems": 1, "items": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "integer", "minimum": 0}]}}
+          ]
+        },
+        "remediation": {"type": "string", "minLength": 1},
+        "frameworks": {"type": "object", "additionalProperties": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}},
+        "references": {"type": "array", "items": {"type": "string", "pattern": "^https://"}},
+        "policy_source": {"$ref": "#/$defs/policySource"},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "exception": {
+          "description": "null while the finding is open (exceptions arrive with M4).",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "owner", "reason", "expires", "ticket"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "owner": {"type": "string", "minLength": 1},
+                "reason": {"type": "string", "minLength": 1},
+                "expires": {"type": "string"},
+                "ticket": {"type": "string"}
+              }
+            }
+          ]
+        },
+        "ai_suggestion": {
+          "description": "null unless verified AI fix suggestions (M10) attach one; its shape is defined then.",
+          "type": ["null", "object"]
+        }
+      }
+    }
+  }
+}

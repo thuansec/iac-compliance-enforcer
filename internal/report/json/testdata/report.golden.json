@@ -1,0 +1,186 @@
+{
+  "schema_version": "1",
+  "tool": {
+    "name": "iace",
+    "version": "v0.0.0-test",
+    "commit": "0000000"
+  },
+  "policy_sources": [
+    {
+      "name": "builtin",
+      "version": "v0.0.0-test",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab"
+    }
+  ],
+  "inputs": [
+    "."
+  ],
+  "summary": {
+    "critical": 1,
+    "high": 1,
+    "medium": 1,
+    "low": 1,
+    "info": 1,
+    "open": 4,
+    "excepted": 1,
+    "blocking": 1,
+    "fail_on": "high",
+    "min_severity": "medium",
+    "hidden": 2,
+    "rules_evaluated": 3,
+    "rules_loaded": 4
+  },
+  "findings": [
+    {
+      "rule_id": "IACE-AWS-S3-002",
+      "title": "Title of IACE-AWS-S3-002",
+      "severity": "critical",
+      "csp": "aws",
+      "service": "s3",
+      "status": "open",
+      "message": "aws_s3_bucket.a is not compliant — détail",
+      "resource": {
+        "address": "aws_s3_bucket.a",
+        "type": "aws_s3_bucket",
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws"
+      },
+      "root_module": ".",
+      "location": {
+        "file": "main.tf",
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 2
+      },
+      "attribute_path": [
+        "acl"
+      ],
+      "remediation": "Fix it.",
+      "frameworks": {
+        "aws-securityhub": [
+          "S3.8",
+          "S3.1"
+        ],
+        "cis-aws@5.0.0": [
+          "2.1.4"
+        ]
+      },
+      "references": [
+        "https://docs.aws.amazon.com/s3/"
+      ],
+      "policy_source": {
+        "name": "builtin",
+        "version": "v0.0.0-test",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab"
+      },
+      "fingerprint": "a669695b831095205e5c8bf7126d564b0a68f8b2e79dec785a878cbceb66b215",
+      "exception": null,
+      "ai_suggestion": null
+    },
+    {
+      "rule_id": "IACE-AWS-EC2-001",
+      "title": "Title of IACE-AWS-EC2-001",
+      "severity": "high",
+      "csp": "aws",
+      "service": "s3",
+      "status": "excepted",
+      "message": "aws_instance.b is not compliant — détail",
+      "resource": {
+        "address": "aws_instance.b",
+        "type": "aws_s3_bucket",
+        "module": "",
+        "provider": "registry.terraform.io/hashicorp/aws"
+      },
+      "root_module": ".",
+      "location": {
+        "file": "main.tf",
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 2
+      },
+      "attribute_path": [
+        "metadata_options",
+        0,
+        "http_tokens"
+      ],
+      "remediation": "Fix it.",
+      "frameworks": {
+        "aws-securityhub": [
+          "S3.8",
+          "S3.1"
+        ],
+        "cis-aws@5.0.0": [
+          "2.1.4"
+        ]
+      },
+      "references": [
+        "https://docs.aws.amazon.com/s3/"
+      ],
+      "policy_source": {
+        "name": "builtin",
+        "version": "v0.0.0-test",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab"
+      },
+      "fingerprint": "0b8a85a1cbad34c2322d9a382814012bbf9d271ec7cdb1cf2ce349e85fe61def",
+      "exception": {
+        "id": "EXC-1",
+        "owner": "platform",
+        "reason": "legacy host",
+        "expires": "2027-01-01",
+        "ticket": "SEC-12"
+      },
+      "ai_suggestion": null
+    },
+    {
+      "rule_id": "IACE-AWS-S3-005",
+      "title": "Title of IACE-AWS-S3-005",
+      "severity": "medium",
+      "csp": "aws",
+      "service": "s3",
+      "status": "open",
+      "message": "module.logs.aws_s3_bucket.c is not compliant — détail",
+      "resource": {
+        "address": "module.logs.aws_s3_bucket.c",
+        "type": "aws_s3_bucket",
+        "module": "module.logs",
+        "provider": "registry.terraform.io/hashicorp/aws"
+      },
+      "root_module": ".",
+      "location": {
+        "file": "main.tf",
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 2
+      },
+      "attribute_path": null,
+      "remediation": "Fix it.",
+      "frameworks": {},
+      "references": [
+        "https://docs.aws.amazon.com/s3/"
+      ],
+      "policy_source": {
+        "name": "builtin",
+        "version": "v0.0.0-test",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab"
+      },
+      "fingerprint": "6772a7ab53163443a24c48d0cd43a404973fc198f8a5cf7eebb353c18556c474",
+      "exception": null,
+      "ai_suggestion": null
+    }
+  ],
+  "warnings": [
+    "rule IACE-AWS-S3-005 is deprecated"
+  ],
+  "coverage_gaps": [
+    {
+      "root_module": ".",
+      "kind": "parse_error",
+      "detail": "bad",
+      "file": "x.tf",
+      "line": 2
+    }
+  ]
+}

@@ -878,13 +878,14 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
 ## M12 · Pull-request demo — status: active
 Goal: a pull request on GitHub runs iace, shows its findings in code scanning and fails the check, before M3–M5 are complete.
 
-- [ ] T-0301 · JSON report v1 with schema and golden tests
+- [x] T-0301 · JSON report v1 with schema and golden tests
   - skills: iace-reporting, iace-architecture
   - depends: T-0207
   - accept:
     - schemas/findings.v1.json; the report includes tool version, policy sources, summary, findings, warnings and coverage gaps; golden test; deterministic order
     - model.Finding encodes deterministically (sorted frameworks keys) with a nil attribute_path as null, not [] (encoding/json/v2 defaults write [] and random map order; options as model.Values uses, T-0204 review); a marshal test; the report-level min_severity, hidden, rules_evaluated and rules_loaded fields (T-0206b) are in schemas/findings.v1.json and in the findings reference (via T-0110b)
-  - attempts: 0
+  - attempts: 1
+  - result: `iace scan -o json` writes the findings report v1 (schemas/findings.v1.json, ADR 0051): tool, the builtin policy source with a sha256 digest of the library, inputs, a summary by severity and status with blocking, fail_on, min_severity, hidden and rules evaluated/loaded, findings with every finding v1 field (policy_source; exception and ai_suggestion null until M4/M10; a null attribute_path when none), warnings and coverage gaps; deterministic (sorted keys, fixed field order); golden and schema tests, real scans validated, several paths merged. The findings reference sync joins T-0110b
 - [ ] T-0302 · SARIF 2.1.0 output for GitHub code scanning
   - skills: iace-reporting
   - depends: T-0301
@@ -1045,6 +1046,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205); it states that the single-object and nested-unknown checks apply only when a rule's fail/expected.yaml has a path with an index step, so a reviewer checks that a rule reading nested blocks has such a finding (T-0205c review)
     - .claude/skills/iace-loop/references/roadmap.md matches BACKLOG for the SSH rule: T-0205b ships IACE-AWS-VPC-001 (not IACE-AWS-EC2-002, which the catalog gives to EBS encryption), T-0602 is folded into it and T-0603 depends on T-0205b (T-0205b review)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md describes the findings report v1 as ADR 0051 does: report-level summary with status counts, min_severity, hidden, rules_evaluated and rules_loaded; per-finding policy_source, exception and ai_suggestion (null until M4/M10); the built-in digest framing; optional-field evolution within v1 (T-0301)
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines `root_module` and the fingerprint for several scan paths as ADR 0050 does (each path relative to the working directory qualifies its roots and files; outside or nested paths are usage errors) (T-0206c)
     - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
@@ -1110,6 +1112,7 @@ Goal: machine- and human-readable outputs that CI systems and GitHub understand.
   - depends: T-0305
   - accept:
     - unparsed files, unresolved modules and unknown-valued checks appear in all formats; `--fail-on-gaps` exits 2 when gaps exist
+    - a value a rule would judge but cannot, because it is unknown, is visible in every format as a rule-level coverage gap (rule ID, address, attribute path), not only in the input document: today such entries yield no finding and nothing in the report (M2 wrap-up gap)
   - attempts: 0
 
 ## M4 · Repo policy config — status: planned
