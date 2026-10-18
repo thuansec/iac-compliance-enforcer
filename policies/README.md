@@ -19,8 +19,15 @@ mirrors the packages: helpers in `iace/lib/<name>/` (`iace.lib.<name>`), rules i
 - Unknown is neither a violation nor a pass: guard every judged path with `not tf.is_unknown`.
 - Absent means the provider default: `tf.value_or(r, path, default)`, with a comment citing the
   provider documentation and version; branch on `tf.provider_major(r)` where defaults changed.
-- Messages never interpolate attribute values. Every rule ships with Rego tests and pass/fail
-  Terraform fixtures.
+- Messages never interpolate attribute values. Every rule ships with Rego tests and Terraform
+  fixtures in `testdata/policies/<RULE-ID>/`:
+  - `fail/` (HCL) and `fail_json/` (`.tf.json` only, nested blocks written as single objects),
+    each with `expected.yaml` listing every finding's `address` and `attribute_path`;
+  - `pass/`: compliant variants (explicit secure values, secure defaults, account-level settings);
+  - `unknown/`: the judged value unknown inside a nested block, which must yield no finding.
+
+  `internal/app/fixtures_test.go` scans each with the real loader and engine, and fails when a
+  rule lacks a directory or a directory names no rule.
 
 ## Commands
 - `make policy-check policy-test`: strict compile and tests (at least 90% coverage) with the

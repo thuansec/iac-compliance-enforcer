@@ -3403,3 +3403,27 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   T-0301's acceptance, and debug logging of unknown violation keys as T-0138. The findings
   reference's fingerprint definition joins T-0110b (harness).
 - Next: T-0205 (ship the first rules end to end, with the fixture harness).
+
+### 2026-10-18 · T-0205 · done
+- What: the policy fixture harness. T-0205 was split so the scan command lands first: this slice
+  builds the harness with IACE-AWS-EC2-001's fixtures, and the S3 and Azure Storage rules are
+  T-0205c and T-0205d after T-0206 (T-0205c also carries the override finding T-0112b left to
+  it). internal/app gains an unexported load (unredacted documents; Inspect still redacts).
+  internal/app/fixtures_test.go scans each rule's fail, fail_json, pass and unknown directories
+  (subdirectories are separate roots) with the real loader and engine: fail kinds must match
+  expected.yaml exactly, pass and unknown must yield no finding of the rule. It fails on a
+  missing or misnamed kind, a directory naming no rule, a .tf file in fail_json or a block there
+  not written as one object, and an unknown fixture without a nested unknown both in HCL and in a
+  .tf.json single-object block (whose stored path differs, ADR 0006).
+- Files: internal/app/{inspect.go,fixtures_test.go}, testdata/policies/IACE-AWS-EC2-001/**,
+  policies/README.md, go.mod, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass). Mutations caught by the harness: a missing expected
+  finding, a known value in the unknown fixture, a removed JSON unknown root, a misnamed kind.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: the split had dropped the JSON
+  shape of the unknown fixture, where a rule comparing paths itself would report false findings;
+  fixed with a JSON root and a check that requires both shapes. Minors fixed: separate pass roots
+  (explicit value without an account default), strict expected.yaml decoding, misnamed kind
+  directories, a stray nested copy of the JSON unknown fixture (left by a move during the
+  mutation check). The iace-testing and iace-rego-policies skills still describe {fail,pass}:
+  their update joins T-0110b.
+- Next: T-0206 (`iace scan` with text output and exit codes).

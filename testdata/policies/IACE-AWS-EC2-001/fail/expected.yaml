@@ -1,0 +1,5 @@
+findings:
+  - address: aws_instance.optional
+    attribute_path: [metadata_options, 0, http_tokens]
+  - address: aws_instance.unset
+    attribute_path: [metadata_options, 0, http_tokens]
