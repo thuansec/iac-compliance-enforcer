@@ -3380,3 +3380,26 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   .tf.json override. The input-document reference sits in the harness: its update joins T-0110b
   (needs-human).
 - Next: T-0204 (decode violations into findings).
+
+### 2026-10-18 · T-0204 · done
+- What: violations become findings. model.Finding carries the finding v1 fields the engine can
+  fill (exceptions, AI suggestions and policy sources come later). model.Fingerprint is the hex
+  SHA-256 of the JSON array [rule_id, root_module, address, attribute_path] with null for no
+  path (ADR 0049: the contract's plain concatenation was ambiguous); one value is pinned.
+  Engine.Findings decodes strictly: an object whose address is a resource of the document, a
+  message of 1 to 500 characters, an optional path of names and non-negative integers ([] is
+  treated as no path); extra keys are ignored. A malformed violation is a PolicyError naming the
+  rule that never quotes the violation. A finding points at the nearest located attribute of its
+  path, in the file that sets it (ADR 0048), else at the block; findings sort by severity, rule,
+  file, line and address.
+- Files: internal/model/{finding.go,finding_test.go}, internal/engine/{engine.go,findings.go,
+  findings_test.go}, docs/adr/0049-encode-finding-fingerprints-as-a-json-array.md,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); engine coverage 94.3%, model 91.6%; the pinned
+  fingerprint matches sha256sum of the same JSON.
+- Review: iace-reviewer APPROVE with five minors. Fixed: [] and an absent path now share one
+  fingerprint, tests at the 500-character limit (multi-byte too) and a line-shift test at the
+  Findings level. Recorded: deterministic JSON encoding of findings (null path, sorted keys) in
+  T-0301's acceptance, and debug logging of unknown violation keys as T-0138. The findings
+  reference's fingerprint definition joins T-0110b (harness).
+- Next: T-0205 (ship the first rules end to end, with the fixture harness).

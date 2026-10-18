@@ -49,6 +49,7 @@ func (e *EvalTimeoutError) Error() string {
 type Engine struct {
 	pq          rego.PreparedEvalQuery
 	ruleByFile  map[string]string
+	rules       map[string]Rule
 	builtins    map[string]bool
 	timeout     time.Duration
 	parallelism int
@@ -83,7 +84,9 @@ func New(ctx context.Context, lib *Library, caps *ast.Capabilities, opts Options
 	slices.SortFunc(rules, func(a, b Rule) int { return strings.Compare(a.ID, b.ID) })
 	entries := make([]string, 0, len(rules))
 	ruleByFile := make(map[string]string, len(rules))
+	byID := make(map[string]Rule, len(rules))
 	for _, r := range rules {
+		byID[r.ID] = r
 		entries = append(entries, strconv.Quote(r.ID)+": data."+r.Package+".deny")
 		ruleByFile[r.File] = r.ID
 	}
@@ -110,7 +113,7 @@ func New(ctx context.Context, lib *Library, caps *ast.Capabilities, opts Options
 	for _, b := range caps.Builtins {
 		builtins[b.Name] = true
 	}
-	e := &Engine{pq: pq, ruleByFile: ruleByFile, builtins: builtins, timeout: opts.Timeout, parallelism: opts.Parallelism}
+	e := &Engine{pq: pq, ruleByFile: ruleByFile, rules: byID, builtins: builtins, timeout: opts.Timeout, parallelism: opts.Parallelism}
 	if e.timeout <= 0 {
 		e.timeout = DefaultTimeout
 	}
