@@ -3334,3 +3334,30 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   distinctive assertions. Deferred: framework keys (T-0136); params schemas (M4) and cross-source
   IDs (M8) are already planned.
 - Next: T-0203 (compile and evaluate with restricted capabilities).
+
+### 2026-10-18 · T-0203 · done
+- What: compile and evaluate. internal/engine.New compiles every loaded module once in strict
+  mode (Rego v1, StrictBuiltinErrors) against the embedded capabilities, which are required, so
+  a denied builtin (http.send) fails compilation with the file named. One prepared query maps
+  each rule ID to its deny set. Evaluate converts a document once (EvalParsedInput), runs under a
+  per-document timeout (30 s default, EvalTimeoutError), and trusts a result only if the context
+  was still live. Evaluation errors become PolicyError naming the file and rule with only the
+  error code, the builtin name (when caps allows it) and the line: OPA's own text quotes the
+  operand, which can be a scanned value. EvaluateAll runs documents through a bounded errgroup in
+  order and returns the first error.
+- Files: internal/engine/{engine.go,engine_test.go,load.go}, go.mod, go.sum,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass, test step about 500 s); engine coverage 92.7%;
+  BenchmarkEvaluate (built-in rules, 12 cores): 49 ms/op for 1k and 239 ms/op for 5k resources,
+  inside the 2 s / 10 s scan budget. One full run failed in internal/terraform's non-race timing
+  phase with nothing else running and passed on the rerun; the 12 timing tests passed three times
+  alone. The gate shows only the last 25 lines, which did not include the failing test's name
+  (T-0125b).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major: evaluation errors copied OPA's
+  message, which quotes operand values (to_number, net.cidr_contains on scanned attributes),
+  into stderr and CI logs; fixed with a fake-secret test. Minors fixed: nil capabilities (OPA's
+  defaults allow network builtins), nil document, the first-error assertion, a comment; found
+  while testing: OPA returned a result under a cancelled context, now rejected. Second round
+  minor (a value-shaped message prefix) fixed by quoting only builtin names from the capabilities.
+  Deferred: naming the calling rule for helper-module errors (T-0137).
+- Next: T-0134 (locate attributes an override file sets in that file), then T-0204.
