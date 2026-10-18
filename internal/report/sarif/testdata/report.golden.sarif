@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "iace",
+          "version": "v1.2.3",
+          "semanticVersion": "1.2.3",
+          "informationUri": "https://github.com/thuansec/iac-compliance-enforcer",
+          "rules": [
+            {
+              "id": "IACE-AWS-EC2-001",
+              "name": "RuleIaceAwsEc2001MustHold",
+              "shortDescription": {
+                "text": "Rule IACE-AWS-EC2-001 must hold"
+              },
+              "fullDescription": {
+                "text": "Rule IACE-AWS-EC2-001 must hold"
+              },
+              "help": {
+                "text": "Set the attribute.",
+                "markdown": "**Remediation:** Set the attribute.\n\n[Reference](https://docs.aws.amazon.com/s3/)"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "security-severity": "8.0",
+                "precision": "high",
+                "tags": [
+                  "security",
+                  "terraform",
+                  "aws",
+                  "s3",
+                  "aws-securityhub/S3.8"
+                ]
+              }
+            },
+            {
+              "id": "IACE-AWS-S3-002",
+              "name": "RuleIaceAwsS3002MustHold",
+              "shortDescription": {
+                "text": "Rule IACE-AWS-S3-002 must hold"
+              },
+              "fullDescription": {
+                "text": "Rule IACE-AWS-S3-002 must hold"
+              },
+              "help": {
+                "text": "Set the attribute.",
+                "markdown": "**Remediation:** Set the attribute.\n\n[Reference](https://docs.aws.amazon.com/s3/)"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "security-severity": "9.5",
+                "precision": "high",
+                "tags": [
+                  "security",
+                  "terraform",
+                  "aws",
+                  "s3",
+                  "aws-securityhub/S3.8"
+                ]
+              }
+            },
+            {
+              "id": "IACE-AWS-S3-003",
+              "name": "RuleIaceAwsS3003MustHold",
+              "shortDescription": {
+                "text": "Rule IACE-AWS-S3-003 must hold"
+              },
+              "fullDescription": {
+                "text": "Rule IACE-AWS-S3-003 must hold"
+              },
+              "help": {
+                "text": "Set the attribute.",
+                "markdown": "**Remediation:** Set the attribute.\n\n[Reference](https://docs.aws.amazon.com/s3/)"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "security-severity": "5.5",
+                "precision": "high",
+                "tags": [
+                  "security",
+                  "terraform",
+                  "aws",
+                  "s3",
+                  "aws-securityhub/S3.8"
+                ]
+              }
+            },
+            {
+              "id": "IACE-AWS-S3-009",
+              "name": "RuleIaceAwsS3009MustHold",
+              "shortDescription": {
+                "text": "Rule IACE-AWS-S3-009 must hold"
+              },
+              "fullDescription": {
+                "text": "Rule IACE-AWS-S3-009 must hold"
+              },
+              "help": {
+                "text": "Set the attribute.",
+                "markdown": "**Remediation:** Set the attribute.\n\n[Reference](https://docs.aws.amazon.com/s3/)"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "security-severity": "3.0",
+                "precision": "high",
+                "tags": [
+                  "security",
+                  "terraform",
+                  "aws",
+                  "s3",
+                  "aws-securityhub/S3.8"
+                ]
+              }
+            },
+            {
+              "id": "IACE-GEN-X-001",
+              "name": "RuleIaceGenX001MustHold",
+              "shortDescription": {
+                "text": "Rule IACE-GEN-X-001 must hold"
+              },
+              "fullDescription": {
+                "text": "Rule IACE-GEN-X-001 must hold"
+              },
+              "help": {
+                "text": "Set the attribute.",
+                "markdown": "**Remediation:** Set the attribute.\n\n[Reference](https://docs.aws.amazon.com/s3/)"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "precision": "high",
+                "tags": [
+                  "security",
+                  "terraform",
+                  "aws",
+                  "s3",
+                  "aws-securityhub/S3.8"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": [
+            {
+              "level": "warning",
+              "message": {
+                "text": "coverage gap in infra: unresolved_module infra/main.tf:7 remote module"
+              }
+            },
+            {
+              "level": "warning",
+              "message": {
+                "text": "only 5 of 6 rules evaluated (--rule): the others were not checked"
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "IACE-AWS-S3-002",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "aws_s3_bucket.a is not compliant"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 3,
+                  "endLine": 3
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "aws_s3_bucket.a",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        },
+        {
+          "ruleId": "IACE-AWS-EC2-001",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "aws_instance.b is not compliant"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 3,
+                  "endLine": 3
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "aws_instance.b",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        },
+        {
+          "ruleId": "IACE-AWS-EC2-001",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "aws_instance.c is not compliant"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 3,
+                  "endLine": 3
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "aws_instance.c",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "suppressions": [
+            {
+              "kind": "external",
+              "status": "accepted",
+              "justification": "legacy host (owner platform, expires 2027-01-01, EXC-7)"
+            }
+          ],
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        },
+        {
+          "ruleId": "IACE-AWS-S3-003",
+          "ruleIndex": 2,
+          "level": "warning",
+          "message": {
+            "text": "aws_s3_bucket.d is not compliant"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/%C3%BCn%C3%AFcode.tf"
+                },
+                "region": {
+                  "startLine": 4,
+                  "endLine": 4
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "aws_s3_bucket.d",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        },
+        {
+          "ruleId": "IACE-AWS-S3-009",
+          "ruleIndex": 3,
+          "level": "note",
+          "message": {
+            "text": "module.logs.aws_s3_bucket.e n'a pas de journal — ログなし"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 3,
+                  "endLine": 3
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "module.logs.aws_s3_bucket.e",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        },
+        {
+          "ruleId": "IACE-GEN-X-001",
+          "ruleIndex": 4,
+          "level": "note",
+          "message": {
+            "text": "aws_s3_bucket.f is not compliant"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf"
+                },
+                "region": {
+                  "startLine": 3,
+                  "endLine": 3
+                }
+              },
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "aws_s3_bucket.f",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "iaceFinding/v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "properties": {
+            "policySource": "builtin@v1.2.3"
+          }
+        }
+      ]
+    }
+  ]
+}
