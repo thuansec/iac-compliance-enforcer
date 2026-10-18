@@ -1,0 +1,9 @@
+# A policy that does not compile (it calls the denied http.send) fails the scan with exit 2.
+! exec iace-broken-policy scan repo
+! stdout .
+stderr '^iace: .*http.send'
+
+-- repo/main.tf --
+resource "aws_instance" "web" {
+  ami = "ami-0123456789abcdef0"
+}

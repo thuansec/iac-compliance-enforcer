@@ -816,7 +816,7 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - T-0205 was split (2026-10-18): IACE-AWS-S3-001 is T-0205c and IACE-AZURE-STORAGE-001 T-0205d, after the scan command, so the PoC scan lands first
   - attempts: 1
   - result: internal/app/fixtures_test.go scans testdata/policies/<RULE-ID>/{fail,fail_json,pass,unknown}/ (subdirectories are separate roots) with the real loader (unredacted documents, app.load) and engine; fail and fail_json must match expected.yaml exactly (strict decoding), pass and unknown yield nothing; it fails on a missing or misnamed kind, a directory naming no rule, a .tf file in fail_json, a fail_json finding whose block is not a single object, and an unknown fixture without both an HCL and a .tf.json nested unknown; IACE-AWS-EC2-001 has all four. policies/README.md documents the layout; S3 and Azure rules are T-0205c/T-0205d
-- [ ] T-0206 · Implement `iace scan` with text output and exit codes
+- [x] T-0206 · Implement `iace scan` with text output and exit codes
   - skills: iace-architecture, iace-reporting, iace-testing, iace-security
   - depends: T-0205
   - accept:
@@ -824,6 +824,13 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - testscript covers a clean repo, a failing repo, a broken policy and a Terraform parse error
     - usage errors never echo flag values (pflag repeats them, e.g. `invalid argument "…" for "--var"`); a testscript with an obviously fake secret in `--var` shows stderr does not contain it (T-0003 review finding)
     - a scan path with no Terraform root module is decided explicitly (a coverage gap or exit 2), never a silent pass: a mistyped CI path must not look clean (`iace inspect` prints "no Terraform root modules under this path" and exits 0, T-0109e review)
+  - attempts: 1
+  - result: `iace scan [PATH]` loads unredacted documents, compiles the policies once, evaluates every root module and prints a text report (findings by severity with location and fix, coverage gaps with redacted details, summary, scanned roots; every repository- or policy-supplied field on one line without control characters) before deciding the exit: 2 for a policy error, parse errors, no root modules, a timeout or gaps with --fail-on-gaps, 1 for open findings at or above --fail-on (default high), else 0. Flags: --fail-on, --fail-on-gaps, --timeout, --var, --var-file, --trust-module-manifest; flag errors in every command go through an allowlist that never repeats input. Other flags: T-0206b and their milestones
+- [ ] T-0206b · Complete `iace scan`'s selection flags and multiple paths
+  - skills: iace-architecture, iace-reporting, iace-testing
+  - depends: T-0206
+  - accept:
+    - `--min-severity` hides findings below it from every output (blocking still counts them, stated in help), `--rule ID` (repeatable) evaluates only those rules by leaving the others out of the query, and `scan PATH...` scans several paths with root modules named unambiguously across them; testscript per flag; inspect and scan word a runtime error alike (inspect appends "; see 'iace --help'" to a missing path, scan does not; T-0206 review) (deferred from T-0206 to land the PoC scan first; -o is T-0305, config M4, --offline M8, --plan M9, --ai-fix M10, logging flags with the logger)
   - attempts: 0
 - [ ] T-0205c · IACE-AWS-S3-001 · S3 buckets block public access
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
@@ -1020,6 +1027,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
     - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes

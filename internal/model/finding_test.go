@@ -52,3 +52,18 @@ func TestSeverityRank(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarize(t *testing.T) {
+	f := func(s model.Severity, st model.Status) model.Finding { return model.Finding{Severity: s, Status: st} }
+	fs := []model.Finding{
+		f(model.SeverityCritical, model.StatusOpen), f(model.SeverityHigh, model.StatusOpen),
+		f(model.SeverityHigh, model.StatusExcepted), f(model.SeverityMedium, model.StatusOpen),
+		f(model.SeverityLow, model.StatusOpen), f(model.SeverityInfo, model.StatusOpen),
+	}
+	for failOn, blocking := range map[string]int{"critical": 1, "high": 2, "medium": 3, "low": 4, "info": 5, model.FailOnNone: 0} {
+		s := model.Summarize(fs, failOn)
+		if s.Blocking != blocking || s.Critical != 1 || s.High != 2 || s.Medium != 1 || s.Low != 1 || s.Info != 1 || s.FailOn != failOn {
+			t.Errorf("fail-on %s: %+v, want %d blocking (excepted findings never block)", failOn, s, blocking)
+		}
+	}
+}

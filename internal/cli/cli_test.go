@@ -147,7 +147,29 @@ func TestEveryCommandHasAnExample(t *testing.T) {
 			walk(sub)
 		}
 	}
-	root := newRootCommand()
+	root := newRootCommand(nil)
 	root.InitDefaultHelpCmd() // cobra adds its help command lazily, during Execute
 	walk(root)
+}
+
+// flagError passes only messages that name a flag; any other shape comes back generic, so a
+// pflag message change cannot start echoing what was typed.
+func TestFlagErrorNeverRepeatsInput(t *testing.T) {
+	const secret = "FAKEsecretVALUE0000"
+	for in, want := range map[string]string{
+		"unknown flag: --bogus":                                        "unknown flag: --bogus",
+		"flag needs an argument: --var":                                "flag needs an argument: --var",
+		`invalid argument "` + secret + `" for "--timeout" flag: x`:    `invalid value for the "--timeout" flag`,
+		`invalid argument "` + secret + `" for "-o, --output" flag: x`: `invalid value for the "--output" flag`,
+		"unknown shorthand flag: 'v' in -var=t=" + secret:              "unknown shorthand flag: 'v'",
+		"flag needs an argument: 'o' in -o":                            "flag needs an argument: 'o'",
+		"bad flag syntax: ---var=" + secret:                            "invalid flag syntax",
+		"some future message about " + secret:                          "invalid flag syntax",
+		"unknown flag: --var=" + secret:                                "invalid flag syntax",
+	} {
+		got := flagError(nil, errors.New(in)).Error()
+		if !strings.HasPrefix(got, want) || strings.Contains(got, secret) {
+			t.Errorf("flagError(%q) = %q, want a message starting %q without the value", in, got, want)
+		}
+	}
 }
