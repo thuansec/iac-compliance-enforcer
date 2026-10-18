@@ -851,12 +851,13 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - split (2026-10-18): several paths per scan is T-0206c
   - attempts: 1
   - result: --min-severity (critical..info) leaves lower findings out of the report and counts them as hidden, while the summary and blocking count every finding; --rule ID (repeatable) evaluates only the named rules (the others stay out of the query), an unknown ID is a usage error naming its position, and the report says how many of the loaded rules ran; inspect words runtime errors like scan (no usage hint). Several paths per scan: T-0206c
-- [ ] T-0206c · Scan several paths in one run
+- [x] T-0206c · Scan several paths in one run
   - skills: iace-architecture, iace-reporting, iace-testing
   - depends: T-0206b
   - accept:
     - `scan PATH...` scans several paths with root modules named unambiguously across them (two paths each with a root "." must not collide in findings, fingerprints or the report); a testscript
-  - attempts: 0
+  - attempts: 1
+  - result: `scan PATH...` (ADR 0050): one path is unchanged; several paths are made relative to the working directory (outside it, or nested in one another, is a usage error), scanned in sorted order, and each root module, file, gap and input is qualified by its path, with fingerprints from the qualified root; summaries merge. Compiling once per run is T-0139
 - [ ] T-0205b · IACE-AWS-EC2-002 · No security group ingress open to the internet on SSH
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0206
@@ -1030,6 +1031,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - accept:
     - at a load average of about 5, `go test -short ./internal/terraform` failed TestRepeatedNumberFormattingIsBounded (1.02 s against 1 s) and TestEvaluateTreeBoundsTheWholeTree/expansion (28–31 s against 20 s), and one `gates.sh full` failed in make test's non-race step, while all pass alone on main and the branch (T-0124c). Make these bounds hold under load without weakening what they prove: for example, compare against a calibration run measured in the same process, or bound the work counted rather than wall time where the work is countable
     - gates.sh shows only the last 25 lines of a failing step and removes its full logs, so a failing timing test in make test's non-race step can go unnamed: twice in T-0126 that step failed in gates.sh while it passed six times run directly or through `make test`. Name which test failed (for example by keeping the failing step's log, a harness change the owner approves)
+    - `make test` keeps the non-race phase's full output (as it tees the race phase to .cache/test-race.out), so a failing timing test is named: gates.sh shows only the last 25 lines and deletes its logs, and T-0202, T-0203 and T-0206c each hit a failure in that phase whose test name was lost (it passed on rerun and in repeated runs alone)
   - attempts: 0
 - [!] T-0110b · Sync the input-document reference with ADR 0045 and ADR 0046
   - skills: iace-architecture
@@ -1039,6 +1041,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
     - iace-testing's SKILL.md describes the fixture harness as built: internal/app/fixtures_test.go, the four kinds {fail,fail_json,pass,unknown} (subdirectories are separate roots), and the JSON unknown shape; iace-rego-policies' SKILL.md lists the same layout (T-0205); it states that the single-object and nested-unknown checks apply only when a rule's fail/expected.yaml has a path with an index step, so a reviewer checks that a rule reading nested blocks has such a finding (T-0205c review)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md defines `root_module` and the fingerprint for several scan paths as ADR 0050 does (each path relative to the working directory qualifies its roots and files; outside or nested paths are usage errors) (T-0206c)
     - .claude/skills/iace-architecture/references/findings-and-cli.md matches `iace scan` as built (T-0206): `--fail-on` accepts info, exit 2 lists "no Terraform root modules under PATH" (a mistyped path never looks clean), scan takes `--trust-module-manifest`, and flag errors name the flag but never its value
     - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
     - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
@@ -1069,6 +1072,12 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0204
   - accept:
     - once the engine has a logger, decoding logs at debug level how many unknown keys a rule's violations carried, with the rule ID and never the keys' values, as iace-opa-engine asks (they are ignored silently today; T-0204 review); a test
+  - attempts: 0
+- [ ] T-0139 · Compile the policies once for a scan of several paths
+  - skills: iace-opa-engine, iace-go-standards
+  - depends: T-0206c
+  - accept:
+    - `scan PATH...` loads and compiles the policy library once and evaluates every path's root modules with that engine, as iace-architecture requires (today ScanPaths runs Scan, which compiles, per path; T-0206c review); a test counts the compilations
   - attempts: 0
 
 ## M3 · Reports — status: planned
