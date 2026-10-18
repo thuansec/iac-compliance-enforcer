@@ -798,13 +798,14 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - an attribute set by an override file keeps its range but not its file: source.attributes holds only ranges and the resource's source.file is the base file, so main_override.tf's `acl` (line 3) points at main.tf:3 in the override golden, and a finding on the weakening override would point at the wrong line (T-0109e review). Record the file per attribute (an additive contract change, with an ADR 0004 amendment, schema, model and reference) or fall back to the block range for attributes from another file; the override golden shows the right file
   - attempts: 1
   - result: source.attribute_files (ADR 0048, amending ADR 0004) maps each attribute set outside source.file, by an HCL or JSON override file and in nested blocks too, to that file; omitted when there are none, so other documents are unchanged; schema, model, normalizer and redaction copy updated; the override golden locates acl at main_override.tf:3. The harness reference update joins T-0110b
-- [ ] T-0204 · Decode violations into findings
+- [x] T-0204 · Decode violations into findings
   - skills: iace-opa-engine, iace-architecture
   - depends: T-0203, T-0134
   - accept:
     - strict decoding; the violation's address must exist in the input; location comes from the attribute range when the path is known, otherwise the block range; an attribute's file is `source.attribute_files[path]` when present, else `source.file` (ADR 0048)
     - fingerprints are stable across runs and line shifts; tests cover each
-  - attempts: 0
+  - attempts: 1
+  - result: model.Finding (finding v1 without exception, AI suggestion and policy source, which later stages add) and model.Fingerprint, the hex SHA-256 of the JSON array [rule_id, root_module, address, attribute_path|null] (ADR 0049, pinned); Engine.Findings decodes strictly (object, existing address, message of 1–500 characters, path of names and non-negative integers, [] treated as none), errors name the rule without quoting the violation, locations come from the nearest located attribute in its own file (ADR 0048) or the block, findings are sorted by severity, rule, file, line and address. JSON encoding of findings is T-0301's; debug logging of unknown keys T-0138
 - [ ] T-0205 · Ship the first rules end to end, with the fixture harness
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0204
@@ -844,6 +845,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - depends: T-0207
   - accept:
     - schemas/findings.v1.json; the report includes tool version, policy sources, summary, findings, warnings and coverage gaps; golden test; deterministic order
+    - model.Finding encodes deterministically (sorted frameworks keys) with a nil attribute_path as null, not [] (encoding/json/v2 defaults write [] and random map order; options as model.Values uses, T-0204 review); a marshal test
   - attempts: 0
 - [ ] T-0302 · SARIF 2.1.0 output for GitHub code scanning
   - skills: iace-reporting
@@ -1002,6 +1004,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - the iace-architecture package layout lists internal/redact (the shared credential names and secret patterns, T-0109f)
     - .claude/skills/iace-security/references/threat-model.md's T3 row names the accepted residual of ADR 0047: about one uncounted sort of a set of fractions per module evaluation, bounded by the conversion refusals (T-0124e)
     - .claude/skills/iace-architecture/references/findings-and-cli.md shows `iace inspect PATH [--json] [--var K=V] [--var-file FILE] [--trust-module-manifest]`, exit 2 on a parse_error gap, and lists IACE_TRUST_MODULE_MANIFEST in the environment table ("trust .terraform/modules/modules.json; the flag beats the variable"); the threat model's T4 row names the variable (T-0109e)
+    - .claude/skills/iace-architecture/references/findings-and-cli.md defines the fingerprint as ADR 0049 does: the hex SHA-256 of the JSON array [rule_id, root_module, resource.address, attribute_path] (null without a path), not a plain concatenation (T-0204)
     - .claude/skills/iace-architecture/references/input-document.md documents `source.attribute_files` (ADR 0048): the file of each attribute set outside `source.file` (an override file), omitted when there are none (T-0134)
     - .claude/skills/iace-architecture/references/input-document.md lists the coverage-gap kinds of ADR 0046 (skipped_file, incomplete_references, incomplete_analysis) and states ADR 0045: integers that fit in int64 exact, other numbers rounded to float64, out-of-range numbers unknown; a known null attribute omitted, null list and map elements kept; sets with an unknown element unknown as a whole, paths into sets reported as the set; a value that is not a known object is a coverage gap; range columns count characters as hcl reports them, not bytes
   - attempts: 0
@@ -1024,6 +1027,12 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
   - depends: T-0203
   - accept:
     - a builtin error raised inside an iace.lib.* helper names the rule whose evaluation called it (today the error names only the helper's file, RuleID empty; T-0203 review), for example by evaluating the failing document per rule to attribute the error; the message still quotes no scanned value; a test per case
+  - attempts: 0
+- [ ] T-0138 · Log the count of unknown violation keys at debug level
+  - skills: iace-opa-engine, iace-go-standards
+  - depends: T-0204
+  - accept:
+    - once the engine has a logger, decoding logs at debug level how many unknown keys a rule's violations carried, with the rule ID and never the keys' values, as iace-opa-engine asks (they are ignored silently today; T-0204 review); a test
   - attempts: 0
 
 ## M3 · Reports — status: planned
