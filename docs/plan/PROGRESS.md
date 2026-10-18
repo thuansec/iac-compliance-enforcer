@@ -3480,3 +3480,20 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   the harness comment, the Security Hub citation; added the override-location scan test it
   suggested. Recorded: the nested-check condition joins T-0110b's iace-testing update.
 - Next: T-0205d (IACE-AZURE-STORAGE-001).
+
+### 2026-10-18 · T-0205d · done
+- What: IACE-AZURE-STORAGE-001 (medium), the first Azure rule. An azurerm_storage_account whose
+  min_tls_version is explicitly TLS1_0 or TLS1_1 is a finding at that attribute; absent means
+  TLS1_2 on azurerm 4.x and 5.x (5.x accepts only TLS1_2), so no branch on the provider major is
+  needed; unknown values and data sources are skipped. The task title said "secure transfer"
+  since the T-0205 split; it now follows the catalog (minimum TLS 1.2; HTTPS-only is
+  IACE-AZURE-STORAGE-002). No framework mapping ships: the catalog's MCSB DP-3 is a candidate.
+- Files: policies/iace/rules/azure/storage/min_tls_version/*.rego,
+  testdata/policies/IACE-AZURE-STORAGE-001/**, docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); Rego coverage 100%, Regal clean; the fixture harness
+  passes for all three rules. Defaults from the iace-cloud-controls catalog (azurerm 4.81.0 and
+  5.7.0, 2026-10-01).
+- Review: iace-reviewer APPROVE, no findings. Its note that the unknown test passed without the
+  guard (an unknown value is null, which falls back to TLS1_2) led to a test with a weak
+  placeholder value; it fails when the guard is removed.
+- Next: T-0206b (scan selection flags and multiple paths), then M12.

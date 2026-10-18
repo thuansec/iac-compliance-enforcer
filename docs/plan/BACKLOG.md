@@ -834,12 +834,14 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
     - the weakening override fixture's `acl = "public-read"` is a bucket ACL, which IACE-AWS-S3-002 judges, not this rule (S3-001 checks public access blocks): that finding moved to T-0601
   - attempts: 1
   - result: IACE-AWS-S3-001 (high, aws-securityhub S3.1/S3.8 per the catalog checked on 2026-10-01 against aws 6.67.0) flags every block_public_acls, block_public_policy, ignore_public_acls and restrict_public_buckets that a bucket or account public access block leaves unset or false (true and "true" enable; unknown is skipped; no block is not flagged); Rego tests at 100%, the four fixture kinds; the harness applies its nested-block checks only to rules whose fail fixture expects nested findings; an app test proves a finding on a setting an override file weakens is located in that file
-- [ ] T-0205d · IACE-AZURE-STORAGE-001 · Storage accounts require secure transfer
+- [x] T-0205d · IACE-AZURE-STORAGE-001 · Storage accounts must require TLS 1.2
   - skills: iace-rego-policies, iace-cloud-controls, iace-testing
   - depends: T-0206
   - accept:
     - a rule with mappings verified per iace-cloud-controls (provider defaults per azurerm major), Rego tests and the four fixture directories; the fixture harness passes
-  - attempts: 0
+    - the title follows the catalog's IACE-AZURE-STORAGE-001 (minimum TLS 1.2; HTTPS-only is IACE-AZURE-STORAGE-002, whose default is still marked verify); the catalog's MCSB DP-3 is only a candidate, so no framework mapping ships until it is confirmed
+  - attempts: 1
+  - result: IACE-AZURE-STORAGE-001 (medium) flags an azurerm_storage_account whose min_tls_version is explicitly TLS1_0 or TLS1_1; absent is TLS1_2 on azurerm 4.x and 5.x per the catalog (checked against 4.81.0 and 5.7.0 on 2026-10-01), unknown is skipped (a test with a weak placeholder proves the guard); no framework mapping until MCSB DP-3 is confirmed; Rego tests at 100% and the four fixture kinds
 - [ ] T-0206b · Complete `iace scan`'s selection flags and multiple paths
   - skills: iace-architecture, iace-reporting, iace-testing
   - depends: T-0206
