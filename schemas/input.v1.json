@@ -193,9 +193,15 @@
             "file": {"$ref": "#/$defs/relPath", "minLength": 1},
             "range": {"$ref": "#/$defs/range"},
             "attributes": {
-              "description": "Dot-joined attribute path to the range of its expression.",
+              "description": "Dot-joined attribute path to the range of its expression, in file unless attribute_files names another.",
               "type": "object",
               "additionalProperties": {"$ref": "#/$defs/range"}
+            },
+            "attribute_files": {
+              "description": "Dot-joined attribute path to the file that sets it, for attributes outside file (override files; ADR 0048). Omitted when there are none.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"$ref": "#/$defs/relPath", "minLength": 1}
             },
             "module_call": {"$ref": "#/$defs/location"}
           }

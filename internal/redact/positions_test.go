@@ -94,7 +94,10 @@ func TestDocumentIsADeepCopy(t *testing.T) {
 			Unknown:    []model.Path{{model.AttrStep("u")}},
 			References: map[string][]string{"a": {"x.y"}},
 			Meta:       model.ResourceMeta{DependsOn: []string{"x.y"}},
-			Source:     model.ResourceSource{Attributes: map[string]model.Range{"a": {StartLine: 1}}},
+			Source: model.ResourceSource{
+				Attributes:     map[string]model.Range{"a": {StartLine: 1}},
+				AttributeFiles: map[string]string{"a": "main_override.tf"},
+			},
 		}},
 		Variables:    []model.Variable{{Name: "v"}},
 		CoverageGaps: []model.CoverageGap{{Detail: "d"}},
@@ -106,6 +109,7 @@ func TestDocumentIsADeepCopy(t *testing.T) {
 	got.Resources[0].References["a"][0] = "changed"
 	got.Resources[0].Meta.DependsOn[0] = "changed"
 	got.Resources[0].Source.Attributes["a"] = model.Range{StartLine: 9}
+	got.Resources[0].Source.AttributeFiles["a"] = "changed"
 	got.Variables[0].Name = "changed"
 	got.CoverageGaps[0].Detail = "changed"
 	if after := encode(t, doc); after != before {

@@ -385,3 +385,37 @@ func TestNormalizeRootIsLinearInProviders(t *testing.T) {
 		t.Errorf("%d providers", len(doc.Providers))
 	}
 }
+
+// An attribute an override file sets is located in that file (ADR 0048), in a root module and
+// in a child module's instance; attributes from the base file name no file of their own.
+func TestNormalizeRootLocatesOverriddenAttributes(t *testing.T) {
+	t.Parallel()
+	dir := files(t, map[string]string{
+		"main.tf":                "resource \"aws_s3_bucket\" \"root\" {\n  bucket = \"b\"\n  acl    = \"private\"\n}\nmodule \"child\" {\n  source = \"./child\"\n}\n",
+		"main_override.tf":       "\nresource \"aws_s3_bucket\" \"root\" {\n  acl = \"public-read\"\n  versioning {\n    enabled = false\n  }\n}\n",
+		"json_override.tf.json":  `{"resource": {"aws_s3_bucket": {"root": {"policy": "{}"}}}}`,
+		"child/main.tf":          "resource \"aws_s3_bucket\" \"child\" {\n  acl = \"private\"\n}\n",
+		"child/main_override.tf": "resource \"aws_s3_bucket\" \"child\" {\n  acl = \"public-read\"\n}\n",
+	})
+	docs, _ := documents(t, dir)
+	got := map[string]model.ResourceSource{}
+	for _, d := range docs {
+		for _, r := range d.Resources {
+			got[r.Address] = r.Source
+		}
+	}
+	root := got["aws_s3_bucket.root"]
+	if root.File != "main.tf" || root.AttributeFiles["acl"] != "main_override.tf" || root.Attributes["acl"].StartLine != 3 {
+		t.Errorf("root source %+v, want acl at main_override.tf:3", root)
+	}
+	if root.AttributeFiles["versioning.0.enabled"] != "main_override.tf" || root.AttributeFiles["policy"] != "json_override.tf.json" {
+		t.Errorf("root attribute files %v, want the nested block and the JSON override located", root.AttributeFiles)
+	}
+	if _, ok := root.AttributeFiles["bucket"]; ok {
+		t.Errorf("bucket is in the base file but has an attribute file: %v", root.AttributeFiles)
+	}
+	child := got["module.child.aws_s3_bucket.child"]
+	if child.File != "child/main.tf" || child.AttributeFiles["acl"] != "child/main_override.tf" {
+		t.Errorf("child source %+v, want acl in child/main_override.tf", child)
+	}
+}

@@ -131,6 +131,7 @@ func Document(doc *model.InputDocument) *model.InputDocument {
 		r.Meta.DependsOn = slices.Clone(r.Meta.DependsOn)
 		r.Meta.Lifecycle.IgnoreChanges = slices.Clone(r.Meta.Lifecycle.IgnoreChanges)
 		r.Source.Attributes = maps.Clone(r.Source.Attributes)
+		r.Source.AttributeFiles = maps.Clone(r.Source.AttributeFiles)
 		if r.Source.ModuleCall != nil {
 			mc := *r.Source.ModuleCall
 			r.Source.ModuleCall = &mc
