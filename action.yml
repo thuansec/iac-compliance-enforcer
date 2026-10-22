@@ -1,0 +1,154 @@
+# The iace composite action: scan a repository's Terraform on every pull request, publish the
+# findings to the job summary, workflow annotations and GitHub code scanning, then fail the job
+# on the scan's exit code (0 pass, 1 blocking findings, 2 the scan could not be trusted).
+#
+# Hardening (iace-ci-cd): actions are pinned by commit SHA, and inputs reach scripts only through
+# env, never as ${{ }} inside run. The config, org-config and fail-on inputs arrive with T-0506;
+# until then the scan uses iace's defaults (fail on high and above). See ADR 0053.
+name: iace Terraform compliance scan
+description: Scan Terraform for security-compliance findings, upload SARIF to code scanning and gate the pull request.
+author: thuansec
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: >-
+      iace release to install, such as v1.2.3 (release-binary mode: the archive's sha256 is checked
+      against the release's checksums.txt; Linux and macOS runners). Empty builds iace from the
+      action's own source at the ref the workflow pinned.
+    required: false
+    default: ""
+  path:
+    description: >-
+      Directories to scan, separated by spaces or newlines and relative to the repository root.
+      A single directory other than . is refused until SARIF locations support it (T-0302b).
+    required: false
+    default: "."
+  sarif-file:
+    description: >-
+      Where to write the SARIF report, relative to the repository root; it may not lead through a
+      symlink. Uploaded only when the scan completed (exit code 0 or 1).
+    required: false
+    default: iace.sarif
+  upload-sarif:
+    description: Upload the SARIF report to GitHub code scanning (the job needs security-events write).
+    required: false
+    default: "true"
+  category:
+    description: >-
+      Code-scanning category of the upload. Give each scanned root set its own category in a
+      monorepo: uploads with the same category replace each other's alerts.
+    required: false
+    default: iace
+  annotations:
+    description: Print workflow annotations for open findings (GitHub shows a limited number per step).
+    required: false
+    default: "true"
+  ai-fix:
+    description: >-
+      Opt-in AI fix suggestions. Not available yet: "true" fails the step rather than being
+      ignored. Never enable on fork pull requests.
+    required: false
+    default: "false"
+
+outputs:
+  exit-code:
+    description: The scan's exit code, 0, 1 or 2.
+    value: ${{ steps.scan.outputs.exit-code }}
+  sarif-file:
+    description: Path of the SARIF report, relative to the repository root.
+    value: ${{ inputs.sarif-file }}
+  blocking-count:
+    description: Open findings at or above the fail-on severity (high); empty when the scan wrote no report.
+    value: ${{ steps.report.outputs.blocking-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      shell: bash
+      env:
+        IACE_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
+        IACE_ANNOTATIONS: ${{ inputs.annotations }}
+        IACE_AI_FIX: ${{ inputs.ai-fix }}
+      run: |
+        for pair in "upload-sarif=$IACE_UPLOAD_SARIF" "annotations=$IACE_ANNOTATIONS" "ai-fix=$IACE_AI_FIX"; do
+          case "${pair#*=}" in
+            true | false) ;;
+            *) echo "::error title=iace::input ${pair%%=*} must be true or false"; exit 2 ;;
+          esac
+        done
+        if [[ "$IACE_AI_FIX" == true ]]; then
+          echo "::error title=iace::ai-fix is not available in this version of the action"
+          exit 2
+        fi
+
+    - name: Set up Go (build from source)
+      if: inputs.version == ''
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache: false
+
+    - name: Install iace
+      id: install
+      shell: bash
+      env:
+        IACE_VERSION: ${{ inputs.version }}
+      run: |
+        bin_dir="$RUNNER_TEMP/iace-bin"
+        if [[ -z "$IACE_VERSION" ]]; then
+          ext=""
+          [[ "$RUNNER_OS" == Windows ]] && ext=".exe"
+          (cd "$GITHUB_ACTION_PATH" && CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -trimpath -o "$bin_dir/iace$ext" ./cmd/iace)
+          echo "binary=$bin_dir/iace$ext" >>"$GITHUB_OUTPUT"
+        else
+          bash "$GITHUB_ACTION_PATH/scripts/action/install-release.sh" "$IACE_VERSION" "$bin_dir"
+          echo "binary=$bin_dir/iace" >>"$GITHUB_OUTPUT"
+        fi
+
+    # From the repository root, so SARIF URIs are repository-relative (ADR 0052).
+    - name: Scan
+      id: scan
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        IACE_BIN: ${{ steps.install.outputs.binary }}
+        IACE_PATHS: ${{ inputs.path }}
+        IACE_SARIF: ${{ inputs.sarif-file }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/action/scan.sh"
+
+    - name: Summary and annotations
+      id: report
+      if: always()
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        IACE_SARIF: ${{ inputs.sarif-file }}
+        IACE_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        IACE_ANNOTATIONS: ${{ inputs.annotations }}
+      run: python3 -I "$GITHUB_ACTION_PATH/scripts/action/report.py" "$IACE_SARIF"
+
+    - name: Upload SARIF to code scanning
+      id: upload
+      if: always() && inputs.upload-sarif == 'true' && steps.scan.outputs.upload == 'true'
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    # Last, so the results above are published before the job fails.
+    - name: Fail on the scan result
+      id: exit
+      if: always()
+      shell: bash
+      env:
+        IACE_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        if [[ ! "$IACE_EXIT_CODE" =~ ^[0-9]+$ ]]; then
+          echo "::error title=iace::the scan did not run"
+          exit 2
+        fi
+        exit "$IACE_EXIT_CODE"

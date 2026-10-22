@@ -3669,3 +3669,41 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   message in the golden, location-less findings recorded on T-0903. Not added: a CLI test on a
   real non-ASCII line, since regions carry lines only. The SARIF reference sync joins T-0110b.
 - Next: T-0501 (composite GitHub Action).
+
+### 2026-10-22 · T-0501 · done
+- What: the composite GitHub Action. action.yml takes version, path, sarif-file, upload-sarif,
+  category, annotations and ai-fix (config, org-config and fail-on are absent until T-0506;
+  ai-fix: true fails rather than being ignored) and outputs exit-code, sarif-file and
+  blocking-count. An empty version builds the action's own source with setup-go; a release
+  version downloads the archive and checksums.txt, checks the sha256 and extracts only the
+  binary (install-release.sh; attestation check in M11). The scan runs once from the repository
+  root with `-o sarif`; scan.sh splits paths on any whitespace, refuses a SARIF path that is
+  absolute, has `..` or leads through a symlink, replaces a committed symlink instead of
+  writing through it, and refuses a single path other than `.` until T-0302b. Summary,
+  annotations and blocking-count come from the SARIF through report.py (escaped for workflow
+  commands and Markdown; ADR 0053, until iace writes Markdown and annotations in T-0304/T-0305).
+  SARIF is uploaded with the category input only after exit 0 or 1, so a partial analysis never
+  closes alerts; the job fails on the scan's code last. upload-sarif is pinned to v4.39.1's
+  commit, resolved with gh api.
+- Found: one PATH other than `.` gives SARIF URIs relative to that PATH (`iace scan infra` →
+  `main.tf`), against ADR 0052; new task T-0302b, which T-0502 now depends on. govulncheck
+  flagged GO-2026-6809 (crypto/x509, fixed in go1.27.3), failing the vuln gate on main as well:
+  go.mod toolchain go1.27.2 → go1.27.3.
+- Files: action.yml, scripts/action/{action_test.go,report.py,scan.sh,install-release.sh},
+  docs/adr/0053-report-from-sarif-in-the-action-until-iace-writes-markdown.md, go.mod,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass). Offline Go tests check action.yml's contract
+  (inputs, SHA pins, no expressions in run, step order with always()) and run report.py,
+  scan.sh and install-release.sh on fixtures: hostile SARIF text, tampered and unlisted archives,
+  symlinked SARIF paths, multi-line paths, exit-2 runs. A local simulation of the scan and report
+  steps on testdata/policies/IACE-AWS-S3-001/fail gave exit 1, 3 annotations and blocking-count=3.
+  Runner execution comes in the self-test (T-0503).
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Majors fixed: a SARIF write through a
+  PR-committed symlink, newline-separated paths silently dropped, and single-path URIs (now
+  refused, narrowing criterion 3 until T-0302b). Minors fixed: no upload after exit 2, backslash
+  escaping in Markdown, a summary for a scan that never ran (no SARIF read), and duplicate
+  spellings of one path.
+- Note: the CPU-timing tests in internal/terraform (TestEvaluateTreeBoundsTheWholeTree,
+  TestAcceptedNumberConversionsAreFast) failed once each under load right after boot and passed
+  when rerun alone; watch for flakes.
+- Next: T-0302b (SARIF URIs for a single scan path).
