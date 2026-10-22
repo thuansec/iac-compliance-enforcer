@@ -1,0 +1,38 @@
+# Scan this repository's Terraform with iace on every pull request and on pushes to main.
+# Copy to .github/workflows/iace.yml. Setup, gating and monorepos: docs/ci/github.md in
+# https://github.com/thuansec/iac-compliance-enforcer.
+name: iace
+
+on:
+  pull_request:
+  push:
+    branches: [main] # default-branch analyses let code scanning tell what a pull request adds
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iace-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: iace / scan # the status check a ruleset can require
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+      actions: read # needed by the SARIF upload in private repositories
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No release yet: pinned to a commit of main, and iace is built from that commit's source.
+      # Once releases exist, pin a release tag's commit and set `version` to install its binary.
+      - uses: thuansec/iac-compliance-enforcer@89392da80651a6758e90a14aeb31912bf9a9d4c2 # main, 2026-10-22
+        with:
+          path: .
+          category: iace

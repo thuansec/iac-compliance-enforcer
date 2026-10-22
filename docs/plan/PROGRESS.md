@@ -3730,3 +3730,25 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   ADRs 0052 and 0053 were edited in place, as the acceptance asked; a supersede note may suit
   future changes.
 - Next: T-0502 (example consumer workflow and docs).
+
+### 2026-10-22 · T-0502 · done
+- What: the example consumer workflow and its guide. examples/github/iace.yml runs on
+  pull_request, push to main and workflow_dispatch. It grants contents: read at the top, and the
+  scan job adds security-events write and actions read. Checkout (v7.0.1) and the action are
+  pinned by SHA; with no release yet, the action is pinned to main's commit 89392da and builds
+  from source. The job is `iace / scan`, the required-check context. docs/ci/github.md covers
+  setup with Dependabot pins, permissions, fork pull requests, inputs and outputs as implemented,
+  why a scan that exits 2 is not uploaded, monorepos (per-root categories and a fail-closed
+  aggregate check), gating options, private repositories and troubleshooting.
+  TestExampleWorkflow checks the example's hardening, and `make lint` now runs the pinned
+  actionlint on examples/github too.
+- Files: examples/github/iace.yml, docs/ci/github.md, scripts/action/action_test.go, Makefile,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass); actionlint passes on the example.
+- Review: iace-reviewer CHANGES_REQUIRED, then APPROVE. Major fixed: the monorepo advice to
+  gate on a plain `needs:` job failed open, because a skipped required check counts as passed;
+  the guide now gives an `if: always()` job that requires success. Minors fixed: a refused fork
+  upload fails the job (workaround documented), the allowlist-only private-repo note, exit-2
+  summary wording, and annotation scope. Open minor: whether public-repository fork uploads
+  are really refused; it is to be checked against GitHub's docs in T-0504.
+- Next: M12 is complete; the M12 wrap-up follows.

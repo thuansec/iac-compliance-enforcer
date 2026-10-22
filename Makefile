@@ -28,12 +28,13 @@ fmt-check: ## fail on Go, Rego or Terraform formatting differences
 	  elif command -v terraform >/dev/null; then terraform fmt -check -recursive testdata; \
 	  else echo "fmt-check: terraform not installed, terraform fmt skipped"; fi
 
-lint: ## golangci-lint, regal (policies) and actionlint (workflows)
+lint: ## golangci-lint, regal (policies) and actionlint (workflows and example workflows)
 	$(call tool,golangci-lint) run
 	@if [[ -d policies ]]; then $(call tool,regal) lint policies; \
 	  else echo "lint: no policies/ yet, regal skipped"; fi
 	@if compgen -G '.github/workflows/*.y*ml' >/dev/null; then $(call tool,actionlint); \
 	  else echo "lint: no workflows, actionlint skipped"; fi
+	@if compgen -G 'examples/github/*.y*ml' >/dev/null; then $(call tool,actionlint) examples/github/*.y*ml; fi
 
 # Tests that measure the process's live heap run alone and without -race: they test memory, not
 # concurrency, and under the race detector their forced collections took about two minutes,

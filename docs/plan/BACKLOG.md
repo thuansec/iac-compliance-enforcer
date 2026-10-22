@@ -916,12 +916,13 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
     - ADR 0052 states how the prefix is applied; the action's scan step (scripts/action/scan.sh) stops refusing a single non-root `path`, and ADR 0053 and the input description say so
   - attempts: 1
   - result: sarif.Writer{Base} prefixes each artifact URI with the single scan path relative to the working directory (app.SingleScanBase: "" for `.`, several paths or a path outside it), so `iace scan infra` gives `infra/main.tf`; text, JSON and fingerprints unchanged; sarif unit, app table and testscript tests; ADR 0052 states the prefix; the action no longer refuses a single path (ADR 0053)
-- [ ] T-0502 · Example consumer workflow and docs
+- [x] T-0502 · Example consumer workflow and docs
   - skills: iace-ci-cd
   - depends: T-0501, T-0302b
   - accept:
     - examples/github/iace.yml: pull_request plus push to main, least-privilege permissions, upload-sarif pinned by SHA with category; docs/ci/github.md
-  - attempts: 0
+  - attempts: 1
+  - result: examples/github/iace.yml (pull_request + push to main + dispatch, top-level contents: read, job contents read / security-events write / actions read, checkout and the action pinned by SHA, persist-credentials false, job `iace / scan`, timeout, concurrency, category iace; the upload-sarif pin lives in action.yml) and docs/ci/github.md (setup, Dependabot, permissions, fork PRs, inputs/outputs, monorepos with a fail-closed aggregate check, gating, private repos, troubleshooting); TestExampleWorkflow checks the hardening and make lint runs actionlint on examples/github
 
 ## M13 · Loader hardening — status: planned
 Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then they are documented as known limitations.
@@ -1209,6 +1210,7 @@ Goal: scans run on pull requests, results reach GitHub code scanning, and mergin
   - accept:
     - docs/ci/required-checks.md gives ruleset JSON and the `gh api` commands (documented, not executed)
     - covers private repos without code scanning (annotations plus a required status check)
+    - check against GitHub's code-scanning docs whether SARIF uploads from fork pull requests are refused in public repositories, and correct docs/ci/github.md's fork note (it says they are refused and suggests skipping the upload for forks; T-0502 review)
   - attempts: 0
 - [ ] T-0505 · Azure DevOps pipeline template (optional)
   - skills: iace-ci-cd, iace-reporting
