@@ -897,7 +897,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
     - re-scoped (2026-10-18, ADR 0052): hcl columns count grapheme clusters, which neither SARIF column kind (utf16CodeUnits, unicodeCodePoints) matches, and converting needs the source text that reporters do not read; SARIF regions are therefore line-level (no columns), and a test covers a line with non-ASCII text before the finding
   - attempts: 1
   - result: `iace scan -o sarif` writes one SARIF 2.1.0 run per sarif.md: rules from the findings (security-severity and level per severity, info without security-severity, tags with security and framework controls capped at 20, help with remediation), results with repo-relative percent-encoded URIs, line-level regions (ADR 0052), the resource as logical location, iaceFinding/v1 fingerprints and accepted suppressions for excepted findings; coverage gaps and partial rule selections as notifications; no automationDetails, so the upload category names the run; validated against the vendored OASIS schema in golden and CLI tests. Column criterion narrowed (D-T-0302, owner to confirm)
-- [ ] T-0501 · Composite GitHub Action
+- [x] T-0501 · Composite GitHub Action
   - skills: iace-ci-cd, iace-security
   - depends: T-0302
   - decided: moved ahead of M4 for the pull-request demo (2026-10-17); the config, org-config and fail-on inputs wait for T-0506
@@ -905,10 +905,19 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
     - action.yml takes the inputs in iace-ci-cd/references/consumer-workflow.md except `config`, `org-config` and `fail-on`, which T-0506 adds once `.iace.yaml` and `--fail-on` exist (until then they are absent, not silently ignored); build-from-source mode now, release-binary mode with checksum verification ready for M11
     - SARIF is uploaded and the summary written before the job fails on the scan result
     - iace runs from the repository root (scan paths given relative to it), so SARIF URIs are repository-relative; the SARIF carries no automationDetails, so the action passes a category per scanned root set (ADR 0052, T-0302 review)
+  - attempts: 1
+  - result: action.yml (composite) checks its inputs (ai-fix: true fails until M10), builds iace from the action's source (setup-go pinned by SHA) or installs a release with sha256 verification (scripts/action/install-release.sh, GoReleaser asset names for T-1101), scans from the repository root with -o sarif (scripts/action/scan.sh: paths split on any whitespace, no SARIF write through a symlink), then always writes the job summary, annotations and blocking-count from the SARIF (scripts/action/report.py, ADR 0053, until T-0304/T-0305), uploads the SARIF with the category input only for exit 0 or 1 (upload-sarif v4.39.1 by SHA), and exits with the scan's code last. Criterion 3 narrowed: a single path other than . is refused (exit 2) until T-0302b fixes its SARIF URIs (ADR 0053). Go toolchain go1.27.3 for GO-2026-6809
+- [ ] T-0302b · Make SARIF URIs relative to the working directory for a single scan path
+  - skills: iace-reporting, iace-architecture, iace-testing
+  - depends: T-0302
+  - found: T-0501 (2026-10-22): `iace scan infra` writes SARIF URIs relative to `infra` (`main.tf`), not to the directory iace ran in as ADR 0052 states, so code scanning cannot place the alerts of an action with `path: infra`; `.` and several paths are already right (ADR 0050 qualifies each file with its path)
+  - accept:
+    - with one PATH other than `.`, SARIF artifact URIs (and the action's annotations, which read them) carry the PATH prefix, as with several paths; text and JSON output and fingerprints are unchanged (ADR 0050); a CLI test scans one subdirectory and checks the URI
+    - ADR 0052 states how the prefix is applied; the action's scan step (scripts/action/scan.sh) stops refusing a single non-root `path`, and ADR 0053 and the input description say so
   - attempts: 0
 - [ ] T-0502 · Example consumer workflow and docs
   - skills: iace-ci-cd
-  - depends: T-0501
+  - depends: T-0501, T-0302b
   - accept:
     - examples/github/iace.yml: pull_request plus push to main, least-privilege permissions, upload-sarif pinned by SHA with category; docs/ci/github.md
   - attempts: 0
