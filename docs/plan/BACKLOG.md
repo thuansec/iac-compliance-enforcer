@@ -876,7 +876,7 @@ Decided: the owner pre-approved M2 and M12 (2026-10-17) so the loop continues fr
   - attempts: 1
   - result: `iace rules list [--csp X]` prints ID, severity, CSP, source (builtin) and title in aligned columns; `iace rules show ID` prints every metadata field (frameworks, params when declared, deprecation, references with their descriptions) and the remediation, each on one line without control characters; both check the library exactly as a scan does (load, capabilities, compile), so a library a scan refuses exits 2 here too; an unknown ID exits 2
 
-## M12 · Pull-request demo — status: active
+## M12 · Pull-request demo — status: done
 Goal: a pull request on GitHub runs iace, shows its findings in code scanning and fails the check, before M3–M5 are complete.
 
 - [x] T-0301 · JSON report v1 with schema and golden tests
@@ -924,7 +924,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - attempts: 1
   - result: examples/github/iace.yml (pull_request + push to main + dispatch, top-level contents: read, job contents read / security-events write / actions read, checkout and the action pinned by SHA, persist-credentials false, job `iace / scan`, timeout, concurrency, category iace; the upload-sarif pin lives in action.yml) and docs/ci/github.md (setup, Dependabot, permissions, fork PRs, inputs/outputs, monorepos with a fail-closed aggregate check, gating, private repos, troubleshooting); TestExampleWorkflow checks the hardening and make lint runs actionlint on examples/github
 
-## M13 · Loader hardening — status: planned
+## M13 · Loader hardening — status: awaiting-approval
 Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then they are documented as known limitations.
 
 - [ ] T-0115 · Bound number magnitude outside function calls
