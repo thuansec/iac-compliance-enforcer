@@ -543,3 +543,85 @@ func TestScanReplacesASymlinkedSARIFFile(t *testing.T) {
 		t.Errorf("iace.sarif is not a regular file: %v", err)
 	}
 }
+
+// The example consumer workflow (examples/github/iace.yml) follows the hardening rules it
+// teaches: pinned actions, least privilege, no pull_request_target, and a category per upload.
+func TestExampleWorkflow(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../examples/github/iace.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		On          map[string]any    `yaml:"on"`
+		Permissions map[string]string `yaml:"permissions"`
+		Jobs        map[string]struct {
+			Name        string            `yaml:"name"`
+			Permissions map[string]string `yaml:"permissions"`
+			Timeout     int               `yaml:"timeout-minutes"`
+			Steps       []actionStep      `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("examples/github/iace.yml: %v", err)
+	}
+	if _, ok := wf.On["pull_request"]; !ok {
+		t.Error("the example does not run on pull_request")
+	}
+	if _, ok := wf.On["pull_request_target"]; ok {
+		t.Error("the example runs on pull_request_target, which exposes secrets to PR code")
+	}
+	push, _ := wf.On["push"].(map[string]any)
+	if branches, _ := push["branches"].([]any); len(branches) != 1 || branches[0] != "main" {
+		t.Errorf("push trigger = %v, want branches [main]", wf.On["push"])
+	}
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("top-level permissions = %v, want contents: read only", wf.Permissions)
+	}
+	job, ok := wf.Jobs["scan"]
+	if !ok {
+		t.Fatal("the example has no scan job")
+	}
+	wantPerms := map[string]string{"contents": "read", "security-events": "write", "actions": "read"}
+	if len(job.Permissions) != len(wantPerms) {
+		t.Errorf("scan permissions = %v, want %v", job.Permissions, wantPerms)
+	}
+	for k, v := range wantPerms {
+		if job.Permissions[k] != v {
+			t.Errorf("scan permission %s = %q, want %q", k, job.Permissions[k], v)
+		}
+	}
+	if job.Name != "iace / scan" {
+		t.Errorf("job name = %q, want the documented required-check context \"iace / scan\"", job.Name)
+	}
+	if job.Timeout <= 0 {
+		t.Error("the scan job has no timeout-minutes")
+	}
+	var sawCheckout, sawAction bool
+	for _, s := range job.Steps {
+		if s.Uses == "" {
+			continue
+		}
+		if !pinnedUse.MatchString(s.Uses) {
+			t.Errorf("step uses %q, not pinned to a commit SHA", s.Uses)
+		}
+		switch {
+		case strings.HasPrefix(s.Uses, "actions/checkout@"):
+			sawCheckout = true
+			if s.With["persist-credentials"] != "false" {
+				t.Error("checkout keeps the token in .git/config (persist-credentials)")
+			}
+		case strings.HasPrefix(s.Uses, "thuansec/iac-compliance-enforcer@"):
+			sawAction = true
+			if s.With["category"] == "" {
+				t.Error("the action step sets no category")
+			}
+		}
+	}
+	if !sawCheckout || !sawAction {
+		t.Errorf("checkout step %v, iace action step %v; want both", sawCheckout, sawAction)
+	}
+	if _, err := os.Stat("../../docs/ci/github.md"); err != nil {
+		t.Errorf("docs/ci/github.md: %v", err)
+	}
+}
