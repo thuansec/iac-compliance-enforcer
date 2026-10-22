@@ -3752,3 +3752,33 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   summary wording, and annotation scope. Open minor: whether public-repository fork uploads
   are really refused; it is to be checked against GitHub's docs in T-0504.
 - Next: M12 is complete; the M12 wrap-up follows.
+
+## 2026-10-22 · M12 · Pull-request demo · done
+- What now works: `iace scan -o json` writes the findings report v1 (schemas/findings.v1.json,
+  ADR 0051), and `iace scan -o sarif` writes SARIF 2.1.0 for code scanning (line-level regions,
+  no automationDetails, URIs relative to the working directory for one path or several; ADR
+  0052). The composite action (action.yml) builds iace from its pinned source, or installs a
+  checksum-verified release. It scans from the repository root and writes the job summary,
+  annotations and blocking-count from the SARIF (interim reporter, ADR 0053). It uploads the SARIF
+  under a category only after a completed scan (exit 0 or 1), then fails the job on the scan's
+  exit code. examples/github/iace.yml is the consumer workflow and docs/ci/github.md the guide.
+- How to try it: copy examples/github/iace.yml into a repository with Terraform as
+  .github/workflows/iace.yml and open a pull request. The `iace / scan` check runs, the summary
+  and annotations list findings, Security → Code scanning shows the alerts, and the check fails
+  on a high or critical finding. Locally: `go run ./cmd/iace scan -o sarif
+  testdata/policies/IACE-AWS-S3-001/fail` (exit 1).
+- Known gaps and follow-ups:
+  - The action has not yet run on a real runner here; the self-test workflow is T-0503 (M5).
+    Its contract and helper scripts are tested offline.
+  - config, org-config and fail-on inputs wait for T-0506 (fail-on is fixed at high), and
+    blocking-count then has to come from the JSON summary.
+  - Markdown and annotation output from iace itself, which replaces scripts/action/report.py,
+    is T-0304/T-0305.
+  - Gap notifications are not prefixed and nothing warns when no prefix applies (T-0306b).
+  - Whether public-repository fork uploads are refused is to be checked in T-0504.
+  - Ruleset and required-check guide: T-0504. Release-binary mode waits for the first release
+    (T-1101), and attestation checks come in M11.
+  - Timing tests in internal/terraform still fail now and then under load (T-0125b).
+  - ADR 0052 and ADR 0053 were amended in place by the follow-up task.
+- Next milestone: M13 (loader hardening), set to awaiting-approval as pause_at_milestone_end
+  asks. The owner flips it to active, or picks another milestone.
