@@ -907,14 +907,15 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
     - iace runs from the repository root (scan paths given relative to it), so SARIF URIs are repository-relative; the SARIF carries no automationDetails, so the action passes a category per scanned root set (ADR 0052, T-0302 review)
   - attempts: 1
   - result: action.yml (composite) checks its inputs (ai-fix: true fails until M10), builds iace from the action's source (setup-go pinned by SHA) or installs a release with sha256 verification (scripts/action/install-release.sh, GoReleaser asset names for T-1101), scans from the repository root with -o sarif (scripts/action/scan.sh: paths split on any whitespace, no SARIF write through a symlink), then always writes the job summary, annotations and blocking-count from the SARIF (scripts/action/report.py, ADR 0053, until T-0304/T-0305), uploads the SARIF with the category input only for exit 0 or 1 (upload-sarif v4.39.1 by SHA), and exits with the scan's code last. Criterion 3 narrowed: a single path other than . is refused (exit 2) until T-0302b fixes its SARIF URIs (ADR 0053). Go toolchain go1.27.3 for GO-2026-6809
-- [ ] T-0302b · Make SARIF URIs relative to the working directory for a single scan path
+- [x] T-0302b · Make SARIF URIs relative to the working directory for a single scan path
   - skills: iace-reporting, iace-architecture, iace-testing
   - depends: T-0302
   - found: T-0501 (2026-10-22): `iace scan infra` writes SARIF URIs relative to `infra` (`main.tf`), not to the directory iace ran in as ADR 0052 states, so code scanning cannot place the alerts of an action with `path: infra`; `.` and several paths are already right (ADR 0050 qualifies each file with its path)
   - accept:
     - with one PATH other than `.`, SARIF artifact URIs (and the action's annotations, which read them) carry the PATH prefix, as with several paths; text and JSON output and fingerprints are unchanged (ADR 0050); a CLI test scans one subdirectory and checks the URI
     - ADR 0052 states how the prefix is applied; the action's scan step (scripts/action/scan.sh) stops refusing a single non-root `path`, and ADR 0053 and the input description say so
-  - attempts: 0
+  - attempts: 1
+  - result: sarif.Writer{Base} prefixes each artifact URI with the single scan path relative to the working directory (app.SingleScanBase: "" for `.`, several paths or a path outside it), so `iace scan infra` gives `infra/main.tf`; text, JSON and fingerprints unchanged; sarif unit, app table and testscript tests; ADR 0052 states the prefix; the action no longer refuses a single path (ADR 0053)
 - [ ] T-0502 · Example consumer workflow and docs
   - skills: iace-ci-cd
   - depends: T-0501, T-0302b
@@ -1127,6 +1128,15 @@ Goal: machine- and human-readable outputs that CI systems and GitHub understand.
   - accept:
     - unparsed files, unresolved modules and unknown-valued checks appear in all formats; `--fail-on-gaps` exits 2 when gaps exist
     - a value a rule would judge but cannot, because it is unknown, is visible in every format as a rule-level coverage gap (rule ID, address, attribute path), not only in the input document: today such entries yield no finding and nothing in the report (M2 wrap-up gap)
+  - attempts: 0
+- [ ] T-0306b · Name gap notifications by the SARIF base and warn when no base applies
+  - skills: iace-reporting, iace-testing
+  - depends: T-0302b
+  - found: T-0302b review (2026-10-22)
+  - accept:
+    - SARIF coverage-gap notifications name root modules and files with the same base prefix as the result URIs (today `iace scan infra` notifies `coverage gap in .: … main.tf:3` while URIs say `infra/main.tf`); a case in TestBasePrefixesURIs
+    - a single scan path that cannot be named relative to the working directory (outside it, or reached through a symlink such as /tmp vs /private/tmp) adds a report warning that SARIF URIs are relative to the scan path
+    - a report.py test in scripts/action feeds a SARIF with a prefixed URI and checks the annotation's file property
   - attempts: 0
 
 ## M4 · Repo policy config — status: planned

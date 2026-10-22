@@ -151,3 +151,28 @@ func TestPolicyDigest(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleScanBase(t *testing.T) {
+	t.Parallel()
+	cwd := filepath.FromSlash("/work/repo")
+	cases := []struct {
+		paths []string
+		want  string
+	}{
+		{[]string{"infra"}, "infra"},
+		{[]string{"./infra/prod/"}, "infra/prod"},
+		{[]string{"infra", "infra/"}, "infra"},
+		{[]string{filepath.FromSlash("/work/repo/infra")}, "infra"},
+		{[]string{"."}, ""},
+		{[]string{filepath.FromSlash("/work/repo")}, ""},
+		{nil, ""},
+		{[]string{"a", "b"}, ""},
+		{[]string{"../other"}, ""},
+		{[]string{filepath.FromSlash("/elsewhere/infra")}, ""},
+	}
+	for _, c := range cases {
+		if got := SingleScanBase(cwd, c.paths); got != c.want {
+			t.Errorf("SingleScanBase(%q) = %q, want %q", c.paths, got, c.want)
+		}
+	}
+}

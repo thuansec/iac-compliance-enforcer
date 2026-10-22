@@ -28,6 +28,11 @@ Two more SARIF choices are made with it:
 - **URIs are relative to the directory iace ran in**, percent-encoded per path segment. GitHub
   needs repository-relative paths, so the action and the documented workflow run iace from the
   repository root (T-0501, T-0502).
+  With several paths, files are already named by their path (ADR 0050). With one path, files
+  are named relative to it, so the SARIF writer prefixes each URI with that path relative to the
+  working directory (`iace scan infra` gives `infra/main.tf`; T-0302b). Only SARIF changes: text,
+  JSON and fingerprints keep naming files by the scan path. A single path outside the working
+  directory cannot be named relative to it and keeps path-relative URIs.
 
 ## Consequences
 - GitHub code scanning annotates whole lines; locations are never wrong, only less precise.

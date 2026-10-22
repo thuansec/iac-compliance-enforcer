@@ -23,7 +23,6 @@ inputs:
   path:
     description: >-
       Directories to scan, separated by spaces or newlines and relative to the repository root.
-      A single directory other than . is refused until SARIF locations support it (T-0302b).
     required: false
     default: "."
   sarif-file:

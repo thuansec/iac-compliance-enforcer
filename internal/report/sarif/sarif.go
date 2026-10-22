@@ -13,6 +13,7 @@ import (
 	"io"
 	"maps"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -151,9 +152,23 @@ var (
 	semver = regexp.MustCompile(`^v?(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$`)
 )
 
+// Writer encodes reports as SARIF. Base, when set, is the scan path relative to the directory iace
+// ran in: a scan of one path names files relative to that path, and SARIF URIs must be relative to
+// the working directory (ADR 0052), so each URI is prefixed with Base. Several paths need no Base:
+// their files are already named by their path.
+type Writer struct {
+	Base string
+}
+
+// Write writes r to w as SARIF 2.1.0 without a base.
+func Write(w io.Writer, r *model.Report) error { return Writer{}.Write(w, r) }
+
+// Marshal encodes r as SARIF 2.1.0 without a base.
+func Marshal(r *model.Report) ([]byte, error) { return Writer{}.Marshal(r) }
+
 // Write writes r to w as SARIF 2.1.0, indented and followed by a newline.
-func Write(w io.Writer, r *model.Report) error {
-	data, err := Marshal(r)
+func (wr Writer) Write(w io.Writer, r *model.Report) error {
+	data, err := wr.Marshal(r)
 	if err != nil {
 		return err
 	}
@@ -165,7 +180,7 @@ func Write(w io.Writer, r *model.Report) error {
 
 // Marshal encodes r as one SARIF run: one rule per rule that produced a finding (sorted by ID),
 // one result per finding in the report's order, excepted findings as accepted suppressions.
-func Marshal(r *model.Report) ([]byte, error) {
+func (wr Writer) Marshal(r *model.Report) ([]byte, error) {
 	d := driver{Name: "iace", Version: r.Tool.Version, InformationURI: InformationURI, Rules: []rule{}}
 	if m := semver.FindStringSubmatch(r.Tool.Version); m != nil {
 		d.SemanticVersion = m[1]
@@ -190,7 +205,7 @@ func Marshal(r *model.Report) ([]byte, error) {
 			Message:   text{Text: f.Message},
 			Locations: []location{{
 				PhysicalLocation: physicalLocation{
-					ArtifactLocation: artifactLocation{URI: uriOf(f.Location.File)},
+					ArtifactLocation: artifactLocation{URI: uriOf(path.Join(wr.Base, f.Location.File))},
 					Region:           region{StartLine: f.Location.StartLine, EndLine: f.Location.EndLine},
 				},
 				LogicalLocations: []logicalLocation{{FullyQualifiedName: f.Resource.Address, Kind: "resource"}},

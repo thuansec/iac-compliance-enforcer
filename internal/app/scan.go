@@ -262,6 +262,31 @@ func RelativePaths(cwd string, paths []string) ([]string, error) {
 	return out, nil
 }
 
+// SingleScanBase returns the scan path relative to cwd, slash-separated, when paths name one
+// directory other than cwd itself (as ScanPaths deduplicates them), and "" otherwise: with
+// several paths files are already named by their path, and a path outside cwd cannot be named
+// relative to it. The SARIF writer prefixes its URIs with it (ADR 0052).
+func SingleScanBase(cwd string, paths []string) string {
+	var unique []string
+	for _, p := range paths {
+		if c := filepath.ToSlash(filepath.Clean(p)); !slices.Contains(unique, c) {
+			unique = append(unique, c)
+		}
+	}
+	if len(unique) != 1 {
+		return ""
+	}
+	abs := filepath.FromSlash(unique[0])
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, abs)
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
 // qualify names rel (a root module or file, relative to the scan path) by the scan path.
 func qualify(path, rel string) string {
 	return filepath.ToSlash(filepath.Join(path, rel))

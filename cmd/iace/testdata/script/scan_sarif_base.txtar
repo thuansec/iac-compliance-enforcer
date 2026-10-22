@@ -1,0 +1,42 @@
+# With one scan path, SARIF URIs are relative to the working directory, as with several paths, so
+# code scanning finds the files; text, JSON and fingerprints still name files by the scan path.
+! exec iace scan -o sarif infra
+stdout '"uri": "infra/main.tf"'
+! stdout '"uri": "main.tf"'
+cp stdout single.sarif
+
+! exec iace scan -o sarif ./infra/
+stdout '"uri": "infra/main.tf"'
+
+! exec iace scan -o sarif $WORK/infra
+stdout '"uri": "infra/main.tf"'
+! stdout $WORK
+
+! exec iace scan infra
+stdout '^  main.tf:6  IACE-AWS-EC2-001  aws_instance.web  '
+
+! exec iace scan -o json infra
+stdout '"file": "main.tf"'
+
+# From inside the path, nothing is prefixed.
+cd infra
+! exec iace scan -o sarif .
+stdout '"uri": "main.tf"'
+cp stdout ../root.sarif
+cd ..
+
+# The fingerprint does not depend on where iace ran.
+exec grep -o 'iaceFinding/v1": "[0-9a-f]*' single.sarif
+cp stdout single.fp
+exec grep -o 'iaceFinding/v1": "[0-9a-f]*' root.sarif
+cmp stdout single.fp
+
+-- infra/main.tf --
+resource "aws_instance" "web" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}

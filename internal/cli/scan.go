@@ -100,7 +100,7 @@ func newScanCommand(policies fs.FS) *cobra.Command {
 			case "json":
 				write = reportjson.Write
 			case "sarif":
-				write = sarif.Write
+				write = sarif.Writer{Base: app.SingleScanBase(cwd, paths)}.Write
 			}
 			if err := write(cmd.OutOrStdout(), r); err != nil {
 				return err
