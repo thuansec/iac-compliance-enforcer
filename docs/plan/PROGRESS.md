@@ -3707,3 +3707,26 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   TestAcceptedNumberConversionsAreFast) failed once each under load right after boot and passed
   when rerun alone; watch for flakes.
 - Next: T-0302b (SARIF URIs for a single scan path).
+
+### 2026-10-22 · T-0302b · done
+- What: SARIF URIs for a single scan path. A scan of one PATH names files relative to it, so
+  `iace scan infra` wrote `"uri": "main.tf"`, contradicting ADR 0052. sarif.Writer{Base} now
+  prefixes each artifact URI with the path relative to the working directory, and the base is
+  percent-encoded too. app.SingleScanBase dedupes paths as ScanPaths does and returns "" for `.`,
+  several paths, or a path outside the working directory (documented fallback). The CLI passes
+  the base only to the SARIF writer, so text, JSON and fingerprints are unchanged (ADR 0050).
+  The action's scan step no longer refuses a single path; ADR 0052 and ADR 0053 updated.
+- Files: internal/report/sarif/{sarif.go,sarif_test.go}, internal/app/{scan.go,scan_test.go},
+  internal/cli/scan.go, cmd/iace/testdata/script/scan_sarif_base.txtar, action.yml,
+  scripts/action/{scan.sh,action_test.go}, docs/adr/0052-emit-line-level-sarif-regions.md,
+  docs/adr/0053-report-from-sarif-in-the-action-until-iace-writes-markdown.md,
+  docs/plan/BACKLOG.md, docs/plan/PROGRESS.md.
+- Evidence: `gates.sh full` PASS (13 pass). The testscript covers relative, `./x/` and absolute
+  single paths (with no host path in the output), unchanged text and JSON names, and equal
+  fingerprints when scanning from inside the directory.
+- Review: iace-reviewer APPROVE with three minors, recorded as T-0306b: gap notifications still
+  name files without the base; no warning when no base applies (outside the working directory,
+  or a symlinked cwd); no report.py test of a prefixed annotation. The reviewer also noted that
+  ADRs 0052 and 0053 were edited in place, as the acceptance asked; a supersede note may suit
+  future changes.
+- Next: T-0502 (example consumer workflow and docs).

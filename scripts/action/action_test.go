@@ -446,6 +446,19 @@ func runScan(t *testing.T, workspace, bin, paths, sarif string) scanRun {
 	return scanRun{args: string(a), output: string(o)}
 }
 
+// One directory other than the root is scanned as given: iace prefixes its SARIF URIs with it.
+func TestScanPassesASinglePath(t *testing.T) {
+	t.Parallel()
+	bin, _ := fakeIace(t, 0)
+	r := runScan(t, t.TempDir(), bin, "infra/prod", "iace.sarif")
+	if want := "scan\n-o\nsarif\n--\ninfra/prod\n"; r.args != want {
+		t.Errorf("iace args = %q, want %q", r.args, want)
+	}
+	if r.output != "exit-code=0\nupload=true\n" {
+		t.Errorf("outputs = %q", r.output)
+	}
+}
+
 func TestScanSplitsPathsOnAnyWhitespace(t *testing.T) {
 	t.Parallel()
 	ws := t.TempDir()
@@ -478,10 +491,8 @@ func TestScanRefusesUnsafeInputs(t *testing.T) {
 		paths, sarif string
 		setup        func(t *testing.T, ws, outside string)
 	}{
-		"single non-root path": {paths: "infra", sarif: "iace.sarif"},
-		"one path given twice": {paths: "infra ./infra/", sarif: "iace.sarif"},
-		"absolute sarif-file":  {paths: ".", sarif: "/tmp/iace.sarif"},
-		"sarif-file with ..":   {paths: ".", sarif: "a/../../iace.sarif"},
+		"absolute sarif-file": {paths: ".", sarif: "/tmp/iace.sarif"},
+		"sarif-file with ..":  {paths: ".", sarif: "a/../../iace.sarif"},
 		"symlinked directory": {paths: ".", sarif: "out/iace.sarif", setup: func(t *testing.T, ws, outside string) {
 			t.Helper()
 			if err := os.Symlink(outside, filepath.Join(ws, "out")); err != nil {

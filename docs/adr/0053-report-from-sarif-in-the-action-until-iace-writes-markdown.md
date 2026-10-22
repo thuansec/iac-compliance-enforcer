@@ -41,8 +41,8 @@ The scan step (`scripts/action/scan.sh`) guards the workspace, which is a checke
   the report written with noclobber, so a pull request cannot redirect the write outside the
   workspace.
 - **Paths split on any whitespace, newlines included**, so a YAML block lists every directory.
-- **A single path other than `.` is refused** (exit 2) until T-0302b: iace then writes SARIF URIs
-  relative to that path, which code scanning cannot place.
+- A single path other than `.` was refused until T-0302b made iace prefix SARIF URIs with it
+  (ADR 0052); it is now scanned as given.
 
 Release-binary mode (`version: vX.Y.Z`) is `scripts/action/install-release.sh`: it downloads
 `iace_<version>_<os>_<arch>.tar.gz` and `checksums.txt` from the release, checks the sha256 and

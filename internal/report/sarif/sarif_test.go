@@ -283,3 +283,29 @@ func TestNoAutomationDetails(t *testing.T) {
 		t.Error("the run sets automationDetails, which would override the upload category")
 	}
 }
+
+// With one scan path, file paths are relative to that path; the writer's Base names it, so URIs
+// are relative to the directory iace ran in (ADR 0052).
+func TestBasePrefixesURIs(t *testing.T) {
+	f := finding(model.SeverityHigh, "IACE-AWS-S3-001", "aws_s3_bucket.a")
+	f.Location.File = "modules/a#b.tf"
+	r := &model.Report{Tool: model.Tool{Version: "dev"}, Findings: []model.Finding{f}}
+	data, err := sarif.Writer{Base: "my infra/prod"}.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"uri": "my%20infra/prod/modules/a%23b.tf"`) {
+		t.Errorf("URI not prefixed with the base:\n%s", data)
+	}
+	validate(t, data)
+	if f.Location.File != "modules/a#b.tf" || r.Findings[0].Location.File != "modules/a#b.tf" {
+		t.Error("the writer changed the report")
+	}
+	plain, err := sarif.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plain), `"uri": "modules/a%23b.tf"`) {
+		t.Errorf("Marshal without a base changed the URI:\n%s", plain)
+	}
+}

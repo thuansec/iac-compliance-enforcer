@@ -19,17 +19,6 @@ refuse() {
 paths=()
 read -r -d '' -a paths <<<"$IACE_PATHS" || true
 if [[ ${#paths[@]} -eq 0 ]]; then paths=(.); fi
-# Until T-0302b, one PATH other than the root makes SARIF URIs relative to that PATH, which code
-# scanning cannot place; refuse rather than upload misplaced alerts. "infra ./infra/" is one path.
-declare -A distinct=()
-for p in "${paths[@]}"; do
-  while [[ "$p" == ./?* ]]; do p="${p#./}"; done
-  while [[ "$p" == ?*/ ]]; do p="${p%/}"; done
-  distinct["$p"]=1
-done
-if [[ ${#distinct[@]} -eq 1 && -z "${distinct[.]:-}" ]]; then
-  refuse "path: a single directory other than . is not supported yet; scan . or list several directories"
-fi
 
 case "/$IACE_SARIF/" in
   //* | */../* | *//) refuse "sarif-file must be a relative path inside the repository without .." ;;
