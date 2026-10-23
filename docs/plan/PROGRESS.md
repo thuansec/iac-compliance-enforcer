@@ -3782,3 +3782,14 @@ Append-only. One entry per loop iteration; newest last. Format: .claude/skills/i
   - ADR 0052 and ADR 0053 were amended in place by the follow-up task.
 - Next milestone: M13 (loader hardening), set to awaiting-approval as pause_at_milestone_end
   asks. The owner flips it to active, or picks another milestone.
+
+## 2026-10-23 · plan · happy path first
+- What: the owner approved continuing past M12 and set the order: the happy path for the whole
+  tool first. M3, M4, M5, M6, M7, M10, M8, M9 and M11 are active and run in file order;
+  pause_at_milestone_end is now no. M13 (loader hardening) goes back to planned until they are
+  done. Each M6/M7 rule is validated against its fixtures and a realistic sample, and any problems
+  are fixed before the next rule starts (loop settings in BACKLOG).
+- Files: docs/plan/BACKLOG.md, docs/plan/PROGRESS.md
+- Evidence: plan-only change; gates.sh full
+- Review: skipped (plan-only)
+- Next: the first ready M3 task. T-0110b stays needs-human and D-T-0302 stays open.

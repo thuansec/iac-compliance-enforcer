@@ -6,9 +6,11 @@ the scanner works end to end early (M2) and then grows in depth.
 
 ## Loop settings
 Permissions (push, pull requests, merge, live API calls) live in `.claude/loop-policy.json`.
-- pause_at_milestone_end: yes
+- pause_at_milestone_end: no
 - max_attempts_per_task: 3
 - scope (owner decision 2026-10-17): PoC first. Build the smallest working path: M2 (`iace scan` with a few real rules) on basic, realistic repositories, then M12 (findings in a pull request). Do not add new cost, budget, crafted-input or test-timing requirements while it is built: such review findings become M13 follow-ups. Findings that make a failure pass silently (fail-open) or leak a secret still block a merge
+- scope (owner decision 2026-10-23): happy path for the whole tool first. M3, M4, M5, M6, M7, M10, M8, M9 and M11 are active and run in file order without pausing between milestones; M13 (loader hardening) waits until they are done. Hardening, crafted-input, cost and timing work found on the way becomes an M13 task, under the same fail-open and secret-leak exception as the 2026-10-17 scope rule.
+- rule validation (owner decision 2026-10-23): every rule added in M6 and M7 is validated before the next rule starts: its pass and fail fixtures and at least one realistic sample configuration are scanned, and every false positive or false negative found is fixed in the same task, or in a follow-up task right after it when the fix is too big for one task.
 
 ## Decisions needed
 - D-T-0302 (2026-10-18, non-blocking): T-0302's acceptance asked to convert columns to a SARIF column kind; ADR 0052 narrowed it to line-level SARIF regions because hcl's grapheme-cluster columns match neither SARIF kind and reporters do not read source text. Confirm the narrowing, or ask for exact columns (the loader would record UTF-16 columns in the input document, an additive contract change).
@@ -924,7 +926,7 @@ Goal: a pull request on GitHub runs iace, shows its findings in code scanning an
   - attempts: 1
   - result: examples/github/iace.yml (pull_request + push to main + dispatch, top-level contents: read, job contents read / security-events write / actions read, checkout and the action pinned by SHA, persist-credentials false, job `iace / scan`, timeout, concurrency, category iace; the upload-sarif pin lives in action.yml) and docs/ci/github.md (setup, Dependabot, permissions, fork PRs, inputs/outputs, monorepos with a fail-closed aggregate check, gating, private repos, troubleshooting); TestExampleWorkflow checks the hardening and make lint runs actionlint on examples/github
 
-## M13 · Loader hardening — status: awaiting-approval
+## M13 · Loader hardening — status: planned
 Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the demo path (owner decision 2026-10-17) are done; until then they are documented as known limitations.
 
 - [ ] T-0115 · Bound number magnitude outside function calls
@@ -1102,7 +1104,7 @@ Goal: the M1 bounding, fidelity and mark-propagation follow-ups deferred for the
     - `scan PATH...` loads and compiles the policy library once and evaluates every path's root modules with that engine, as iace-architecture requires (today ScanPaths runs Scan, which compiles, per path; T-0206c review); a test counts the compilations
   - attempts: 0
 
-## M3 · Reports — status: planned
+## M3 · Reports — status: active
 Goal: machine- and human-readable outputs that CI systems and GitHub understand.
 
 - [ ] T-0303 · JUnit XML output
@@ -1140,7 +1142,7 @@ Goal: machine- and human-readable outputs that CI systems and GitHub understand.
     - a report.py test in scripts/action feeds a SARIF with a prefixed URI and checks the annotation's file property
   - attempts: 0
 
-## M4 · Repo policy config — status: planned
+## M4 · Repo policy config — status: active
 Goal: each scanned repository controls policy selection, thresholds and accountable exceptions via `.iace.yaml`.
 
 - [ ] T-0401 · `.iace.yaml` v1 schema, strict loader and discovery
@@ -1189,7 +1191,7 @@ Goal: each scanned repository controls policy selection, thresholds and accounta
     - a repo config that tries to loosen any of them is an error; tests
   - attempts: 0
 
-## M5 · PR/CI enforcement — status: planned
+## M5 · PR/CI enforcement — status: active
 Goal: scans run on pull requests, results reach GitHub code scanning, and merging requires a passing check.
 
 - [ ] T-0506 · Wire the action's config, org-config and fail-on inputs
@@ -1219,7 +1221,7 @@ Goal: scans run on pull requests, results reach GitHub code scanning, and mergin
     - examples/azure-pipelines/iace.yml publishes JUnit results and the SARIF artifact; docs
   - attempts: 0
 
-## M6 · AWS policy pack — status: planned
+## M6 · AWS policy pack — status: active
 Goal: the P1 AWS controls in iace-cloud-controls/references/aws.md, each with tests, fixtures and verified mappings.
 Standard acceptance for every rule task: the Rego rule follows iace-rego-policies, with ≥ 90% coverage; there are pass/fail fixtures that are valid for aws provider 5.x and 6.x; attribute names and defaults are verified with provider_schema.sh or the registry docs; framework mappings are verified against the official control reference; rule docs are regenerated.
 
@@ -1299,7 +1301,7 @@ Standard acceptance for every rule task: the Rego rule follows iace-rego-policie
     - a nightly/manual workflow runs `terraform validate` on every fixture for aws 5.x and 6.x (and azurerm 4.x and 5.x once M7 lands); it is not part of PR CI because it needs network access
   - attempts: 0
 
-## M7 · Azure policy pack — status: planned
+## M7 · Azure policy pack — status: active
 Goal: the P1 Azure controls in iace-cloud-controls/references/azure.md. Standard rule acceptance
 as in M6, valid for azurerm 4.x and 5.x, with renamed attributes and changed defaults handled.
 
@@ -1382,7 +1384,7 @@ as in M6, valid for azurerm 4.x and 5.x, with renamed attributes and changed def
     - standard rule acceptance
   - attempts: 0
 
-## M10 · AI fix suggestions — status: planned
+## M10 · AI fix suggestions — status: active
 Goal: opt-in AI suggestions for violations, verified by re-scanning before anyone sees them.
 Decided: a core goal, no longer a stretch goal (owner, 2026-10-17): iace promises AI-assisted
 remediation, so M10 runs after the AWS and Azure packs, whose findings its eval harness (T-1009)
@@ -1448,7 +1450,7 @@ the eval harness shows a benefit.
     - testdata/ai-evals with a runner that reports verified-fix rate, new-finding rate and tokens; it runs only with explicit opt-in and records a baseline in PROGRESS
   - attempts: 0
 
-## M8 · Central and external policy sources — status: planned
+## M8 · Central and external policy sources — status: active
 Goal: repositories pin a central or org policy bundle to an exact version, and iace verifies it
 before loading it alongside the built-in policies.
 
@@ -1500,7 +1502,7 @@ before loading it alongside the built-in policies.
     - the loop commits the public key (`aws kms get-public-key`, as PEM) to internal/policy/trust/ under its key ID, with a test that a signature made in the documented format verifies against it
   - attempts: 0
 
-## M9 · Plan JSON input — status: planned
+## M9 · Plan JSON input — status: active
 Goal: higher-fidelity scans from `terraform show -json` output produced by trusted pipelines.
 
 - [ ] T-0901 · Ingest plan JSON
@@ -1529,7 +1531,7 @@ Goal: higher-fidelity scans from `terraform show -json` output produced by trust
     - for fixtures with fully known values, both modes produce identical findings (golden plan JSON is committed, never generated in tests)
   - attempts: 0
 
-## M11 · Release and hardening — status: planned
+## M11 · Release and hardening — status: active
 Goal: signed, reproducible releases with SBOM and provenance, plus a hardening pass.
 
 - [ ] T-1101 · GoReleaser, SBOM, signing and provenance
